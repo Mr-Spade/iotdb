@@ -208,7 +208,6 @@ public abstract class AbstractMemTable implements IMemTable {
             - nullPointsNumber;
 
     totalPointsNum += pointsInserted;
-    insertRowNode.insertCount.addAndGet(pointsInserted);
   }
 
   @Override
