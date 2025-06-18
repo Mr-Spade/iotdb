@@ -16,17 +16,18 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.db.storageengine.dataregion.compaction.selector;
 
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.performer.constant.CrossCompactionPerformer;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.InnerSpaceCompactionTask;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.SettleCompactionTask;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.CompactionTaskManager;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.selector.estimator.AbstractCompactionEstimator;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.selector.estimator.FastCrossSpaceCompactionEstimator;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.selector.utils.CrossCompactionTaskResource;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
 
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -57,8 +58,8 @@ public interface ICompactionSelector {
     }
   }
 
-  default List<Long> getCompactionMemoryCost() {
-    return Collections.emptyList();
+  default List<SettleCompactionTask> selectSettleTask(List<TsFileResource> tsFileResources) {
+    throw new RuntimeException("This kind of selector cannot be used to select settle task");
   }
 
   static AbstractCompactionEstimator getCompactionEstimator(

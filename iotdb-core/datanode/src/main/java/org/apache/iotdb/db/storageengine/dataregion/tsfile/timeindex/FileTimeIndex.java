@@ -20,8 +20,9 @@
 package org.apache.iotdb.db.storageengine.dataregion.tsfile.timeindex;
 
 import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.commons.utils.CommonDateTimeUtils;
 import org.apache.iotdb.commons.utils.TimePartitionUtils;
-import org.apache.iotdb.db.exception.PartitionViolationException;
+import org.apache.iotdb.db.exception.load.PartitionViolationException;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
 
 import org.apache.tsfile.file.metadata.IDeviceID;
@@ -39,6 +40,7 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.file.NoSuchFileException;
 import java.util.Collections;
+import java.util.Optional;
 import java.util.Set;
 
 public class FileTimeIndex implements ITimeIndex {
@@ -91,8 +93,12 @@ public class FileTimeIndex implements ITimeIndex {
         FSFactoryProducer.getFSFactory()
             .getBufferedInputStream(tsFilePath + TsFileResource.RESOURCE_SUFFIX)) {
       // The first byte is VERSION_NUMBER, second byte is timeIndexType.
-      ReadWriteIOUtils.readBytes(inputStream, 2);
-      return DeviceTimeIndex.getDevices(inputStream);
+      byte[] bytes = ReadWriteIOUtils.readBytes(inputStream, 2);
+      if (bytes[1] == ARRAY_DEVICE_TIME_INDEX_TYPE) {
+        return ArrayDeviceTimeIndex.getDevices(inputStream);
+      } else {
+        return PlainDeviceTimeIndex.getDevices(inputStream);
+      }
     } catch (NoSuchFileException e) {
       // deleted by ttl
       if (tsFileResource.isDeleted()) {
@@ -185,8 +191,8 @@ public class FileTimeIndex implements ITimeIndex {
   }
 
   @Override
-  public long getStartTime(IDeviceID deviceId) {
-    return startTime;
+  public Optional<Long> getStartTime(IDeviceID deviceId) {
+    return Optional.of(startTime);
   }
 
   @Override
@@ -195,8 +201,8 @@ public class FileTimeIndex implements ITimeIndex {
   }
 
   @Override
-  public long getEndTime(IDeviceID deviceId) {
-    return endTime;
+  public Optional<Long> getEndTime(IDeviceID deviceId) {
+    return Optional.of(endTime);
   }
 
   @Override
@@ -211,7 +217,7 @@ public class FileTimeIndex implements ITimeIndex {
 
   @Override
   public int compareDegradePriority(ITimeIndex timeIndex) {
-    if (timeIndex instanceof DeviceTimeIndex) {
+    if (timeIndex instanceof ArrayDeviceTimeIndex) {
       return 1;
     } else if (timeIndex instanceof FileTimeIndex) {
       return Long.compare(startTime, timeIndex.getMinStartTime());
@@ -224,6 +230,11 @@ public class FileTimeIndex implements ITimeIndex {
   @Override
   public boolean definitelyNotContains(IDeviceID device) {
     return false;
+  }
+
+  @Override
+  public boolean isDeviceAlive(IDeviceID device, long ttl) {
+    return ttl == Long.MAX_VALUE || endTime >= CommonDateTimeUtils.currentTime() - ttl;
   }
 
   @Override
@@ -240,5 +251,10 @@ public class FileTimeIndex implements ITimeIndex {
   @Override
   public byte getTimeIndexType() {
     return FILE_TIME_INDEX_TYPE;
+  }
+
+  @Override
+  public String toString() {
+    return " StartTime = " + startTime + " EndTime = " + endTime;
   }
 }

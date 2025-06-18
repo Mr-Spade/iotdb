@@ -191,7 +191,7 @@ public abstract class AbstractIntoOperator implements ProcessOperator {
             String.format(
                 "Error occurred while inserting tablets in SELECT INTO: %s",
                 executionStatus.getMessage());
-        throw new IntoProcessException(message);
+        throw new IntoProcessException(message, executionStatus.getCode());
       }
 
       for (InsertTabletStatementGenerator generator : insertTabletStatementGenerators) {
@@ -201,9 +201,9 @@ public abstract class AbstractIntoOperator implements ProcessOperator {
       writeOperationFuture = null;
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      throw new IntoProcessException(e.getMessage());
+      throw new IntoProcessException(e);
     } catch (ExecutionException e) {
-      throw new IntoProcessException(e.getMessage());
+      throw new IntoProcessException(e);
     }
   }
 
@@ -393,9 +393,11 @@ public abstract class AbstractIntoOperator implements ProcessOperator {
             columns[i] = new boolean[rowLimit];
             break;
           case INT32:
+          case DATE:
             columns[i] = new int[rowLimit];
             break;
           case INT64:
+          case TIMESTAMP:
             columns[i] = new long[rowLimit];
             break;
           case FLOAT:
@@ -405,6 +407,8 @@ public abstract class AbstractIntoOperator implements ProcessOperator {
             columns[i] = new double[rowLimit];
             break;
           case TEXT:
+          case STRING:
+          case BLOB:
             columns[i] = new Binary[rowLimit];
             Arrays.fill((Binary[]) columns[i], Binary.EMPTY_VALUE);
             break;
@@ -440,10 +444,12 @@ public abstract class AbstractIntoOperator implements ProcessOperator {
           writtenCounter.get(measurements[i]).getAndIncrement();
           switch (dataTypes[i]) {
             case INT32:
+            case DATE:
               ((int[]) columns[i])[rowCount] =
                   sourceTypeConvertor.getInt(valueColumn, lastReadIndex);
               break;
             case INT64:
+            case TIMESTAMP:
               ((long[]) columns[i])[rowCount] =
                   sourceTypeConvertor.getLong(valueColumn, lastReadIndex);
               break;
@@ -460,6 +466,8 @@ public abstract class AbstractIntoOperator implements ProcessOperator {
                   sourceTypeConvertor.getBoolean(valueColumn, lastReadIndex);
               break;
             case TEXT:
+            case BLOB:
+            case STRING:
               ((Binary[]) columns[i])[rowCount] =
                   sourceTypeConvertor.getBinary(valueColumn, lastReadIndex);
               break;
@@ -505,9 +513,11 @@ public abstract class AbstractIntoOperator implements ProcessOperator {
               columns[i] = Arrays.copyOf((boolean[]) columns[i], rowCount);
               break;
             case INT32:
+            case DATE:
               columns[i] = Arrays.copyOf((int[]) columns[i], rowCount);
               break;
             case INT64:
+            case TIMESTAMP:
               columns[i] = Arrays.copyOf((long[]) columns[i], rowCount);
               break;
             case FLOAT:
@@ -517,6 +527,8 @@ public abstract class AbstractIntoOperator implements ProcessOperator {
               columns[i] = Arrays.copyOf((double[]) columns[i], rowCount);
               break;
             case TEXT:
+            case STRING:
+            case BLOB:
               columns[i] = Arrays.copyOf((Binary[]) columns[i], rowCount);
               break;
             default:

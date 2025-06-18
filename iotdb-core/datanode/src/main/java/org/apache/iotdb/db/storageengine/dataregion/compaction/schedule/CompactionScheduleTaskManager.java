@@ -21,6 +21,8 @@ package org.apache.iotdb.db.storageengine.dataregion.compaction.schedule;
 
 import org.apache.iotdb.commons.concurrent.IoTDBThreadPoolFactory;
 import org.apache.iotdb.commons.concurrent.ThreadName;
+import org.apache.iotdb.commons.concurrent.threadpool.WrappedThreadPoolExecutor;
+import org.apache.iotdb.commons.conf.IoTDBConstant;
 import org.apache.iotdb.commons.exception.StartupException;
 import org.apache.iotdb.commons.service.IService;
 import org.apache.iotdb.commons.service.ServiceType;
@@ -41,7 +43,6 @@ import java.util.Set;
 import java.util.Vector;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -49,10 +50,14 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class CompactionScheduleTaskManager implements IService {
 
-  private int workerNum =
+  private int compactionSelectorNum =
       IoTDBDescriptor.getInstance().getConfig().getCompactionScheduleThreadNum();
-  private ExecutorService compactionScheduleTaskThreadPool;
-  private static final Logger logger = LoggerFactory.getLogger(CompactionScheduleTaskManager.class);
+
+  private final int ttlCheckerNum = IoTDBDescriptor.getInstance().getConfig().getTTlCheckerNum();
+
+  private WrappedThreadPoolExecutor compactionScheduleTaskThreadPool;
+  private static final Logger logger =
+      LoggerFactory.getLogger(IoTDBConstant.COMPACTION_LOGGER_NAME);
   private static final CompactionScheduleTaskManager INSTANCE = new CompactionScheduleTaskManager();
   private static final List<DataRegion> dataRegionList = new Vector<>();
   private final RepairDataTaskManager REPAIR_TASK_MANAGER_INSTANCE = new RepairDataTaskManager();
@@ -71,7 +76,7 @@ public class CompactionScheduleTaskManager implements IService {
     logger.info("Compaction schedule task manager started.");
   }
 
-  public void stopCompactionScheduleTasks() {
+  public void stopCompactionScheduleTasks() throws InterruptedException {
     lock.lock();
     try {
       for (Future<Void> task : submitCompactionScheduleTaskFutures) {
@@ -83,6 +88,8 @@ public class CompactionScheduleTaskManager implements IService {
         }
         try {
           task.get();
+        } catch (InterruptedException e) {
+          throw e;
         } catch (Exception ignored) {
         }
       }
@@ -93,7 +100,7 @@ public class CompactionScheduleTaskManager implements IService {
     }
   }
 
-  public void checkAndMayApplyConfigurationChange() {
+  public void checkAndMayApplyConfigurationChange() throws InterruptedException {
     lock.lock();
     try {
       // ignored the change if executing repair data task
@@ -102,10 +109,10 @@ public class CompactionScheduleTaskManager implements IService {
       }
       int workerNumInCurrentConfig =
           IoTDBDescriptor.getInstance().getConfig().getCompactionScheduleThreadNum();
-      if (workerNum == workerNumInCurrentConfig) {
+      if (compactionSelectorNum == workerNumInCurrentConfig) {
         return;
       }
-      workerNum = workerNumInCurrentConfig;
+      compactionSelectorNum = workerNumInCurrentConfig;
       restartThreadPool();
     } finally {
       lock.unlock();
@@ -115,10 +122,18 @@ public class CompactionScheduleTaskManager implements IService {
   public void startScheduleTasks() {
     lock.lock();
     try {
-      for (int workerId = 0; workerId < workerNum; workerId++) {
+      // compaction selector
+      for (int workerId = 0; workerId < compactionSelectorNum; workerId++) {
         Future<Void> future =
             compactionScheduleTaskThreadPool.submit(
-                new CompactionScheduleTaskWorker(dataRegionList, workerId, workerNum));
+                new CompactionScheduleTaskWorker(dataRegionList, workerId, compactionSelectorNum));
+        submitCompactionScheduleTaskFutures.add(future);
+      }
+      // ttl checker
+      for (int workerId = 0; workerId < ttlCheckerNum; workerId++) {
+        Future<Void> future =
+            compactionScheduleTaskThreadPool.submit(
+                new TTLScheduleTask(dataRegionList, workerId, ttlCheckerNum));
         submitCompactionScheduleTaskFutures.add(future);
       }
     } finally {
@@ -133,6 +148,7 @@ public class CompactionScheduleTaskManager implements IService {
       if (!init) {
         return;
       }
+      init = false;
       compactionScheduleTaskThreadPool.shutdownNow();
       logger.info("Waiting for compaction schedule task thread pool to shut down");
       waitForThreadPoolTerminated();
@@ -166,18 +182,22 @@ public class CompactionScheduleTaskManager implements IService {
 
   private void initThreadPool() {
     this.compactionScheduleTaskThreadPool =
-        IoTDBThreadPoolFactory.newFixedThreadPool(
-            workerNum, ThreadName.COMPACTION_SCHEDULE.getName());
+        (WrappedThreadPoolExecutor)
+            IoTDBThreadPoolFactory.newFixedThreadPool(
+                compactionSelectorNum + ttlCheckerNum, ThreadName.COMPACTION_SCHEDULE.getName());
+    this.compactionScheduleTaskThreadPool.disableErrorLog();
     init = true;
   }
 
-  private void restartThreadPool() {
+  private void restartThreadPool() throws InterruptedException {
     stopCompactionScheduleTasks();
     compactionScheduleTaskThreadPool.shutdownNow();
     waitForThreadPoolTerminated();
     compactionScheduleTaskThreadPool =
-        IoTDBThreadPoolFactory.newFixedThreadPool(
-            workerNum, ThreadName.COMPACTION_SCHEDULE.getName());
+        (WrappedThreadPoolExecutor)
+            IoTDBThreadPoolFactory.newFixedThreadPool(
+                compactionSelectorNum + ttlCheckerNum, ThreadName.COMPACTION_SCHEDULE.getName());
+    compactionScheduleTaskThreadPool.disableErrorLog();
     startScheduleTasks();
   }
 
@@ -269,7 +289,7 @@ public class CompactionScheduleTaskManager implements IService {
       repairTaskStatus.compareAndSet(RepairTaskStatus.RUNNING, RepairTaskStatus.STOPPING);
     }
 
-    public void abortRepairTask() {
+    public void abortRepairTask() throws InterruptedException {
       if (repairTaskStatus.get() == RepairTaskStatus.STOPPED) {
         return;
       }
@@ -282,6 +302,8 @@ public class CompactionScheduleTaskManager implements IService {
         }
         try {
           task.get();
+        } catch (InterruptedException e) {
+          throw e;
         } catch (Exception ignored) {
         }
       }

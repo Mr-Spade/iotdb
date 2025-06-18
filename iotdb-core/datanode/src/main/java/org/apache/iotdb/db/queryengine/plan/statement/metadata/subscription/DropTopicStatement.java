@@ -34,7 +34,9 @@ import java.util.Collections;
 import java.util.List;
 
 public class DropTopicStatement extends Statement implements IConfigStatement {
+
   private String topicName;
+  private boolean ifExistsCondition;
 
   public DropTopicStatement() {
     super();
@@ -45,8 +47,16 @@ public class DropTopicStatement extends Statement implements IConfigStatement {
     return topicName;
   }
 
+  public boolean hasIfExistsCondition() {
+    return ifExistsCondition;
+  }
+
   public void setTopicName(String topicName) {
     this.topicName = topicName;
+  }
+
+  public void setIfExists(boolean ifExistsCondition) {
+    this.ifExistsCondition = ifExistsCondition;
   }
 
   @Override
@@ -70,7 +80,7 @@ public class DropTopicStatement extends Statement implements IConfigStatement {
       return new TSStatus(TSStatusCode.SUCCESS_STATUS.getStatusCode());
     }
     return AuthorityChecker.getTSStatus(
-        AuthorityChecker.checkSystemPermission(userName, PrivilegeType.USE_PIPE.ordinal()),
+        AuthorityChecker.checkSystemPermission(userName, PrivilegeType.USE_PIPE),
         PrivilegeType.USE_PIPE);
   }
 }

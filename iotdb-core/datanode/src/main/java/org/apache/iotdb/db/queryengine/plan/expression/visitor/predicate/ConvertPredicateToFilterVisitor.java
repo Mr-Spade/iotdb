@@ -41,16 +41,19 @@ import org.apache.iotdb.db.queryengine.plan.expression.unary.IsNullExpression;
 import org.apache.iotdb.db.queryengine.plan.expression.unary.LikeExpression;
 import org.apache.iotdb.db.queryengine.plan.expression.unary.LogicNotExpression;
 import org.apache.iotdb.db.queryengine.plan.expression.unary.RegularExpression;
+import org.apache.iotdb.db.utils.DateTimeUtils;
 
+import com.google.common.io.BaseEncoding;
 import org.apache.tsfile.common.conf.TSFileConfig;
+import org.apache.tsfile.common.regexp.LikePattern;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.read.filter.basic.Filter;
 import org.apache.tsfile.read.filter.factory.FilterFactory;
 import org.apache.tsfile.read.filter.factory.ValueFilterApi;
-import org.apache.tsfile.read.filter.operator.ValueFilterOperators;
 import org.apache.tsfile.utils.Binary;
 import org.apache.tsfile.write.schema.IMeasurementSchema;
 
+import java.time.ZoneId;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -103,18 +106,20 @@ public class ConvertPredicateToFilterVisitor
     }
   }
 
-  private <T extends Comparable<T>> ValueFilterOperators.ValueNotIn<T> constructNotInFilter(
+  private <T extends Comparable<T>> Filter constructNotInFilter(
       PartialPath path, Set<String> stringValues, Context context) {
     int measurementIndex = context.getMeasurementIndex(path.getMeasurement());
-    Set<T> values = constructInSet(stringValues, context.getType(path));
-    return ValueFilterApi.notIn(measurementIndex, values);
+    TSDataType dataType = context.getType(path);
+    Set<T> values = constructInSet(stringValues, dataType);
+    return ValueFilterApi.notIn(measurementIndex, values, dataType);
   }
 
-  private <T extends Comparable<T>> ValueFilterOperators.ValueIn<T> constructInFilter(
+  private <T extends Comparable<T>> Filter constructInFilter(
       PartialPath path, Set<String> stringValues, Context context) {
     int measurementIndex = context.getMeasurementIndex(path.getMeasurement());
-    Set<T> values = constructInSet(stringValues, context.getType(path));
-    return ValueFilterApi.in(measurementIndex, values);
+    TSDataType dataType = context.getType(path);
+    Set<T> values = constructInSet(stringValues, dataType);
+    return ValueFilterApi.in(measurementIndex, values, dataType);
   }
 
   private <T extends Comparable<T>> Set<T> constructInSet(
@@ -138,8 +143,9 @@ public class ConvertPredicateToFilterVisitor
     }
 
     checkArgument(operand.getExpressionType().equals(ExpressionType.TIMESERIES));
-    int measurementIndex =
-        context.getMeasurementIndex(((TimeSeriesOperand) operand).getPath().getMeasurement());
+    PartialPath path = ((TimeSeriesOperand) operand).getPath();
+    int measurementIndex = context.getMeasurementIndex(path.getMeasurement());
+    TSDataType dataType = context.getType(path);
     return ValueFilterApi.isNotNull(measurementIndex);
   }
 
@@ -151,12 +157,15 @@ public class ConvertPredicateToFilterVisitor
     }
 
     checkArgument(operand.getExpressionType().equals(ExpressionType.TIMESERIES));
-    int measurementIndex =
-        context.getMeasurementIndex(((TimeSeriesOperand) operand).getPath().getMeasurement());
+    PartialPath path = ((TimeSeriesOperand) operand).getPath();
+    int measurementIndex = context.getMeasurementIndex(path.getMeasurement());
+    TSDataType dataType = context.getType(path);
+    LikePattern pattern =
+        LikePattern.compile(likeExpression.getPattern(), likeExpression.getEscape());
     if (likeExpression.isNot()) {
-      return ValueFilterApi.notLike(measurementIndex, likeExpression.getPattern());
+      return ValueFilterApi.notLike(measurementIndex, pattern, dataType);
     } else {
-      return ValueFilterApi.like(measurementIndex, likeExpression.getPattern());
+      return ValueFilterApi.like(measurementIndex, pattern, dataType);
     }
   }
 
@@ -170,10 +179,12 @@ public class ConvertPredicateToFilterVisitor
     checkArgument(operand.getExpressionType().equals(ExpressionType.TIMESERIES));
     int measurementIndex =
         context.getMeasurementIndex(((TimeSeriesOperand) operand).getPath().getMeasurement());
+    PartialPath path = ((TimeSeriesOperand) operand).getPath();
+    TSDataType dataType = context.getType(path);
     if (regularExpression.isNot()) {
-      return ValueFilterApi.notRegexp(measurementIndex, regularExpression.getPattern());
+      return ValueFilterApi.notRegexp(measurementIndex, regularExpression.getPattern(), dataType);
     } else {
-      return ValueFilterApi.regexp(measurementIndex, regularExpression.getPattern());
+      return ValueFilterApi.regexp(measurementIndex, regularExpression.getPattern(), dataType);
     }
   }
 
@@ -252,21 +263,21 @@ public class ConvertPredicateToFilterVisitor
       Context context) {
     PartialPath path = ((TimeSeriesOperand) timeseriesOperand).getPath();
     int measurementIndex = context.getMeasurementIndex(path.getMeasurement());
-    T value = getValue(((ConstantOperand) constantOperand).getValueString(), context.getType(path));
-
+    TSDataType dataType = context.getType(path);
+    T value = getValue(((ConstantOperand) constantOperand).getValueString(), dataType);
     switch (expressionType) {
       case EQUAL_TO:
-        return ValueFilterApi.eq(measurementIndex, value);
+        return ValueFilterApi.eq(measurementIndex, value, dataType);
       case NON_EQUAL:
-        return ValueFilterApi.notEq(measurementIndex, value);
+        return ValueFilterApi.notEq(measurementIndex, value, dataType);
       case GREATER_THAN:
-        return ValueFilterApi.gt(measurementIndex, value);
+        return ValueFilterApi.gt(measurementIndex, value, dataType);
       case GREATER_EQUAL:
-        return ValueFilterApi.gtEq(measurementIndex, value);
+        return ValueFilterApi.gtEq(measurementIndex, value, dataType);
       case LESS_THAN:
-        return ValueFilterApi.lt(measurementIndex, value);
+        return ValueFilterApi.lt(measurementIndex, value, dataType);
       case LESS_EQUAL:
-        return ValueFilterApi.ltEq(measurementIndex, value);
+        return ValueFilterApi.ltEq(measurementIndex, value, dataType);
       default:
         throw new UnsupportedOperationException(
             String.format("Unsupported expression type %s", expressionType));
@@ -323,12 +334,12 @@ public class ConvertPredicateToFilterVisitor
 
     if (minValue == maxValue) {
       return isNot
-          ? ValueFilterApi.notEq(measurementIndex, minValue)
-          : ValueFilterApi.eq(measurementIndex, minValue);
+          ? ValueFilterApi.notEq(measurementIndex, minValue, dataType)
+          : ValueFilterApi.eq(measurementIndex, minValue, dataType);
     }
     return isNot
-        ? ValueFilterApi.notBetween(measurementIndex, minValue, maxValue)
-        : ValueFilterApi.between(measurementIndex, minValue, maxValue);
+        ? ValueFilterApi.notBetween(measurementIndex, minValue, maxValue, dataType)
+        : ValueFilterApi.between(measurementIndex, minValue, maxValue, dataType);
   }
 
   @SuppressWarnings("unchecked")
@@ -338,6 +349,7 @@ public class ConvertPredicateToFilterVisitor
         case INT32:
           return (T) Integer.valueOf(valueString);
         case INT64:
+        case TIMESTAMP:
           return (T) Long.valueOf(valueString);
         case FLOAT:
           return (T) Float.valueOf(valueString);
@@ -352,8 +364,13 @@ public class ConvertPredicateToFilterVisitor
             throw new IllegalArgumentException(
                 String.format("\"%s\" cannot be cast to [%s]", valueString, dataType));
           }
+        case BLOB:
+          return (T) new Binary(BaseEncoding.base16().decode(valueString));
         case TEXT:
+        case STRING:
           return (T) new Binary(valueString, TSFileConfig.STRING_CHARSET);
+        case DATE:
+          return (T) DateTimeUtils.parseDateExpressionToInt(valueString);
         default:
           throw new UnsupportedOperationException(
               String.format("Unsupported data type %s", dataType));
@@ -375,13 +392,18 @@ public class ConvertPredicateToFilterVisitor
     private final List<String> allMeasurements;
     private final boolean isBuildPlanUseTemplate;
     private final TypeProvider typeProvider;
+    private final ZoneId zoneId;
     private Map<String, IMeasurementSchema> schemaMap;
 
     public Context(
-        List<String> allMeasurements, boolean isBuildPlanUseTemplate, TypeProvider typeProvider) {
+        List<String> allMeasurements,
+        boolean isBuildPlanUseTemplate,
+        TypeProvider typeProvider,
+        ZoneId zoneId) {
       this.allMeasurements = allMeasurements;
       this.isBuildPlanUseTemplate = isBuildPlanUseTemplate;
       this.typeProvider = typeProvider;
+      this.zoneId = zoneId;
       if (isBuildPlanUseTemplate) {
         this.schemaMap = typeProvider.getTemplatedInfo().getSchemaMap();
       }
@@ -400,8 +422,12 @@ public class ConvertPredicateToFilterVisitor
       if (isBuildPlanUseTemplate) {
         return schemaMap.get(path.getFullPath()).getType();
       } else {
-        return typeProvider.getType(path.getFullPath());
+        return typeProvider.getTreeModelType(path.getFullPath());
       }
+    }
+
+    public ZoneId getZoneId() {
+      return zoneId;
     }
   }
 }

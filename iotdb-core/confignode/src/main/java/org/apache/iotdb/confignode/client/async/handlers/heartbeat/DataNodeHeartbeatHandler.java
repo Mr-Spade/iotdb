@@ -87,10 +87,22 @@ public class DataNodeHeartbeatHandler implements AsyncMethodCallback<TDataNodeHe
         .getLoadCache()
         .cacheDataNodeHeartbeatSample(nodeId, new NodeHeartbeatSample(heartbeatResp));
 
+    RegionStatus regionStatus = RegionStatus.valueOf(heartbeatResp.getStatus());
+
     heartbeatResp
         .getJudgedLeaders()
         .forEach(
             (regionGroupId, isLeader) -> {
+
+              // Do not allow regions to inherit the Removing state from datanode
+              RegionStatus nextRegionStatus = regionStatus;
+              if (nextRegionStatus == RegionStatus.Removing) {
+                nextRegionStatus =
+                    loadManager
+                        .getLoadCache()
+                        .getRegionCacheLastSampleStatus(regionGroupId, nodeId);
+              }
+
               // Update RegionGroupCache
               loadManager
                   .getLoadCache()
@@ -100,7 +112,7 @@ public class DataNodeHeartbeatHandler implements AsyncMethodCallback<TDataNodeHe
                       new RegionHeartbeatSample(
                           heartbeatResp.getHeartbeatTimestamp(),
                           // Region will inherit DataNode's status
-                          RegionStatus.valueOf(heartbeatResp.getStatus())),
+                          nextRegionStatus),
                       false);
 
               if (((TConsensusGroupType.SchemaRegion.equals(regionGroupId.getType())
@@ -130,13 +142,21 @@ public class DataNodeHeartbeatHandler implements AsyncMethodCallback<TDataNodeHe
       regionDisk.putAll(heartbeatResp.getRegionDisk());
     }
     if (heartbeatResp.getPipeMetaList() != null) {
-      pipeRuntimeCoordinator.parseHeartbeat(nodeId, heartbeatResp.getPipeMetaList());
+      pipeRuntimeCoordinator.parseHeartbeat(
+          nodeId,
+          heartbeatResp.getPipeMetaList(),
+          heartbeatResp.getPipeCompletedList(),
+          heartbeatResp.getPipeRemainingEventCountList(),
+          heartbeatResp.getPipeRemainingTimeList());
     }
     if (heartbeatResp.isSetConfirmedConfigNodeEndPoints()) {
       loadManager
           .getLoadCache()
           .updateConfirmedConfigNodeEndPoints(
               nodeId, heartbeatResp.getConfirmedConfigNodeEndPoints());
+    }
+    if (heartbeatResp.isSetRegionDisk()) {
+      loadManager.getLoadCache().updateRegionSizeMap(nodeId, heartbeatResp.getRegionDisk());
     }
   }
 

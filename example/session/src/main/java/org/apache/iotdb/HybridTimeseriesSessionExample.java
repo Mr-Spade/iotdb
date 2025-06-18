@@ -16,15 +16,20 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb;
 
+import org.apache.iotdb.isession.SessionDataSet;
 import org.apache.iotdb.rpc.IoTDBConnectionException;
 import org.apache.iotdb.rpc.StatementExecutionException;
 import org.apache.iotdb.session.Session;
-import org.apache.iotdb.session.SessionDataSet;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
-import org.apache.iotdb.tsfile.write.record.Tablet;
-import org.apache.iotdb.tsfile.write.schema.MeasurementSchema;
+
+import org.apache.tsfile.enums.TSDataType;
+import org.apache.tsfile.write.record.Tablet;
+import org.apache.tsfile.write.schema.IMeasurementSchema;
+import org.apache.tsfile.write.schema.MeasurementSchema;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,6 +39,9 @@ import java.util.List;
  * includes Aligned Timeseries and Normal Timeseries
  */
 public class HybridTimeseriesSessionExample {
+
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(HybridTimeseriesSessionExample.class);
 
   private static Session session;
   private static final String ROOT_SG1_ALIGNEDDEVICE = "root.sg_1.aligned_device";
@@ -59,19 +67,20 @@ public class HybridTimeseriesSessionExample {
 
   private static void selectTest() throws StatementExecutionException, IoTDBConnectionException {
     SessionDataSet dataSet = session.executeQueryStatement("select ** from root.sg_1");
-    System.out.println(dataSet.getColumnNames());
+    LOGGER.info("columnNames = {}", dataSet.getColumnNames());
     while (dataSet.hasNext()) {
-      System.out.println(dataSet.next());
+      LOGGER.info("data = {}", dataSet.next());
     }
 
     dataSet.closeOperationHandle();
   }
+
   /** Method 1 for insert tablet with aligned timeseries */
   private static void insertTabletWithAlignedTimeseriesMethod(int minTime, int maxTime)
       throws IoTDBConnectionException, StatementExecutionException {
     // The schema of measurements of one device
     // only measurementId and data type in MeasurementSchema take effects in Tablet
-    List<MeasurementSchema> schemaList = new ArrayList<>();
+    List<IMeasurementSchema> schemaList = new ArrayList<>();
     schemaList.add(new MeasurementSchema("s1", TSDataType.INT64));
     schemaList.add(new MeasurementSchema("s2", TSDataType.INT32));
 
@@ -79,19 +88,19 @@ public class HybridTimeseriesSessionExample {
     long timestamp = minTime;
 
     for (long row = minTime; row < maxTime; row++) {
-      int rowIndex = tablet.rowSize++;
+      int rowIndex = tablet.getRowSize();
       tablet.addTimestamp(rowIndex, timestamp);
-      tablet.addValue(schemaList.get(0).getMeasurementId(), rowIndex, row * 10 + 1L);
-      tablet.addValue(schemaList.get(1).getMeasurementId(), rowIndex, (int) (row * 10 + 2));
+      tablet.addValue(schemaList.get(0).getMeasurementName(), rowIndex, row * 10 + 1L);
+      tablet.addValue(schemaList.get(1).getMeasurementName(), rowIndex, (int) (row * 10 + 2));
 
-      if (tablet.rowSize == tablet.getMaxRowNumber()) {
+      if (tablet.getRowSize() == tablet.getMaxRowNumber()) {
         session.insertAlignedTablet(tablet, true);
         tablet.reset();
       }
       timestamp++;
     }
 
-    if (tablet.rowSize != 0) {
+    if (tablet.getRowSize() != 0) {
       session.insertAlignedTablet(tablet);
       tablet.reset();
     }

@@ -20,13 +20,14 @@
 package org.apache.iotdb.db.queryengine.execution.operator.schema;
 
 import org.apache.iotdb.commons.exception.runtime.SchemaExecutionException;
-import org.apache.iotdb.commons.path.PartialPath;
-import org.apache.iotdb.db.queryengine.common.header.ColumnHeader;
+import org.apache.iotdb.commons.schema.column.ColumnHeader;
+import org.apache.iotdb.db.queryengine.execution.MemoryEstimationHelper;
 import org.apache.iotdb.db.queryengine.execution.driver.SchemaDriverContext;
 import org.apache.iotdb.db.queryengine.execution.operator.OperatorContext;
 import org.apache.iotdb.db.queryengine.execution.operator.schema.source.ISchemaSource;
 import org.apache.iotdb.db.queryengine.execution.operator.source.SourceOperator;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNodeId;
+import org.apache.iotdb.db.schemaengine.schemaregion.ISchemaRegion;
 import org.apache.iotdb.db.schemaengine.schemaregion.read.resp.info.ISchemaInfo;
 import org.apache.iotdb.db.schemaengine.schemaregion.read.resp.reader.ISchemaReader;
 
@@ -36,6 +37,7 @@ import org.apache.tsfile.common.conf.TSFileDescriptor;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.read.common.block.TsBlock;
 import org.apache.tsfile.read.common.block.TsBlockBuilder;
+import org.apache.tsfile.utils.RamUsageEstimator;
 
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -44,9 +46,11 @@ import java.util.stream.Collectors;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 
 public class SchemaQueryScanOperator<T extends ISchemaInfo> implements SourceOperator {
-  private static final long DEFAULT_MAX_TSBLOCK_SIZE_IN_BYTES =
+  private static final long MAX_SIZE =
       TSFileDescriptor.getInstance().getConfig().getMaxTsBlockSizeInBytes();
-  private static final long MAX_SIZE = DEFAULT_MAX_TSBLOCK_SIZE_IN_BYTES;
+
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(SchemaQueryScanOperator.class);
 
   protected PlanNodeId sourceId;
 
@@ -54,10 +58,8 @@ public class SchemaQueryScanOperator<T extends ISchemaInfo> implements SourceOpe
 
   private final ISchemaSource<T> schemaSource;
 
-  protected int limit;
-  protected int offset;
-  protected PartialPath partialPath;
-  protected boolean isPrefixPath;
+  private long limit = -1;
+  private long offset = 0;
 
   private String database;
 
@@ -69,9 +71,12 @@ public class SchemaQueryScanOperator<T extends ISchemaInfo> implements SourceOpe
   private ListenableFuture<?> isBlocked;
   private TsBlock next;
   private boolean isFinished;
+  private long count = 0;
 
   public SchemaQueryScanOperator(
-      PlanNodeId sourceId, OperatorContext operatorContext, ISchemaSource<T> schemaSource) {
+      final PlanNodeId sourceId,
+      final OperatorContext operatorContext,
+      final ISchemaSource<T> schemaSource) {
     this.sourceId = sourceId;
     this.operatorContext = operatorContext;
     this.schemaSource = schemaSource;
@@ -87,32 +92,16 @@ public class SchemaQueryScanOperator<T extends ISchemaInfo> implements SourceOpe
         ((SchemaDriverContext) operatorContext.getDriverContext()).getSchemaRegion());
   }
 
-  private void setColumns(T element, TsBlockBuilder builder) {
+  private void setColumns(final T element, final TsBlockBuilder builder) {
     schemaSource.transformToTsBlockColumns(element, builder, getDatabase());
   }
 
-  public PartialPath getPartialPath() {
-    return partialPath;
-  }
-
-  public int getLimit() {
-    return limit;
-  }
-
-  public int getOffset() {
-    return offset;
-  }
-
-  public void setLimit(int limit) {
+  public void setLimit(final long limit) {
     this.limit = limit;
   }
 
-  public void setOffset(int offset) {
+  public void setOffset(final long offset) {
     this.offset = offset;
-  }
-
-  public boolean isPrefixPath() {
-    return isPrefixPath;
   }
 
   @Override
@@ -129,8 +118,8 @@ public class SchemaQueryScanOperator<T extends ISchemaInfo> implements SourceOpe
   }
 
   /**
-   * Try to get next TsBlock. If the next is not ready, return a future. After success, {@link
-   * SchemaQueryScanOperator#next} will be set.
+   * Try to get next {@link TsBlock}. If the next is not ready, return a future. After success,
+   * {@link SchemaQueryScanOperator#next} will be set.
    */
   private ListenableFuture<?> tryGetNext() {
     if (schemaReader == null) {
@@ -138,9 +127,9 @@ public class SchemaQueryScanOperator<T extends ISchemaInfo> implements SourceOpe
     }
     while (true) {
       try {
-        ListenableFuture<?> readerBlocked = schemaReader.isBlocked();
+        final ListenableFuture<?> readerBlocked = schemaReader.isBlocked();
         if (!readerBlocked.isDone()) {
-          SettableFuture<?> settableFuture = SettableFuture.create();
+          final SettableFuture<?> settableFuture = SettableFuture.create();
           readerBlocked.addListener(
               () -> {
                 next = tsBlockBuilder.build();
@@ -149,13 +138,15 @@ public class SchemaQueryScanOperator<T extends ISchemaInfo> implements SourceOpe
               },
               directExecutor());
           return settableFuture;
-        } else if (schemaReader.hasNext()) {
-          T element = schemaReader.next();
-          setColumns(element, tsBlockBuilder);
-          if (tsBlockBuilder.getRetainedSizeInBytes() >= MAX_SIZE) {
-            next = tsBlockBuilder.build();
-            tsBlockBuilder.reset();
-            return NOT_BLOCKED;
+        } else if (schemaReader.hasNext() && (limit < 0 || count < offset + limit)) {
+          final T element = schemaReader.next();
+          if (++count > offset) {
+            setColumns(element, tsBlockBuilder);
+            if (tsBlockBuilder.getRetainedSizeInBytes() >= MAX_SIZE) {
+              next = tsBlockBuilder.build();
+              tsBlockBuilder.reset();
+              return NOT_BLOCKED;
+            }
           }
         } else {
           if (tsBlockBuilder.isEmpty()) {
@@ -167,7 +158,7 @@ public class SchemaQueryScanOperator<T extends ISchemaInfo> implements SourceOpe
           tsBlockBuilder.reset();
           return NOT_BLOCKED;
         }
-      } catch (Exception e) {
+      } catch (final Exception e) {
         throw new SchemaExecutionException(e);
       }
     }
@@ -178,7 +169,7 @@ public class SchemaQueryScanOperator<T extends ISchemaInfo> implements SourceOpe
     if (!hasNext()) {
       throw new NoSuchElementException();
     }
-    TsBlock ret = next;
+    final TsBlock ret = next;
     next = null;
     isBlocked = null;
     return ret;
@@ -205,12 +196,16 @@ public class SchemaQueryScanOperator<T extends ISchemaInfo> implements SourceOpe
 
   @Override
   public long calculateMaxPeekMemory() {
-    return DEFAULT_MAX_TSBLOCK_SIZE_IN_BYTES;
+    return schemaSource.getMaxMemory(getSchemaRegion());
   }
 
   @Override
   public long calculateMaxReturnSize() {
-    return DEFAULT_MAX_TSBLOCK_SIZE_IN_BYTES;
+    return schemaSource.getMaxMemory(getSchemaRegion());
+  }
+
+  private ISchemaRegion getSchemaRegion() {
+    return ((SchemaDriverContext) operatorContext.getDriverContext()).getSchemaRegion();
   }
 
   @Override
@@ -234,5 +229,13 @@ public class SchemaQueryScanOperator<T extends ISchemaInfo> implements SourceOpe
       schemaReader.close();
       schemaReader = null;
     }
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE
+        + MemoryEstimationHelper.getEstimatedSizeOfAccountableObject(operatorContext)
+        + MemoryEstimationHelper.getEstimatedSizeOfAccountableObject(sourceId)
+        + RamUsageEstimator.sizeOf(database);
   }
 }

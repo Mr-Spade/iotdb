@@ -44,12 +44,13 @@ public class IoTDBDatetimeFormatIT {
 
   @Before
   public void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeTest();
+    EnvFactory.getEnv().getConfig().getCommonConfig().setTimestampPrecisionCheckEnabled(false);
+    EnvFactory.getEnv().initClusterEnvironment();
   }
 
   @After
   public void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterTest();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   @Test
@@ -126,6 +127,15 @@ public class IoTDBDatetimeFormatIT {
     } catch (SQLException e) {
       e.printStackTrace();
       fail();
+    }
+    try (Connection connection = EnvFactory.getEnv().getConnection();
+        Statement statement = connection.createStatement()) {
+      statement.execute("insert into root.sg.d1(time,s2) values (16182830055860000000, 8.76);");
+      fail();
+    } catch (SQLException e) {
+      Assert.assertTrue(
+          e.getMessage()
+              .contains("please check whether the timestamp 16182830055860000000 is correct."));
     }
   }
 }

@@ -31,10 +31,13 @@ import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.commons.lang3.Validate;
 import org.apache.tsfile.read.common.block.TsBlock;
 import org.apache.tsfile.read.common.block.column.TsBlockSerde;
+import org.apache.tsfile.utils.RamUsageEstimator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
+import java.util.Optional;
+import java.util.concurrent.ExecutionException;
 
 import static com.google.common.util.concurrent.Futures.nonCancellationPropagating;
 import static org.apache.iotdb.db.queryengine.execution.exchange.MPPDataExchangeManager.createFullIdFrom;
@@ -61,7 +64,10 @@ public class LocalSourceHandle implements ISourceHandle {
   private static final DataExchangeCostMetricSet DATA_EXCHANGE_COST_METRIC_SET =
       DataExchangeCostMetricSet.getInstance();
 
-  // For pipeline
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(LocalSourceHandle.class)
+          + RamUsageEstimator.shallowSizeOfInstance(TFragmentInstanceId.class)
+          + +RamUsageEstimator.shallowSizeOfInstance(SharedTsBlockQueue.class);
 
   public LocalSourceHandle(
       SharedTsBlockQueue queue, SourceHandleListener sourceHandleListener, String threadName) {
@@ -119,9 +125,7 @@ public class LocalSourceHandle implements ISourceHandle {
       if (tsBlock != null) {
         if (LOGGER.isDebugEnabled()) {
           LOGGER.debug(
-              "[GetTsBlockFromQueue] TsBlock:{} size:{}",
-              currSequenceId,
-              tsBlock.getRetainedSizeInBytes());
+              "[GetTsBlockFromQueue] TsBlock:{} size:{}", currSequenceId, tsBlock.getSizeInBytes());
         }
         currSequenceId++;
       }
@@ -249,10 +253,24 @@ public class LocalSourceHandle implements ISourceHandle {
   }
 
   private void checkState() {
-    if (aborted) {
-      throw new IllegalStateException("Source handle is aborted.");
-    } else if (closed) {
-      throw new IllegalStateException("Source Handle is closed.");
+    if (aborted || closed) {
+      Optional<Throwable> abortedCause = queue.getAbortedCause();
+      if (abortedCause.isPresent()) {
+        throw new IllegalStateException(abortedCause.get());
+      }
+      if (queue.isBlocked().isDone()) {
+        // try throw underlying exception instead of "Source handle is aborted."
+        try {
+          queue.isBlocked().get();
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          throw new IllegalStateException(e);
+        } catch (ExecutionException e) {
+          throw new IllegalStateException(e.getCause() == null ? e : e.getCause());
+        }
+      }
+      throw new IllegalStateException(
+          "LocalSinkChannel state is ." + (aborted ? "ABORTED" : "CLOSED"));
     }
   }
 
@@ -264,5 +282,12 @@ public class LocalSourceHandle implements ISourceHandle {
   public void setMaxBytesCanReserve(long maxBytesCanReserve) {
     // do nothing, the maxBytesCanReserve of SharedTsBlockQueue should be set by corresponding
     // LocalSinkChannel
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE
+        + RamUsageEstimator.sizeOf(threadName)
+        + RamUsageEstimator.sizeOf(localPlanNodeId);
   }
 }

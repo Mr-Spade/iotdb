@@ -19,15 +19,15 @@
 package org.apache.iotdb.db.it.schema;
 
 import org.apache.iotdb.it.env.EnvFactory;
-import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
+import org.apache.iotdb.util.AbstractSchemaIT;
 
 import org.junit.After;
-import org.junit.Before;
+import org.junit.Assert;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -40,18 +40,28 @@ import java.util.List;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-@RunWith(IoTDBTestRunner.class)
 @Category({LocalStandaloneIT.class, ClusterIT.class})
-public class IoTDBDeleteStorageGroupIT {
+public class IoTDBDeleteStorageGroupIT extends AbstractSchemaIT {
 
-  @Before
-  public void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeTest();
+  public IoTDBDeleteStorageGroupIT(SchemaTestMode schemaTestMode) {
+    super(schemaTestMode);
+  }
+
+  @Parameterized.BeforeParam
+  public static void before() throws Exception {
+    setUpEnvironment();
+    EnvFactory.getEnv().initClusterEnvironment();
+  }
+
+  @Parameterized.AfterParam
+  public static void after() throws Exception {
+    EnvFactory.getEnv().cleanClusterEnvironment();
+    tearDownEnvironment();
   }
 
   @After
   public void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterTest();
+    clearSchema();
   }
 
   @Test
@@ -104,8 +114,8 @@ public class IoTDBDeleteStorageGroupIT {
 
   @Test(expected = SQLException.class)
   public void deleteNonExistStorageGroup() throws Exception {
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
+    try (final Connection connection = EnvFactory.getEnv().getConnection();
+        final Statement statement = connection.createStatement()) {
       statement.execute("CREATE DATABASE root.ln2.wf01.wt01");
       statement.execute("DELETE DATABASE root.ln2.wf01.wt02");
     }
@@ -171,6 +181,26 @@ public class IoTDBDeleteStorageGroupIT {
         }
       }
       assertEquals(1, count);
+    }
+  }
+
+  @Test
+  public void testDeleteStorageGroupInvalidateCache() throws Exception {
+    try (final Connection connection = EnvFactory.getEnv().getConnection();
+        final Statement statement = connection.createStatement()) {
+      try {
+        statement.execute("insert into root.sg1.d1(s1) values(1);");
+        statement.execute("insert into root.sg2(s2) values(1);");
+        statement.execute("select last(s1) from root.sg1.d1;");
+        statement.execute("select last(s2) from root.sg2;");
+        statement.execute("insert into root.sg1.d1(s1) values(1);");
+        statement.execute("insert into root.sg2(s2) values(1);");
+        statement.execute("delete database root.**");
+        statement.execute("insert into root.sg1.d1(s1) values(\"2001-08-01\");");
+        statement.execute("insert into root.sg2(s2) values(\"2001-08-01\");");
+      } catch (final Exception e) {
+        Assert.fail(e.getMessage());
+      }
     }
   }
 }

@@ -72,7 +72,8 @@ public class DeactivateTemplateStatement extends Statement implements IConfigSta
     }
 
     return pathPatternList.stream()
-        .flatMap(path -> template.getSchemaMap().keySet().stream().map(path::concatNode))
+        .flatMap(
+            path -> template.getSchemaMap().keySet().stream().map(path::concatAsMeasurementPath))
         .collect(Collectors.toList());
   }
 
@@ -83,8 +84,7 @@ public class DeactivateTemplateStatement extends Statement implements IConfigSta
     }
     List<PartialPath> checkedPaths = getPaths();
     return AuthorityChecker.getTSStatus(
-        AuthorityChecker.checkPatternPermission(
-            userName, checkedPaths, PrivilegeType.WRITE_SCHEMA.ordinal()),
+        AuthorityChecker.checkPatternPermission(userName, checkedPaths, PrivilegeType.WRITE_SCHEMA),
         checkedPaths,
         PrivilegeType.WRITE_SCHEMA);
   }

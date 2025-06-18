@@ -21,13 +21,14 @@ package org.apache.iotdb.db.pipe.connector.payload.evolvable.request;
 
 import org.apache.iotdb.commons.pipe.connector.payload.thrift.request.PipeRequestType;
 import org.apache.iotdb.commons.pipe.connector.payload.thrift.request.PipeTransferFileSealReqV2;
-import org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.service.rpc.thrift.TPipeTransferReq;
 
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -45,29 +46,57 @@ public class PipeTransferSchemaSnapshotSealReq extends PipeTransferFileSealReqV2
   /////////////////////////////// Thrift ///////////////////////////////
 
   public static PipeTransferSchemaSnapshotSealReq toTPipeTransferReq(
-      String mTreeSnapshotName,
-      long mTreeSnapshotLength,
-      String tLogName,
-      long tLogLength,
-      String databaseName,
-      String typeString)
+      final String treePattern,
+      final String tablePatternDatabase,
+      final String tablePatternTable,
+      final boolean isTreeCaptured,
+      final boolean isTableCaptured,
+      final String mTreeSnapshotName,
+      final long mTreeSnapshotLength,
+      final String tLogName,
+      final long tLogLength,
+      final String attributeSnapshotName,
+      final long attributeSnapshotLength,
+      final String databaseName,
+      final String typeString)
       throws IOException {
     final Map<String, String> parameters = new HashMap<>();
+    parameters.put(ColumnHeaderConstant.PATH_PATTERN, treePattern);
+    parameters.put(DATABASE_PATTERN, tablePatternDatabase);
+    parameters.put(ColumnHeaderConstant.TABLE_NAME, tablePatternTable);
+    if (isTreeCaptured) {
+      parameters.put(TREE, "");
+    }
+    if (isTableCaptured) {
+      parameters.put(TABLE, "");
+    }
     parameters.put(ColumnHeaderConstant.DATABASE, databaseName);
     parameters.put(ColumnHeaderConstant.TYPE, typeString);
+
+    final List<String> fileNameList;
+    final List<Long> fileLengthList;
+
+    // Tree model sync
+    if (Objects.isNull(attributeSnapshotName)) {
+      fileNameList =
+          Objects.nonNull(tLogName)
+              ? Arrays.asList(mTreeSnapshotName, tLogName)
+              : Collections.singletonList(mTreeSnapshotName);
+      fileLengthList =
+          Objects.nonNull(tLogName)
+              ? Arrays.asList(mTreeSnapshotLength, tLogLength)
+              : Collections.singletonList(mTreeSnapshotLength);
+    } else {
+      fileNameList = Arrays.asList(mTreeSnapshotName, tLogName, attributeSnapshotName);
+      fileLengthList = Arrays.asList(mTreeSnapshotLength, tLogLength, attributeSnapshotLength);
+    }
+
     return (PipeTransferSchemaSnapshotSealReq)
         new PipeTransferSchemaSnapshotSealReq()
-            .convertToTPipeTransferReq(
-                Objects.nonNull(tLogName)
-                    ? Arrays.asList(mTreeSnapshotName, tLogName)
-                    : Collections.singletonList(mTreeSnapshotName),
-                Objects.nonNull(tLogName)
-                    ? Arrays.asList(mTreeSnapshotLength, tLogLength)
-                    : Collections.singletonList(mTreeSnapshotLength),
-                parameters);
+            .convertToTPipeTransferReq(fileNameList, fileLengthList, parameters);
   }
 
-  public static PipeTransferSchemaSnapshotSealReq fromTPipeTransferReq(TPipeTransferReq req) {
+  public static PipeTransferSchemaSnapshotSealReq fromTPipeTransferReq(final TPipeTransferReq req) {
     return (PipeTransferSchemaSnapshotSealReq)
         new PipeTransferSchemaSnapshotSealReq().translateFromTPipeTransferReq(req);
   }
@@ -75,31 +104,59 @@ public class PipeTransferSchemaSnapshotSealReq extends PipeTransferFileSealReqV2
   /////////////////////////////// Air Gap ///////////////////////////////
 
   public static byte[] toTPipeTransferBytes(
-      String mTreeSnapshotName,
-      long mTreeSnapshotLength,
-      String tLogName,
-      long tLogLength,
-      String databaseName,
-      String typeString)
+      final String treePattern,
+      final String tablePatternDatabase,
+      final String tablePatternTable,
+      final boolean isTreeCaptured,
+      final boolean isTableCaptured,
+      final String mTreeSnapshotName,
+      final long mTreeSnapshotLength,
+      final String tLogName,
+      final long tLogLength,
+      final String attributeSnapshotName,
+      final long attributeSnapshotLength,
+      final String databaseName,
+      final String typeString)
       throws IOException {
     final Map<String, String> parameters = new HashMap<>();
+    parameters.put(ColumnHeaderConstant.PATH_PATTERN, treePattern);
+    parameters.put(DATABASE_PATTERN, tablePatternDatabase);
+    parameters.put(ColumnHeaderConstant.TABLE_NAME, tablePatternTable);
+    if (isTreeCaptured) {
+      parameters.put(TREE, "");
+    }
+    if (isTableCaptured) {
+      parameters.put(TABLE, "");
+    }
     parameters.put(ColumnHeaderConstant.DATABASE, databaseName);
     parameters.put(ColumnHeaderConstant.TYPE, typeString);
+
+    final List<String> fileNameList;
+    final List<Long> fileLengthList;
+
+    // Tree model sync
+    if (Objects.isNull(attributeSnapshotName)) {
+      fileNameList =
+          Objects.nonNull(tLogName)
+              ? Arrays.asList(mTreeSnapshotName, tLogName)
+              : Collections.singletonList(mTreeSnapshotName);
+      fileLengthList =
+          Objects.nonNull(tLogName)
+              ? Arrays.asList(mTreeSnapshotLength, tLogLength)
+              : Collections.singletonList(mTreeSnapshotLength);
+    } else {
+      fileNameList = Arrays.asList(mTreeSnapshotName, tLogName, attributeSnapshotName);
+      fileLengthList = Arrays.asList(mTreeSnapshotLength, tLogLength, attributeSnapshotLength);
+    }
+
     return new PipeTransferSchemaSnapshotSealReq()
-        .convertToTPipeTransferSnapshotSealBytes(
-            Objects.nonNull(tLogName)
-                ? Arrays.asList(mTreeSnapshotName, tLogName)
-                : Collections.singletonList(mTreeSnapshotName),
-            Objects.nonNull(tLogName)
-                ? Arrays.asList(mTreeSnapshotLength, tLogLength)
-                : Collections.singletonList(mTreeSnapshotLength),
-            parameters);
+        .convertToTPipeTransferSnapshotSealBytes(fileNameList, fileLengthList, parameters);
   }
 
   /////////////////////////////// Object ///////////////////////////////
 
   @Override
-  public boolean equals(Object obj) {
+  public boolean equals(final Object obj) {
     return obj instanceof PipeTransferSchemaSnapshotSealReq && super.equals(obj);
   }
 

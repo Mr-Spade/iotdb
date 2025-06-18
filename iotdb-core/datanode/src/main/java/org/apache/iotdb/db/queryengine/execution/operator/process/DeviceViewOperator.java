@@ -19,6 +19,7 @@
 
 package org.apache.iotdb.db.queryengine.execution.operator.process;
 
+import org.apache.iotdb.db.queryengine.execution.MemoryEstimationHelper;
 import org.apache.iotdb.db.queryengine.execution.operator.Operator;
 import org.apache.iotdb.db.queryengine.execution.operator.OperatorContext;
 
@@ -28,11 +29,13 @@ import org.apache.tsfile.block.column.ColumnBuilder;
 import org.apache.tsfile.common.conf.TSFileConfig;
 import org.apache.tsfile.common.conf.TSFileDescriptor;
 import org.apache.tsfile.enums.TSDataType;
+import org.apache.tsfile.file.metadata.IDeviceID;
 import org.apache.tsfile.read.common.block.TsBlock;
 import org.apache.tsfile.read.common.block.column.BinaryColumnBuilder;
 import org.apache.tsfile.read.common.block.column.NullColumn;
 import org.apache.tsfile.read.common.block.column.RunLengthEncodedColumn;
 import org.apache.tsfile.utils.Binary;
+import org.apache.tsfile.utils.RamUsageEstimator;
 
 import java.util.List;
 
@@ -51,9 +54,11 @@ import java.util.List;
  */
 public class DeviceViewOperator implements ProcessOperator {
 
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(DeviceViewOperator.class);
   private final OperatorContext operatorContext;
   // The size devices and deviceOperators should be the same.
-  private final List<String> devices;
+  private final List<IDeviceID> devices;
   private final List<Operator> deviceOperators;
   // Used to fill columns and leave null columns which doesn't exist in some devices.
   // e.g. [s1,s2,s3] is query, but [s1, s3] exists in device1, then device1 -> [1, 3], s1 is 1 but
@@ -66,7 +71,7 @@ public class DeviceViewOperator implements ProcessOperator {
 
   public DeviceViewOperator(
       OperatorContext operatorContext,
-      List<String> devices,
+      List<IDeviceID> devices,
       List<Operator> deviceOperators,
       List<List<Integer>> deviceColumnIndex,
       List<TSDataType> dataTypes) {
@@ -80,7 +85,7 @@ public class DeviceViewOperator implements ProcessOperator {
   }
 
   private String getCurDeviceName() {
-    return devices.get(deviceIndex);
+    return devices.get(deviceIndex).toString();
   }
 
   private Operator getCurDeviceOperator() {
@@ -189,5 +194,15 @@ public class DeviceViewOperator implements ProcessOperator {
       max = Math.max(max, operator.calculateRetainedSizeAfterCallingNext());
     }
     return max;
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE
+        + MemoryEstimationHelper.getEstimatedSizeOfAccountableObject(operatorContext)
+        + devices.stream().mapToLong(IDeviceID::ramBytesUsed).sum()
+        + deviceOperators.stream()
+            .mapToLong(MemoryEstimationHelper::getEstimatedSizeOfAccountableObject)
+            .sum();
   }
 }

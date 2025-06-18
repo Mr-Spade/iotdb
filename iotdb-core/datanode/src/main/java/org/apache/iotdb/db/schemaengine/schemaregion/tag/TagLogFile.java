@@ -41,6 +41,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public class TagLogFile implements AutoCloseable {
 
@@ -49,15 +50,10 @@ public class TagLogFile implements AutoCloseable {
   private FileChannel fileChannel;
   private static final String LENGTH_EXCEED_MSG =
       "Tag/Attribute exceeds the max length limit. "
-          + "Please enlarge tag_attribute_total_size in iotdb-common.properties";
+          + "Please enlarge tag_attribute_total_size in iotdb-system.properties";
 
   private static final int MAX_LENGTH =
       CommonDescriptor.getInstance().getConfig().getTagAttributeTotalSize();
-
-  private static final int MAX_ENTRY_NUM =
-      CommonDescriptor.getInstance().getConfig().getTagAttributeMaxNum();
-  private static final int MAX_ENTRY_Size =
-      CommonDescriptor.getInstance().getConfig().getTagAttributeEntryMaxSize();
 
   private static final int RECORD_FLUSH_INTERVAL =
       IoTDBDescriptor.getInstance().getConfig().getTagAttributeFlushInterval();
@@ -316,12 +312,9 @@ public class TagLogFile implements AutoCloseable {
     return byteBuffer;
   }
 
-  public static int calculateMapSize(Map<String, String> map) throws MetadataException {
+  public static int calculateMapSize(Map<String, String> map) {
     int length = 0;
     if (map != null) {
-      if (map.size() > MAX_ENTRY_NUM) {
-        throw new MetadataException("the emtry num of the map is over the tagAttributeMaxNum");
-      }
       length += 4; // mapSize is 4 byte
       // while mapSize is 0, this for loop will not be executed
       for (Map.Entry<String, String> entry : map.entrySet()) {
@@ -343,10 +336,6 @@ public class TagLogFile implements AutoCloseable {
               value.getBytes()
                   .length; // only value is not null then add value length, while value is null,
           // only store the valueSize marker which is -1 (4 bytes)
-        }
-        if (entryLength > MAX_ENTRY_Size) {
-          throw new MetadataException(
-              "An emtry of the map has a size which is over the tagAttributeMaxSize");
         }
         length += entryLength;
       }
@@ -371,8 +360,10 @@ public class TagLogFile implements AutoCloseable {
 
   @Override
   public void close() throws IOException {
-    fileChannel.force(true);
-    fileChannel.close();
-    fileChannel = null;
+    if (Objects.nonNull(fileChannel) && fileChannel.isOpen()) {
+      fileChannel.force(true);
+      fileChannel.close();
+      fileChannel = null;
+    }
   }
 }

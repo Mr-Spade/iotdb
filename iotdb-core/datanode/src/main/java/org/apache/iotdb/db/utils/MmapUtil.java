@@ -16,10 +16,12 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.db.utils;
 
 import io.netty.util.internal.PlatformDependent;
 
+import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 
 public class MmapUtil {
@@ -31,5 +33,12 @@ public class MmapUtil {
       return;
     }
     PlatformDependent.freeDirectBuffer(mappedByteBuffer);
+  }
+
+  /** we do not need to clean heapByteBuffer manually, so we just leave it alone. */
+  public static void clean(ByteBuffer byteBuffer) {
+    if (byteBuffer instanceof MappedByteBuffer) {
+      clean((MappedByteBuffer) byteBuffer);
+    }
   }
 }

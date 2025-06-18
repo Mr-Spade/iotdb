@@ -21,6 +21,7 @@ package org.apache.iotdb.db.queryengine.plan.statement.metadata;
 
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.auth.entity.PrivilegeType;
+import org.apache.iotdb.commons.path.MeasurementPath;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.auth.AuthorityChecker;
 import org.apache.iotdb.db.queryengine.plan.statement.Statement;
@@ -47,7 +48,7 @@ import java.util.Map;
  */
 public class CreateTimeSeriesStatement extends Statement {
 
-  private PartialPath path;
+  private MeasurementPath path;
   private String alias;
   private TSDataType dataType;
   private TSEncoding encoding;
@@ -72,16 +73,15 @@ public class CreateTimeSeriesStatement extends Statement {
       return new TSStatus(TSStatusCode.SUCCESS_STATUS.getStatusCode());
     }
     return AuthorityChecker.getTSStatus(
-        AuthorityChecker.checkFullPathPermission(
-            userName, path, PrivilegeType.WRITE_SCHEMA.ordinal()),
+        AuthorityChecker.checkFullPathPermission(userName, path, PrivilegeType.WRITE_SCHEMA),
         PrivilegeType.WRITE_SCHEMA);
   }
 
-  public PartialPath getPath() {
+  public MeasurementPath getPath() {
     return path;
   }
 
-  public void setPath(PartialPath path) {
+  public void setPath(MeasurementPath path) {
     this.path = path;
   }
 

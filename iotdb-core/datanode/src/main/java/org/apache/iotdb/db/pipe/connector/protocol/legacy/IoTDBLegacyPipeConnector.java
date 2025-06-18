@@ -24,7 +24,7 @@ import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.client.property.ThriftClientProperty;
 import org.apache.iotdb.commons.conf.CommonConfig;
 import org.apache.iotdb.commons.conf.CommonDescriptor;
-import org.apache.iotdb.commons.conf.IoTDBConstant;
+import org.apache.iotdb.commons.consensus.DataRegionId;
 import org.apache.iotdb.commons.exception.pipe.PipeRuntimeCriticalException;
 import org.apache.iotdb.commons.pipe.config.PipeConfig;
 import org.apache.iotdb.commons.pipe.connector.client.IoTDBSyncClient;
@@ -35,8 +35,11 @@ import org.apache.iotdb.db.pipe.connector.payload.legacy.TsFilePipeData;
 import org.apache.iotdb.db.pipe.event.common.heartbeat.PipeHeartbeatEvent;
 import org.apache.iotdb.db.pipe.event.common.tablet.PipeInsertNodeTabletInsertionEvent;
 import org.apache.iotdb.db.pipe.event.common.tablet.PipeRawTabletInsertionEvent;
+import org.apache.iotdb.db.pipe.event.common.terminate.PipeTerminateEvent;
 import org.apache.iotdb.db.pipe.event.common.tsfile.PipeTsFileInsertionEvent;
+import org.apache.iotdb.db.storageengine.StorageEngine;
 import org.apache.iotdb.pipe.api.PipeConnector;
+import org.apache.iotdb.pipe.api.annotation.TreeModel;
 import org.apache.iotdb.pipe.api.customizer.configuration.PipeConnectorRuntimeConfiguration;
 import org.apache.iotdb.pipe.api.customizer.parameter.PipeParameterValidator;
 import org.apache.iotdb.pipe.api.customizer.parameter.PipeParameters;
@@ -65,6 +68,8 @@ import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -74,6 +79,7 @@ import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstan
 import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.CONNECTOR_IOTDB_PORT_KEY;
 import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.CONNECTOR_IOTDB_SYNC_CONNECTOR_VERSION_DEFAULT_VALUE;
 import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.CONNECTOR_IOTDB_SYNC_CONNECTOR_VERSION_KEY;
+import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.CONNECTOR_IOTDB_USERNAME_KEY;
 import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.CONNECTOR_IOTDB_USER_DEFAULT_VALUE;
 import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.CONNECTOR_IOTDB_USER_KEY;
 import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.SINK_IOTDB_IP_KEY;
@@ -83,8 +89,10 @@ import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstan
 import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.SINK_IOTDB_SSL_TRUST_STORE_PATH_KEY;
 import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.SINK_IOTDB_SSL_TRUST_STORE_PWD_KEY;
 import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.SINK_IOTDB_SYNC_CONNECTOR_VERSION_KEY;
+import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.SINK_IOTDB_USERNAME_KEY;
 import static org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant.SINK_IOTDB_USER_KEY;
 
+@TreeModel
 public class IoTDBLegacyPipeConnector implements PipeConnector {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(IoTDBLegacyPipeConnector.class);
@@ -104,6 +112,8 @@ public class IoTDBLegacyPipeConnector implements PipeConnector {
   private String syncConnectorVersion;
 
   private String pipeName;
+  private String databaseName;
+
   private IoTDBSyncClient client;
 
   private SessionPool sessionPool;
@@ -190,7 +200,11 @@ public class IoTDBLegacyPipeConnector implements PipeConnector {
 
     user =
         parameters.getStringOrDefault(
-            Arrays.asList(CONNECTOR_IOTDB_USER_KEY, SINK_IOTDB_USER_KEY),
+            Arrays.asList(
+                CONNECTOR_IOTDB_USER_KEY,
+                SINK_IOTDB_USER_KEY,
+                CONNECTOR_IOTDB_USERNAME_KEY,
+                SINK_IOTDB_USERNAME_KEY),
             CONNECTOR_IOTDB_USER_DEFAULT_VALUE);
     password =
         parameters.getStringOrDefault(
@@ -208,6 +222,11 @@ public class IoTDBLegacyPipeConnector implements PipeConnector {
     useSSL = parameters.getBooleanOrDefault(SINK_IOTDB_SSL_ENABLE_KEY, false);
     trustStore = parameters.getString(SINK_IOTDB_SSL_TRUST_STORE_PATH_KEY);
     trustStorePwd = parameters.getString(SINK_IOTDB_SSL_TRUST_STORE_PWD_KEY);
+
+    databaseName =
+        StorageEngine.getInstance()
+            .getDataRegion(new DataRegionId(configuration.getRuntimeEnvironment().getRegionId()))
+            .getDatabaseName();
   }
 
   @Override
@@ -218,7 +237,7 @@ public class IoTDBLegacyPipeConnector implements PipeConnector {
       client =
           new IoTDBSyncClient(
               new ThriftClientProperty.Builder()
-                  .setConnectionTimeoutMs(COMMON_CONFIG.getConnectionTimeoutInMS())
+                  .setConnectionTimeoutMs(COMMON_CONFIG.getDnConnectionTimeoutInMS())
                   .setRpcThriftCompressionEnabled(COMMON_CONFIG.isRpcThriftCompressionEnabled())
                   .build(),
               ipAddress,
@@ -228,7 +247,7 @@ public class IoTDBLegacyPipeConnector implements PipeConnector {
               trustStorePwd);
       final TSyncIdentityInfo identityInfo =
           new TSyncIdentityInfo(
-              pipeName, System.currentTimeMillis(), syncConnectorVersion, IoTDBConstant.PATH_ROOT);
+              pipeName, System.currentTimeMillis(), syncConnectorVersion, databaseName);
       final TSStatus status = client.handshake(identityInfo);
       if (status.code != TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
         final String errorMsg =
@@ -301,7 +320,7 @@ public class IoTDBLegacyPipeConnector implements PipeConnector {
 
   @Override
   public void transfer(final Event event) throws Exception {
-    if (!(event instanceof PipeHeartbeatEvent)) {
+    if (!(event instanceof PipeHeartbeatEvent || event instanceof PipeTerminateEvent)) {
       LOGGER.warn(
           "IoTDBLegacyPipeConnector does not support transferring generic event: {}.", event);
     }
@@ -310,12 +329,12 @@ public class IoTDBLegacyPipeConnector implements PipeConnector {
   private void doTransferWrapper(
       final PipeInsertNodeTabletInsertionEvent pipeInsertNodeInsertionEvent)
       throws IoTDBConnectionException, StatementExecutionException {
+    // We increase the reference count for this event to determine if the event may be released.
+    if (!pipeInsertNodeInsertionEvent.increaseReferenceCount(
+        IoTDBLegacyPipeConnector.class.getName())) {
+      return;
+    }
     try {
-      // We increase the reference count for this event to determine if the event may be released.
-      if (!pipeInsertNodeInsertionEvent.increaseReferenceCount(
-          IoTDBLegacyPipeConnector.class.getName())) {
-        return;
-      }
       doTransfer(pipeInsertNodeInsertionEvent);
     } finally {
       pipeInsertNodeInsertionEvent.decreaseReferenceCount(
@@ -325,8 +344,13 @@ public class IoTDBLegacyPipeConnector implements PipeConnector {
 
   private void doTransfer(final PipeInsertNodeTabletInsertionEvent pipeInsertNodeInsertionEvent)
       throws IoTDBConnectionException, StatementExecutionException {
-    for (final Tablet tablet : pipeInsertNodeInsertionEvent.convertToTablets()) {
-      if (pipeInsertNodeInsertionEvent.isAligned()) {
+    final List<Tablet> tablets = pipeInsertNodeInsertionEvent.convertToTablets();
+    for (int i = 0; i < tablets.size(); ++i) {
+      final Tablet tablet = tablets.get(i);
+      if (Objects.isNull(tablet) || tablet.getRowSize() == 0) {
+        continue;
+      }
+      if (pipeInsertNodeInsertionEvent.isAligned(i)) {
         sessionPool.insertAlignedTablet(tablet);
       } else {
         sessionPool.insertTablet(tablet);
@@ -336,12 +360,12 @@ public class IoTDBLegacyPipeConnector implements PipeConnector {
 
   private void doTransferWrapper(final PipeRawTabletInsertionEvent pipeRawTabletInsertionEvent)
       throws PipeException, IoTDBConnectionException, StatementExecutionException {
+    // We increase the reference count for this event to determine if the event may be released.
+    if (!pipeRawTabletInsertionEvent.increaseReferenceCount(
+        IoTDBLegacyPipeConnector.class.getName())) {
+      return;
+    }
     try {
-      // We increase the reference count for this event to determine if the event may be released.
-      if (!pipeRawTabletInsertionEvent.increaseReferenceCount(
-          IoTDBLegacyPipeConnector.class.getName())) {
-        return;
-      }
       doTransfer(pipeRawTabletInsertionEvent);
     } finally {
       pipeRawTabletInsertionEvent.decreaseReferenceCount(
@@ -361,12 +385,12 @@ public class IoTDBLegacyPipeConnector implements PipeConnector {
 
   private void doTransferWrapper(final PipeTsFileInsertionEvent pipeTsFileInsertionEvent)
       throws PipeException, TException, IOException {
+    // We increase the reference count for this event to determine if the event may be released.
+    if (!pipeTsFileInsertionEvent.increaseReferenceCount(
+        IoTDBLegacyPipeConnector.class.getName())) {
+      return;
+    }
     try {
-      // We increase the reference count for this event to determine if the event may be released.
-      if (!pipeTsFileInsertionEvent.increaseReferenceCount(
-          IoTDBLegacyPipeConnector.class.getName())) {
-        return;
-      }
       doTransfer(pipeTsFileInsertionEvent);
     } finally {
       pipeTsFileInsertionEvent.decreaseReferenceCount(

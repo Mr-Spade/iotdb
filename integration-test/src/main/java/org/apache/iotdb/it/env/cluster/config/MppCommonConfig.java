@@ -98,6 +98,24 @@ public class MppCommonConfig extends MppBaseConfig implements CommonConfig {
   }
 
   @Override
+  public CommonConfig setEncryptFlag(boolean encryptFlag) {
+    setProperty("encrypt_flag", String.valueOf(encryptFlag));
+    return this;
+  }
+
+  @Override
+  public CommonConfig setEncryptType(String encryptType) {
+    setProperty("encrypt_type", encryptType);
+    return this;
+  }
+
+  @Override
+  public CommonConfig setEncryptKeyPath(String encryptKeyPath) {
+    setProperty("encrypt_key_path", encryptKeyPath);
+    return this;
+  }
+
+  @Override
   public CommonConfig setUdfMemoryBudgetInMB(float udfCollectorMemoryBudgetInMB) {
     // udf_memory_budget_in_mb
     // udf_reader_transformer_collector_memory_proportion
@@ -124,11 +142,9 @@ public class MppCommonConfig extends MppBaseConfig implements CommonConfig {
   }
 
   @Override
-  public CommonConfig setMaxInnerCompactionCandidateFileNum(
-      int maxInnerCompactionCandidateFileNum) {
+  public CommonConfig setInnerCompactionCandidateFileNum(int maxInnerCompactionCandidateFileNum) {
     setProperty(
-        "max_inner_compaction_candidate_file_num",
-        String.valueOf(maxInnerCompactionCandidateFileNum));
+        "inner_compaction_candidate_file_num", String.valueOf(maxInnerCompactionCandidateFileNum));
     return this;
   }
 
@@ -151,8 +167,8 @@ public class MppCommonConfig extends MppBaseConfig implements CommonConfig {
   }
 
   @Override
-  public CommonConfig setAvgSeriesPointNumberThreshold(int avgSeriesPointNumberThreshold) {
-    setProperty("avg_series_point_number_threshold", String.valueOf(avgSeriesPointNumberThreshold));
+  public CommonConfig setTargetChunkPointNum(int targetChunkPointNum) {
+    setProperty("target_chunk_point_num", String.valueOf(targetChunkPointNum));
     return this;
   }
 
@@ -184,6 +200,12 @@ public class MppCommonConfig extends MppBaseConfig implements CommonConfig {
   @Override
   public CommonConfig setDataRegionConsensusProtocolClass(String dataRegionConsensusProtocolClass) {
     setProperty("data_region_consensus_protocol_class", dataRegionConsensusProtocolClass);
+    return this;
+  }
+
+  @Override
+  public CommonConfig setIoTConsensusV2Mode(String ioTConsensusV2Mode) {
+    setProperty("iot_consensus_v2_mode", ioTConsensusV2Mode);
     return this;
   }
 
@@ -229,6 +251,18 @@ public class MppCommonConfig extends MppBaseConfig implements CommonConfig {
   @Override
   public CommonConfig setTimePartitionInterval(long timePartitionInterval) {
     setProperty("time_partition_interval", String.valueOf(timePartitionInterval));
+    return this;
+  }
+
+  @Override
+  public CommonConfig setTTLCheckInterval(long ttlCheckInterval) {
+    setProperty("ttl_check_interval", String.valueOf(ttlCheckInterval));
+    return this;
+  }
+
+  @Override
+  public CommonConfig setTimePartitionOrigin(long timePartitionOrigin) {
+    setProperty("time_partition_origin", String.valueOf(timePartitionOrigin));
     return this;
   }
 
@@ -288,6 +322,12 @@ public class MppCommonConfig extends MppBaseConfig implements CommonConfig {
   }
 
   @Override
+  public CommonConfig setMqttPayloadFormatter(String mqttPayloadFormatter) {
+    setProperty("mqtt_payload_formatter", String.valueOf(mqttPayloadFormatter));
+    return this;
+  }
+
+  @Override
   public CommonConfig setSchemaEngineMode(String schemaEngineMode) {
     setProperty("schema_engine_mode", schemaEngineMode);
     return this;
@@ -330,6 +370,12 @@ public class MppCommonConfig extends MppBaseConfig implements CommonConfig {
   }
 
   @Override
+  public CommonConfig setWalBufferSize(int walBufferSize) {
+    setProperty("wal_buffer_size_in_byte", String.valueOf(walBufferSize));
+    return this;
+  }
+
+  @Override
   public CommonConfig setDegreeOfParallelism(int degreeOfParallelism) {
     setProperty("degree_of_query_parallelism", String.valueOf(degreeOfParallelism));
     return this;
@@ -344,6 +390,12 @@ public class MppCommonConfig extends MppBaseConfig implements CommonConfig {
   @Override
   public CommonConfig setSeriesSlotNum(int seriesSlotNum) {
     setProperty("series_slot_num", String.valueOf(seriesSlotNum));
+    return this;
+  }
+
+  @Override
+  public CommonConfig setSeriesPartitionExecutorClass(String seriesPartitionExecutorClass) {
+    setProperty("series_partition_executor_class", seriesPartitionExecutorClass);
     return this;
   }
 
@@ -433,14 +485,56 @@ public class MppCommonConfig extends MppBaseConfig implements CommonConfig {
   }
 
   @Override
-  public CommonConfig setTagAttributeMaxNum(int tagAttributeMaxNum) {
-    setProperty("tag_attribute_max_num", String.valueOf(tagAttributeMaxNum));
+  public CommonConfig setDnConnectionTimeoutMs(int connectionTimeoutMs) {
+    setProperty("dn_connection_timeout_ms", String.valueOf(connectionTimeoutMs));
     return this;
   }
 
   @Override
-  public CommonConfig setTagAttributeEntryMaxSize(int tagAttributeEntryMaxSize) {
-    setProperty("tag_attribute_entry_max_size", String.valueOf(tagAttributeEntryMaxSize));
+  public CommonConfig setPipeHeartbeatIntervalSecondsForCollectingPipeMeta(
+      int pipeHeartbeatIntervalSecondsForCollectingPipeMeta) {
+    setProperty(
+        "pipe_heartbeat_interval_seconds_for_collecting_pipe_meta",
+        String.valueOf(pipeHeartbeatIntervalSecondsForCollectingPipeMeta));
+    return this;
+  }
+
+  @Override
+  public CommonConfig setPipeMetaSyncerInitialSyncDelayMinutes(
+      long pipeMetaSyncerInitialSyncDelayMinutes) {
+    setProperty(
+        "pipe_meta_syncer_initial_sync_delay_minutes",
+        String.valueOf(pipeMetaSyncerInitialSyncDelayMinutes));
+    return this;
+  }
+
+  @Override
+  public CommonConfig setPipeMetaSyncerSyncIntervalMinutes(long pipeMetaSyncerSyncIntervalMinutes) {
+    setProperty(
+        "pipe_meta_syncer_sync_interval_minutes",
+        String.valueOf(pipeMetaSyncerSyncIntervalMinutes));
+    return this;
+  }
+
+  @Override
+  public CommonConfig setPipeConnectorRequestSliceThresholdBytes(
+      int pipeConnectorRequestSliceThresholdBytes) {
+    setProperty(
+        "pipe_connector_request_slice_threshold_bytes",
+        String.valueOf(pipeConnectorRequestSliceThresholdBytes));
+
+    return this;
+  }
+
+  @Override
+  public CommonConfig setQueryMemoryProportion(String queryMemoryProportion) {
+    setProperty("chunk_timeseriesmeta_free_memory_proportion", queryMemoryProportion);
+    return this;
+  }
+
+  @Override
+  public CommonConfig setDefaultStorageGroupLevel(int defaultStorageGroupLevel) {
+    setProperty("default_storage_group_level", String.valueOf(defaultStorageGroupLevel));
     return this;
   }
 

@@ -16,19 +16,19 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.db.it.schema;
 
-import org.apache.iotdb.db.mpp.common.header.ColumnHeaderConstant;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.it.env.EnvFactory;
-import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
+import org.apache.iotdb.util.AbstractSchemaIT;
 
 import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -44,21 +44,34 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-@RunWith(IoTDBTestRunner.class)
-public class IoTDBTagIT {
+@Category({LocalStandaloneIT.class, ClusterIT.class})
+public class IoTDBTagIT extends AbstractSchemaIT {
 
-  @Before
-  public void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeTest();
+  public IoTDBTagIT(SchemaTestMode schemaTestMode) {
+    super(schemaTestMode);
+  }
+
+  @Parameterized.BeforeParam
+  public static void before() throws Exception {
+    SchemaTestMode schemaTestMode = setUpEnvironment();
+    if (schemaTestMode.equals(SchemaTestMode.PBTree)) {
+      allocateMemoryForSchemaRegion(10000);
+    }
+    EnvFactory.getEnv().initClusterEnvironment();
+  }
+
+  @Parameterized.AfterParam
+  public static void after() throws Exception {
+    EnvFactory.getEnv().cleanClusterEnvironment();
+    tearDownEnvironment();
   }
 
   @After
   public void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterTest();
+    clearSchema();
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void createOneTimeseriesTest() {
     List<String> ret =
         Collections.singletonList(
@@ -105,13 +118,12 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void createMultiTimeseriesTest() {
     List<String> ret =
         Arrays.asList(
             "root.turbine.d2.s1,temperature,root.turbine,FLOAT,RLE,SNAPPY,{\"tag1\":\"t1\","
                 + "\"tag2\":\"t2\"},{\"attr2\":\"a2\",\"attr1\":\"a1\"}",
-            "root.turbine.d2.s2,status,root.turbine,INT32,RLE,SNAPPY,{\"tag2\":\"t2\","
+            "root.turbine.d2.s2,status,root.turbine,INT32,RLE,LZ4,{\"tag2\":\"t2\","
                 + "\"tag3\":\"t3\"},{\"attr4\":\"a4\",\"attr3\":\"a3\"}");
     String sql1 =
         "create timeseries root.turbine.d2.s1(temperature) with datatype=FLOAT, encoding=RLE, compression=SNAPPY "
@@ -160,13 +172,12 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void showTimeseriesTest() {
     List<String> ret =
         Arrays.asList(
             "root.turbine.d2.s1,temperature,root.turbine,FLOAT,RLE,SNAPPY,{\"tag1\":\"t1\",\""
                 + "tag2\":\"t2\"},{\"attr2\":\"a2\",\"attr1\":\"a1\"}",
-            "root.turbine.d2.s2,status,root.turbine,INT32,RLE,SNAPPY,{\"tag2\":\"t2\",\"tag3\""
+            "root.turbine.d2.s2,status,root.turbine,INT32,RLE,LZ4,{\"tag2\":\"t2\",\"tag3\""
                 + ":\"t3\"},{\"attr4\":\"a4\",\"attr3\":\"a3\"}");
     String sql1 =
         "create timeseries root.turbine.d2.s1(temperature) with datatype=FLOAT, encoding=RLE, compression=SNAPPY "
@@ -214,7 +225,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void createDuplicateAliasTimeseriesTest1() {
     String sql1 =
         "create timeseries root.turbine.d3.s1(temperature) with datatype=FLOAT, encoding=RLE, compression=SNAPPY "
@@ -242,7 +252,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void createDuplicateAliasTimeseriesTest2() {
     String sql1 =
         "create timeseries root.turbine.d4.s1(temperature) with datatype=FLOAT, encoding=RLE, compression=SNAPPY "
@@ -268,7 +277,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void createDuplicateAliasTimeseriesTest3() {
     String sql1 =
         "create timeseries root.turbine.d5.s1(temperature) with datatype=FLOAT, encoding=RLE, compression=SNAPPY "
@@ -295,7 +303,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void queryWithAliasTest() {
     List<String> ret =
         Collections.singletonList(
@@ -340,7 +347,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void queryWithLimitTest() {
     List<String> ret =
         Arrays.asList(
@@ -365,7 +371,7 @@ public class IoTDBTagIT {
       int count = 0;
       try (ResultSet resultSet =
           statement.executeQuery(
-              "show timeseries root.turbine.d1.** where 'tag1'='v1' limit 2 offset 1")) {
+              "show timeseries root.turbine.d1.** where TAGS(tag1)='v1' limit 2 offset 1")) {
         while (resultSet.next()) {
           String ans =
               resultSet.getString(ColumnHeaderConstant.TIMESERIES)
@@ -395,13 +401,12 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({ClusterIT.class})
   public void deleteTest() {
     List<String> ret1 =
         Arrays.asList(
             "root.turbine.d7.s1,temperature,root.turbine,FLOAT,RLE,SNAPPY,"
                 + "{\"tag1\":\"t1\",\"tag2\":\"t2\"},{\"attr2\":\"a2\",\"attr1\":\"a1\"}",
-            "root.turbine.d7.s2,status,root.turbine,INT32,RLE,SNAPPY,{\"tag2\""
+            "root.turbine.d7.s2,status,root.turbine,INT32,RLE,LZ4,{\"tag2\""
                 + ":\"t2\",\"tag3\":\"t3\"},{\"attr4\":\"a4\",\"attr3\":\"a3\"}");
     List<String> ret2 =
         Collections.singletonList(
@@ -479,13 +484,12 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({ClusterIT.class})
   public void deleteWithAliasTest() {
     List<String> ret1 =
         Arrays.asList(
             "root.turbine.d7.s1,temperature,root.turbine,FLOAT,RLE,SNAPPY,"
                 + "{\"tag1\":\"t1\",\"tag2\":\"t2\"},{\"attr2\":\"a2\",\"attr1\":\"a1\"}",
-            "root.turbine.d7.s2,status,root.turbine,INT32,RLE,SNAPPY,"
+            "root.turbine.d7.s2,status,root.turbine,INT32,RLE,LZ4,"
                 + "{\"tag2\":\"t2\",\"tag3\":\"t3\"},{\"attr4\":\"a4\",\"attr3\":\"a3\"}");
     List<String> ret2 =
         Collections.singletonList(
@@ -563,7 +567,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void queryWithWhereTest1() {
     List<String> ret1 =
         Arrays.asList(
@@ -571,19 +574,19 @@ public class IoTDBTagIT {
                 + "this is a test1\",\"unit\":\"f\"},{\"H_Alarm\":\"100\",\"M_Alarm\":\"50\"}",
             "root.turbine.d0.s1,power,root.turbine,FLOAT,RLE,SNAPPY,{\"description\":\"turbine this "
                 + "is a test2\",\"unit\":\"kw\"},{\"H_Alarm\":\"99.9\",\"M_Alarm\":\"44.4\"}",
-            "root.turbine.d1.s0,status,root.turbine,INT32,RLE,SNAPPY,{\"description\":\"turbine this "
+            "root.turbine.d1.s0,status,root.turbine,INT32,RLE,LZ4,{\"description\":\"turbine this "
                 + "is a test3\"},{\"H_Alarm\":\"9\",\"M_Alarm\":\"5\"}",
             "root.turbine.d2.s0,temperature,root.turbine,FLOAT,RLE,SNAPPY,{\"description\":\"turbine "
                 + "d2 this is a test1\",\"unit\":\"f\"},{\"MinValue\":\"1\",\"MaxValue\":\"100\"}",
             "root.turbine.d2.s1,power,root.turbine,FLOAT,RLE,SNAPPY,{\"description\":\"turbine d2 this"
                 + " is a test2\",\"unit\":\"kw\"},{\"MinValue\":\"44.4\",\"MaxValue\":\"99.9\"}",
-            "root.turbine.d2.s3,status,root.turbine,INT32,RLE,SNAPPY,{\"description\":\"turbine d2 "
+            "root.turbine.d2.s3,status,root.turbine,INT32,RLE,LZ4,{\"description\":\"turbine d2 "
                 + "this is a test3\"},{\"MinValue\":\"5\",\"MaxValue\":\"9\"}",
             "root.ln.d0.s0,temperature,root.ln,FLOAT,RLE,SNAPPY,{\"description\":\"ln this is a "
                 + "test1\",\"unit\":\"c\"},{\"H_Alarm\":\"1000\",\"M_Alarm\":\"500\"}",
             "root.ln.d0.s1,power,root.ln,FLOAT,RLE,SNAPPY,{\"description\":\"ln this is a "
                 + "test2\",\"unit\":\"w\"},{\"H_Alarm\":\"9.9\",\"M_Alarm\":\"4.4\"}",
-            "root.ln.d1.s0,status,root.ln,INT32,RLE,SNAPPY,{\"description\":\"ln this is a test3\"},"
+            "root.ln.d1.s0,status,root.ln,INT32,RLE,LZ4,{\"description\":\"ln this is a test3\"},"
                 + "{\"H_Alarm\":\"90\",\"M_Alarm\":\"50\"}");
 
     Set<String> ret2 = new HashSet<>();
@@ -656,7 +659,7 @@ public class IoTDBTagIT {
 
       count = 0;
       Set<String> res = new HashSet<>();
-      try (ResultSet resultSet = statement.executeQuery("show timeseries where 'unit'='f'")) {
+      try (ResultSet resultSet = statement.executeQuery("show timeseries where TAGS(unit)='f'")) {
         while (resultSet.next()) {
           String ans =
               resultSet.getString(ColumnHeaderConstant.TIMESERIES)
@@ -687,7 +690,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void queryWithWhereTest2() {
     Set<String> ret = new HashSet<>();
     ret.add(
@@ -736,7 +738,7 @@ public class IoTDBTagIT {
       int count = 0;
       Set<String> res = new HashSet<>();
       try (ResultSet resultSet =
-          statement.executeQuery("show timeseries root.turbine.** where 'unit'='f'")) {
+          statement.executeQuery("show timeseries root.turbine.** where TAGS(unit)='f'")) {
         while (resultSet.next()) {
           String ans =
               resultSet.getString(ColumnHeaderConstant.TIMESERIES)
@@ -766,7 +768,7 @@ public class IoTDBTagIT {
       count = 0;
       res.clear();
       try (ResultSet resultSet =
-          statement.executeQuery("show timeseries root.turbine.** where 'unit'='f'")) {
+          statement.executeQuery("show timeseries root.turbine.** where TAGS(unit)='f'")) {
         while (resultSet.next()) {
           String ans =
               resultSet.getString(ColumnHeaderConstant.TIMESERIES)
@@ -794,7 +796,7 @@ public class IoTDBTagIT {
 
       count = 0;
       try (ResultSet resultSet =
-          statement.executeQuery("show timeseries root.turbine where 'unit'='c'")) {
+          statement.executeQuery("show timeseries root.turbine where TAGS(unit)='c'")) {
         while (resultSet.next()) {
           count++;
         }
@@ -808,7 +810,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({ClusterIT.class})
   public void queryWithWhereAndDeleteTest() {
     Set<String> ret = new HashSet<>();
     ret.add(
@@ -858,7 +859,7 @@ public class IoTDBTagIT {
       // with *;
       int count = 0;
       Set<String> res = new HashSet<>();
-      try (ResultSet resultSet = statement.executeQuery("show timeseries where 'unit'='f'")) {
+      try (ResultSet resultSet = statement.executeQuery("show timeseries where TAGS(unit)='f'")) {
         while (resultSet.next()) {
           String ans =
               resultSet.getString(ColumnHeaderConstant.TIMESERIES)
@@ -891,7 +892,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void queryWithWhereContainsTest() {
     Set<String> ret = new HashSet<>();
     ret.add(
@@ -947,7 +947,7 @@ public class IoTDBTagIT {
       int count = 0;
       Set<String> res = new HashSet<>();
       try (ResultSet resultSet =
-          statement.executeQuery("show timeseries where 'description' contains 'test1'")) {
+          statement.executeQuery("show timeseries where TAGS(description) contains 'test1'")) {
         while (resultSet.next()) {
           String ans =
               resultSet.getString(ColumnHeaderConstant.TIMESERIES)
@@ -978,7 +978,7 @@ public class IoTDBTagIT {
       res.clear();
       try (ResultSet resultSet =
           statement.executeQuery(
-              "show timeseries root.ln.** where 'description' contains 'test1'")) {
+              "show timeseries root.ln.** where TAGS(description) contains 'test1'")) {
         while (resultSet.next()) {
           String ans =
               resultSet.getString(ColumnHeaderConstant.TIMESERIES)
@@ -1011,7 +1011,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void queryWithWhereOnNoneTagTest() {
     String[] sqls = {
       "create timeseries root.turbine.d0.s0(temperature) with datatype=FLOAT, encoding=RLE, compression=SNAPPY "
@@ -1048,7 +1047,7 @@ public class IoTDBTagIT {
         statement.execute(sql);
       }
 
-      try (ResultSet rs = statement.executeQuery("show timeseries where 'H_Alarm'='90'")) {
+      try (ResultSet rs = statement.executeQuery("show timeseries where TAGS(H_Alarm)='90'")) {
         assertFalse(rs.next());
       }
     } catch (Exception e) {
@@ -1058,7 +1057,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void sameNameTest() {
     String sql =
         "create timeseries root.turbine.d1.s1(temperature) with datatype=FLOAT, encoding=RLE, compression=SNAPPY "
@@ -1074,7 +1072,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void deleteStorageGroupTest() {
     List<String> ret =
         Collections.singletonList(
@@ -1114,7 +1111,7 @@ public class IoTDBTagIT {
       assertEquals(ret.size(), count);
 
       statement.execute("delete database root.turbine");
-      try (ResultSet rs = statement.executeQuery("show timeseries where 'tag1'='v1'")) {
+      try (ResultSet rs = statement.executeQuery("show timeseries where TAGS(tag1)='v1'")) {
         assertFalse(rs.next());
       }
     } catch (Exception e) {
@@ -1124,7 +1121,6 @@ public class IoTDBTagIT {
   }
 
   @Test
-  @Category({LocalStandaloneIT.class, ClusterIT.class})
   public void insertWithAliasTest() {
     List<String> ret = Collections.singletonList("1,36.5,36.5");
     String[] sqls = {

@@ -19,7 +19,6 @@
 
 package org.apache.iotdb.db.it.selectinto;
 
-import org.apache.iotdb.it.env.ConfigFactory;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
@@ -38,17 +37,18 @@ public class IoTDBSelectInto3IT extends IoTDBSelectIntoIT {
 
   @BeforeClass
   public static void setUp() throws Exception {
-    selectIntoInsertTabletPlanRowLimit =
-        ConfigFactory.getConfig().getSelectIntoInsertTabletPlanRowLimit();
-    ConfigFactory.getConfig().setSelectIntoInsertTabletPlanRowLimit(5);
-    EnvFactory.getEnv().initBeforeClass();
-    prepareData(SQLs);
+    EnvFactory.getEnv()
+        .getConfig()
+        .getCommonConfig()
+        .setSelectIntoInsertTabletPlanRowLimit(5)
+        .setQueryThreadCount(1)
+        .setWalBufferSize(1024 * 1024);
+    EnvFactory.getEnv().initClusterEnvironment();
+    prepareData(SELECT_INTO_SQL_LIST);
   }
 
   @AfterClass
   public static void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterClass();
-    ConfigFactory.getConfig()
-        .setSelectIntoInsertTabletPlanRowLimit(selectIntoInsertTabletPlanRowLimit);
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 }

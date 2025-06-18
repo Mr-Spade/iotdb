@@ -19,10 +19,10 @@
 
 package org.apache.iotdb.db.queryengine.plan.execution.config.metadata;
 
+import org.apache.iotdb.commons.schema.column.ColumnHeader;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.confignode.rpc.thrift.TClusterParameters;
 import org.apache.iotdb.confignode.rpc.thrift.TShowVariablesResp;
-import org.apache.iotdb.db.queryengine.common.header.ColumnHeader;
-import org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant;
 import org.apache.iotdb.db.queryengine.common.header.DatasetHeader;
 import org.apache.iotdb.db.queryengine.common.header.DatasetHeaderFactory;
 import org.apache.iotdb.db.queryengine.plan.execution.config.ConfigTaskResult;
@@ -100,14 +100,16 @@ public class ShowVariablesTask implements IConfigTask {
             clusterParameters.getConfigNodeConsensusProtocolClass(), TSFileConfig.STRING_CHARSET));
     buildTSBlock(
         builder,
+        new Binary(ColumnHeaderConstant.TIME_PARTITION_ORIGIN, TSFileConfig.STRING_CHARSET),
+        new Binary(
+            String.valueOf(clusterParameters.getTimePartitionOrigin()),
+            TSFileConfig.STRING_CHARSET));
+    buildTSBlock(
+        builder,
         new Binary(ColumnHeaderConstant.TIME_PARTITION_INTERVAL, TSFileConfig.STRING_CHARSET),
         new Binary(
             String.valueOf(clusterParameters.getTimePartitionInterval()),
             TSFileConfig.STRING_CHARSET));
-    buildTSBlock(
-        builder,
-        new Binary(ColumnHeaderConstant.DEFAULT_TTL, TSFileConfig.STRING_CHARSET),
-        new Binary(String.valueOf(clusterParameters.getDefaultTTL()), TSFileConfig.STRING_CHARSET));
     buildTSBlock(
         builder,
         new Binary(ColumnHeaderConstant.READ_CONSISTENCY_LEVEL, TSFileConfig.STRING_CHARSET),

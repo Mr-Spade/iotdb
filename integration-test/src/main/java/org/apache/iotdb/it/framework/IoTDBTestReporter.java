@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.it.framework;
 
 import java.io.File;
@@ -23,9 +24,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.text.NumberFormat;
+import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Stream;
 
 public class IoTDBTestReporter {
@@ -34,7 +38,7 @@ public class IoTDBTestReporter {
     List<IoTDBTestStat> stats = new ArrayList<>();
     Path outputDirPath =
         Paths.get(
-            System.getProperty("user.dir"), "integration-test", IoTDBTestListener.statOutputDir);
+            System.getProperty("user.dir"), "integration-test", IoTDBTestConstants.statOutputDir);
     File outputDir = outputDirPath.toFile();
     if (!outputDir.exists() || !outputDir.isDirectory()) {
       IoTDBTestLogger.logger.error(
@@ -45,17 +49,19 @@ public class IoTDBTestReporter {
     try (Stream<Path> s = Files.walk(outputDirPath)) {
       s.forEach(
           source -> {
-            if (source.toString().endsWith(IoTDBTestListener.statExt)) {
+            if (source.toString().endsWith(IoTDBTestConstants.statExt)) {
               try {
                 List<String> lines = Files.readAllLines(source);
                 for (String l : lines) {
                   String[] parts = l.split("\t");
                   if (parts.length == 2) {
-                    IoTDBTestStat stat = new IoTDBTestStat(parts[1], Double.parseDouble(parts[0]));
+                    NumberFormat f = NumberFormat.getInstance(Locale.getDefault());
+                    double seconds = f.parse(parts[0]).doubleValue();
+                    IoTDBTestStat stat = new IoTDBTestStat(parts[1], seconds);
                     stats.add(stat);
                   }
                 }
-              } catch (IOException e) {
+              } catch (IOException | ParseException e) {
                 IoTDBTestLogger.logger.error("read stats file failed", e);
               }
             }
@@ -68,6 +74,6 @@ public class IoTDBTestReporter {
     for (int i = 0; i < Math.min(30, stats.size()); i++) {
       sb.append(stats.get(i)).append("\n");
     }
-    IoTDBTestLogger.logger.info(sb.toString());
+    IoTDBTestLogger.logger.info("{}", sb);
   }
 }

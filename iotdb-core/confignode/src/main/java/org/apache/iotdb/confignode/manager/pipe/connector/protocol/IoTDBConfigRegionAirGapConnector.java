@@ -33,6 +33,8 @@ import org.apache.iotdb.confignode.manager.pipe.event.PipeConfigRegionSnapshotEv
 import org.apache.iotdb.confignode.manager.pipe.event.PipeConfigRegionWritePlanEvent;
 import org.apache.iotdb.confignode.service.ConfigNode;
 import org.apache.iotdb.db.pipe.event.common.heartbeat.PipeHeartbeatEvent;
+import org.apache.iotdb.pipe.api.annotation.TableModel;
+import org.apache.iotdb.pipe.api.annotation.TreeModel;
 import org.apache.iotdb.pipe.api.event.Event;
 import org.apache.iotdb.pipe.api.event.dml.insertion.TabletInsertionEvent;
 import org.apache.iotdb.pipe.api.event.dml.insertion.TsFileInsertionEvent;
@@ -45,10 +47,11 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.Socket;
 import java.util.HashMap;
 import java.util.Objects;
 
+@TreeModel
+@TableModel
 public class IoTDBConfigRegionAirGapConnector extends IoTDBAirGapConnector {
 
   private static final Logger LOGGER =
@@ -69,6 +72,19 @@ public class IoTDBConfigRegionAirGapConnector extends IoTDBAirGapConnector {
     params.put(
         PipeTransferHandshakeConstant.HANDSHAKE_KEY_TIME_PRECISION,
         CommonDescriptor.getInstance().getConfig().getTimestampPrecision());
+    params.put(
+        PipeTransferHandshakeConstant.HANDSHAKE_KEY_CONVERT_ON_TYPE_MISMATCH,
+        Boolean.toString(shouldReceiverConvertOnTypeMismatch));
+    params.put(
+        PipeTransferHandshakeConstant.HANDSHAKE_KEY_LOAD_TSFILE_STRATEGY, loadTsFileStrategy);
+    params.put(PipeTransferHandshakeConstant.HANDSHAKE_KEY_USERNAME, username);
+    params.put(PipeTransferHandshakeConstant.HANDSHAKE_KEY_PASSWORD, password);
+    params.put(
+        PipeTransferHandshakeConstant.HANDSHAKE_KEY_VALIDATE_TSFILE,
+        Boolean.toString(loadTsFileValidation));
+    params.put(
+        PipeTransferHandshakeConstant.HANDSHAKE_KEY_MARK_AS_PIPE_REQUEST,
+        Boolean.toString(shouldMarkAsPipeRequest));
 
     return PipeTransferConfigNodeHandshakeV2Req.toTPipeTransferBytes(params);
   }
@@ -106,7 +122,7 @@ public class IoTDBConfigRegionAirGapConnector extends IoTDBAirGapConnector {
   @Override
   public void transfer(final Event event) throws Exception {
     final int socketIndex = nextSocketIndex();
-    final Socket socket = sockets.get(socketIndex);
+    final AirGapSocket socket = sockets.get(socketIndex);
 
     try {
       if (event instanceof PipeConfigRegionWritePlanEvent) {
@@ -130,14 +146,15 @@ public class IoTDBConfigRegionAirGapConnector extends IoTDBAirGapConnector {
   }
 
   private void doTransferWrapper(
-      final Socket socket, final PipeConfigRegionWritePlanEvent pipeConfigRegionWritePlanEvent)
+      final AirGapSocket socket,
+      final PipeConfigRegionWritePlanEvent pipeConfigRegionWritePlanEvent)
       throws PipeException, IOException {
+    // We increase the reference count for this event to determine if the event may be released.
+    if (!pipeConfigRegionWritePlanEvent.increaseReferenceCount(
+        IoTDBConfigRegionAirGapConnector.class.getName())) {
+      return;
+    }
     try {
-      // We increase the reference count for this event to determine if the event may be released.
-      if (!pipeConfigRegionWritePlanEvent.increaseReferenceCount(
-          IoTDBConfigRegionAirGapConnector.class.getName())) {
-        return;
-      }
       doTransfer(socket, pipeConfigRegionWritePlanEvent);
     } finally {
       pipeConfigRegionWritePlanEvent.decreaseReferenceCount(
@@ -146,9 +163,12 @@ public class IoTDBConfigRegionAirGapConnector extends IoTDBAirGapConnector {
   }
 
   private void doTransfer(
-      final Socket socket, final PipeConfigRegionWritePlanEvent pipeConfigRegionWritePlanEvent)
+      final AirGapSocket socket,
+      final PipeConfigRegionWritePlanEvent pipeConfigRegionWritePlanEvent)
       throws PipeException, IOException {
     if (!send(
+        pipeConfigRegionWritePlanEvent.getPipeName(),
+        pipeConfigRegionWritePlanEvent.getCreationTime(),
         socket,
         PipeTransferConfigPlanReq.toTPipeTransferBytes(
             pipeConfigRegionWritePlanEvent.getConfigPhysicalPlan()))) {
@@ -168,14 +188,14 @@ public class IoTDBConfigRegionAirGapConnector extends IoTDBAirGapConnector {
   }
 
   private void doTransferWrapper(
-      final Socket socket, final PipeConfigRegionSnapshotEvent pipeConfigRegionSnapshotEvent)
+      final AirGapSocket socket, final PipeConfigRegionSnapshotEvent pipeConfigRegionSnapshotEvent)
       throws PipeException, IOException {
+    // We increase the reference count for this event to determine if the event may be released.
+    if (!pipeConfigRegionSnapshotEvent.increaseReferenceCount(
+        IoTDBConfigRegionAirGapConnector.class.getName())) {
+      return;
+    }
     try {
-      // We increase the reference count for this event to determine if the event may be released.
-      if (!pipeConfigRegionSnapshotEvent.increaseReferenceCount(
-          IoTDBConfigRegionAirGapConnector.class.getName())) {
-        return;
-      }
       doTransfer(socket, pipeConfigRegionSnapshotEvent);
     } finally {
       pipeConfigRegionSnapshotEvent.decreaseReferenceCount(
@@ -184,20 +204,30 @@ public class IoTDBConfigRegionAirGapConnector extends IoTDBAirGapConnector {
   }
 
   private void doTransfer(
-      final Socket socket, final PipeConfigRegionSnapshotEvent pipeConfigRegionSnapshotEvent)
+      final AirGapSocket socket, final PipeConfigRegionSnapshotEvent pipeConfigRegionSnapshotEvent)
       throws PipeException, IOException {
+    final String pipeName = pipeConfigRegionSnapshotEvent.getPipeName();
+    final long creationTime = pipeConfigRegionSnapshotEvent.getCreationTime();
     final File snapshot = pipeConfigRegionSnapshotEvent.getSnapshotFile();
     final File templateFile = pipeConfigRegionSnapshotEvent.getTemplateFile();
 
     // 1. Transfer snapshotFile, and template file if exists
-    transferFilePieces(snapshot, socket, true);
+    transferFilePieces(pipeName, creationTime, snapshot, socket, true);
     if (Objects.nonNull(templateFile)) {
-      transferFilePieces(templateFile, socket, true);
+      transferFilePieces(pipeName, creationTime, templateFile, socket, true);
     }
     // 2. Transfer file seal signal, which means the snapshots are transferred completely
     if (!send(
+        pipeName,
+        creationTime,
         socket,
         PipeTransferConfigSnapshotSealReq.toTPipeTransferBytes(
+            // The pattern is surely Non-null
+            pipeConfigRegionSnapshotEvent.getTreePatternString(),
+            pipeConfigRegionSnapshotEvent.getTablePattern().getDatabasePattern(),
+            pipeConfigRegionSnapshotEvent.getTablePattern().getTablePattern(),
+            pipeConfigRegionSnapshotEvent.getTreePattern().isTreeModelDataAllowedToBeCaptured(),
+            pipeConfigRegionSnapshotEvent.getTablePattern().isTableModelDataAllowedToBeCaptured(),
             snapshot.getName(),
             snapshot.length(),
             Objects.nonNull(templateFile) ? templateFile.getName() : null,

@@ -36,6 +36,7 @@ import java.util.logging.Logger;
 
 /** This function calculates completeness of input series. */
 public class UDTFCompleteness implements UDTF {
+
   private boolean downtime;
 
   @Override
@@ -44,7 +45,7 @@ public class UDTFCompleteness implements UDTF {
     long window = Integer.MAX_VALUE;
     if (udfp.hasAttribute("window")) {
       String s = udfp.getString("window");
-      window = Util.parseTime(s);
+      window = Util.parseTime(s, udfp);
       if (window > 0) {
         isTime = true;
       } else {
@@ -63,7 +64,7 @@ public class UDTFCompleteness implements UDTF {
   @Override
   public void transform(RowWindow rowWindow, PointCollector collector) throws Exception {
     try {
-      if (rowWindow.windowSize() > TimeSeriesQuality.windowSize) {
+      if (rowWindow.windowSize() > TimeSeriesQuality.WINDOW_SIZE) {
         TimeSeriesQuality tsq = new TimeSeriesQuality(rowWindow.getRowIterator());
         tsq.setDowntime(downtime);
         tsq.timeDetect();

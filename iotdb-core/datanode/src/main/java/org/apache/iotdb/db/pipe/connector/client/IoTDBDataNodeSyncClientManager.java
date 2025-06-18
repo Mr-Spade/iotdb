@@ -43,13 +43,33 @@ public class IoTDBDataNodeSyncClientManager extends IoTDBSyncClientManager
       LoggerFactory.getLogger(IoTDBDataNodeSyncClientManager.class);
 
   public IoTDBDataNodeSyncClientManager(
-      List<TEndPoint> endPoints,
-      boolean useSSL,
-      String trustStorePath,
-      String trustStorePwd,
-      boolean useLeaderCache,
-      String loadBalanceStrategy) {
-    super(endPoints, useSSL, trustStorePath, trustStorePwd, useLeaderCache, loadBalanceStrategy);
+      final List<TEndPoint> endPoints,
+      final boolean useSSL,
+      final String trustStorePath,
+      final String trustStorePwd,
+      /* The following parameters are used locally. */
+      final boolean useLeaderCache,
+      final String loadBalanceStrategy,
+      /* The following parameters are used to handshake with the receiver. */
+      final String username,
+      final String password,
+      final boolean shouldReceiverConvertOnTypeMismatch,
+      final String loadTsFileStrategy,
+      final boolean validateTsFile,
+      final boolean shouldMarkAsPipeRequest) {
+    super(
+        endPoints,
+        useSSL,
+        trustStorePath,
+        trustStorePwd,
+        useLeaderCache,
+        loadBalanceStrategy,
+        username,
+        password,
+        shouldReceiverConvertOnTypeMismatch,
+        loadTsFileStrategy,
+        validateTsFile,
+        shouldMarkAsPipeRequest);
   }
 
   @Override
@@ -59,7 +79,7 @@ public class IoTDBDataNodeSyncClientManager extends IoTDBSyncClientManager
   }
 
   @Override
-  protected PipeTransferHandshakeV2Req buildHandshakeV2Req(Map<String, String> params)
+  protected PipeTransferHandshakeV2Req buildHandshakeV2Req(final Map<String, String> params)
       throws IOException {
     return PipeTransferDataNodeHandshakeV2Req.toTPipeTransferReq(params);
   }
@@ -69,7 +89,7 @@ public class IoTDBDataNodeSyncClientManager extends IoTDBSyncClientManager
     return IoTDBDescriptor.getInstance().getConfig().getClusterId();
   }
 
-  public Pair<IoTDBSyncClient, Boolean> getClient(String deviceId) {
+  public Pair<IoTDBSyncClient, Boolean> getClient(final String deviceId) {
     final TEndPoint endPoint = LEADER_CACHE_MANAGER.getLeaderEndPoint(deviceId);
     return useLeaderCache
             && endPoint != null
@@ -79,8 +99,17 @@ public class IoTDBDataNodeSyncClientManager extends IoTDBSyncClientManager
         : getClient();
   }
 
-  public void updateLeaderCache(String deviceId, TEndPoint endPoint) {
-    if (!useLeaderCache) {
+  public Pair<IoTDBSyncClient, Boolean> getClient(final TEndPoint endPoint) {
+    return useLeaderCache
+            && endPoint != null
+            && endPoint2ClientAndStatus.containsKey(endPoint)
+            && Boolean.TRUE.equals(endPoint2ClientAndStatus.get(endPoint).getRight())
+        ? endPoint2ClientAndStatus.get(endPoint)
+        : getClient();
+  }
+
+  public void updateLeaderCache(final String deviceId, final TEndPoint endPoint) {
+    if (!useLeaderCache || deviceId == null || endPoint == null) {
       return;
     }
 
@@ -92,7 +121,7 @@ public class IoTDBDataNodeSyncClientManager extends IoTDBSyncClientManager
       }
 
       LEADER_CACHE_MANAGER.updateLeaderEndPoint(deviceId, endPoint);
-    } catch (Exception e) {
+    } catch (final Exception e) {
       LOGGER.warn(
           "Failed to update leader cache for device {} with endpoint {}:{}.",
           deviceId,

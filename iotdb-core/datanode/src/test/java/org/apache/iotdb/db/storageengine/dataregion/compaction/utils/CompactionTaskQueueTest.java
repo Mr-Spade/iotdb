@@ -20,6 +20,7 @@
 package org.apache.iotdb.db.storageengine.dataregion.compaction.utils;
 
 import org.apache.iotdb.commons.exception.MetadataException;
+import org.apache.iotdb.db.exception.StorageEngineException;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.AbstractCompactionTest;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.performer.impl.ReadChunkCompactionPerformer;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.AbstractCompactionTask;
@@ -51,19 +52,22 @@ public class CompactionTaskQueueTest extends AbstractCompactionTest {
       SystemInfo.getInstance().getTotalFileLimitForCompaction();
 
   @Before
-  public void setup() {
-    SystemInfo.getInstance().getCompactionMemoryCost().set(0);
+  public void setup()
+      throws IOException, InterruptedException, MetadataException, WriteProcessException {
+    SystemInfo.getInstance().getCompactionMemoryBlock().setUsedMemoryInBytes(0);
     SystemInfo.getInstance().getCompactionFileNumCost().set(0);
     SystemInfo.getInstance().setMemorySizeForCompaction(2000);
     SystemInfo.getInstance().setTotalFileLimitForCompactionTask(50);
+    super.setUp();
   }
 
   @After
-  public void teardown() {
-    SystemInfo.getInstance().getCompactionMemoryCost().set(0);
+  public void teardown() throws StorageEngineException, IOException {
+    SystemInfo.getInstance().getCompactionMemoryBlock().setUsedMemoryInBytes(0);
     SystemInfo.getInstance().getCompactionFileNumCost().set(0);
     SystemInfo.getInstance().setMemorySizeForCompaction(originalMemorySizeForCompaction);
     SystemInfo.getInstance().setTotalFileLimitForCompactionTask(originalFileNumLimitForCompaction);
+    super.tearDown();
   }
 
   @Test
@@ -76,7 +80,8 @@ public class CompactionTaskQueueTest extends AbstractCompactionTest {
     AbstractCompactionTask task = queue.take();
     Assert.assertNotNull(task);
     releaseTaskOccupiedResources(task);
-    Assert.assertEquals(0, SystemInfo.getInstance().getCompactionMemoryCost().get());
+    Assert.assertEquals(
+        0, SystemInfo.getInstance().getCompactionMemoryBlock().getUsedMemoryInBytes());
     Assert.assertEquals(0, SystemInfo.getInstance().getCompactionFileNumCost().get());
   }
 
@@ -114,7 +119,8 @@ public class CompactionTaskQueueTest extends AbstractCompactionTest {
     while (outTaskNum.get() != 3) {
       Thread.sleep(TimeUnit.MILLISECONDS.toMillis(100));
     }
-    Assert.assertEquals(0, SystemInfo.getInstance().getCompactionMemoryCost().get());
+    Assert.assertEquals(
+        0, SystemInfo.getInstance().getCompactionMemoryBlock().getUsedMemoryInBytes());
     Assert.assertEquals(0, SystemInfo.getInstance().getCompactionFileNumCost().get());
     for (Thread thread : threadList) {
       thread.interrupt();
@@ -157,7 +163,8 @@ public class CompactionTaskQueueTest extends AbstractCompactionTest {
     while (outTaskNum.get() != 3) {
       Thread.sleep(TimeUnit.MILLISECONDS.toMillis(100));
     }
-    Assert.assertEquals(0, SystemInfo.getInstance().getCompactionMemoryCost().get());
+    Assert.assertEquals(
+        0, SystemInfo.getInstance().getCompactionMemoryBlock().getUsedMemoryInBytes());
     Assert.assertEquals(0, SystemInfo.getInstance().getCompactionFileNumCost().get());
     for (Thread thread : threadList) {
       thread.interrupt();

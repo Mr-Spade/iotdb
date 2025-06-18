@@ -18,15 +18,18 @@
  */
 package org.apache.iotdb.db.storageengine.dataregion.wal.recover.file;
 
-import org.apache.iotdb.commons.path.AlignedPath;
+import org.apache.iotdb.commons.path.AlignedFullPath;
 import org.apache.iotdb.commons.path.MeasurementPath;
+import org.apache.iotdb.commons.path.NonAlignedFullPath;
 import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.commons.schema.table.column.TsTableColumnCategory;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.queryengine.execution.fragment.QueryContext;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNodeId;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.DeleteDataNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertRowNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertTabletNode;
+import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.RelationalInsertTabletNode;
 import org.apache.iotdb.db.storageengine.dataregion.memtable.IMemTable;
 import org.apache.iotdb.db.storageengine.dataregion.memtable.ReadOnlyMemChunk;
 import org.apache.iotdb.db.storageengine.dataregion.modification.ModificationFile;
@@ -39,7 +42,6 @@ import org.apache.tsfile.common.conf.TSFileDescriptor;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.exception.write.WriteProcessException;
 import org.apache.tsfile.file.metadata.IDeviceID;
-import org.apache.tsfile.file.metadata.PlainDeviceID;
 import org.apache.tsfile.file.metadata.enums.CompressionType;
 import org.apache.tsfile.file.metadata.enums.TSEncoding;
 import org.apache.tsfile.read.TimeValuePair;
@@ -58,6 +60,7 @@ import org.apache.tsfile.write.record.datapoint.LongDataPoint;
 import org.apache.tsfile.write.record.datapoint.StringDataPoint;
 import org.apache.tsfile.write.schema.MeasurementSchema;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -74,9 +77,12 @@ import static org.junit.Assert.assertTrue;
 
 public class TsFilePlanRedoerTest {
   private static final String SG_NAME = "root.recover_sg";
-  private static final IDeviceID DEVICE1_NAME = new PlainDeviceID(SG_NAME.concat(".d1"));
-  private static final IDeviceID DEVICE2_NAME = new PlainDeviceID(SG_NAME.concat(".d2"));
-  private static final IDeviceID DEVICE3_NAME = new PlainDeviceID(SG_NAME.concat(".d3"));
+  private static final IDeviceID DEVICE1_NAME =
+      IDeviceID.Factory.DEFAULT_FACTORY.create(SG_NAME.concat(".d1"));
+  private static final IDeviceID DEVICE2_NAME =
+      IDeviceID.Factory.DEFAULT_FACTORY.create(SG_NAME.concat(".d2"));
+  private static final IDeviceID DEVICE3_NAME =
+      IDeviceID.Factory.DEFAULT_FACTORY.create(SG_NAME.concat(".d3"));
   private static final String FILE_NAME =
       TsFileUtilsForRecoverTest.getTestTsFilePath(SG_NAME, 0, 0, 1);
   private TsFileResource tsFileResource;
@@ -102,7 +108,7 @@ public class TsFilePlanRedoerTest {
     if (tsFileResource != null) {
       tsFileResource.close();
     }
-    File modsFile = new File(FILE_NAME.concat(ModificationFile.FILE_SUFFIX));
+    File modsFile = ModificationFile.getExclusiveMods(new File(FILE_NAME));
     if (modsFile.exists()) {
       modsFile.delete();
     }
@@ -152,11 +158,11 @@ public class TsFilePlanRedoerTest {
     // check data in memTable
     IMemTable recoveryMemTable = planRedoer.getRecoveryMemTable();
     // check d2.s1
-    MeasurementPath fullPath =
-        new MeasurementPath(
-            DEVICE2_NAME, "s1", new MeasurementSchema("s1", TSDataType.FLOAT, TSEncoding.RLE));
+    NonAlignedFullPath fullPath =
+        new NonAlignedFullPath(
+            DEVICE2_NAME, new MeasurementSchema("s1", TSDataType.FLOAT, TSEncoding.RLE));
     ReadOnlyMemChunk memChunk =
-        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null);
+        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null, null);
     IPointReader iterator = memChunk.getPointReader();
     time = 5;
     while (iterator.hasNextTimeValuePair()) {
@@ -168,9 +174,9 @@ public class TsFilePlanRedoerTest {
     assertEquals(6, time);
     // check d2.s2
     fullPath =
-        new MeasurementPath(
-            DEVICE2_NAME, "s2", new MeasurementSchema("s2", TSDataType.DOUBLE, TSEncoding.RLE));
-    memChunk = recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null);
+        new NonAlignedFullPath(
+            DEVICE2_NAME, new MeasurementSchema("s2", TSDataType.DOUBLE, TSEncoding.RLE));
+    memChunk = recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null, null);
     iterator = memChunk.getPointReader();
     time = 5;
     while (iterator.hasNextTimeValuePair()) {
@@ -245,9 +251,9 @@ public class TsFilePlanRedoerTest {
     // check data in memTable
     IMemTable recoveryMemTable = planRedoer.getRecoveryMemTable();
     // check d3
-    AlignedPath fullPath =
-        new AlignedPath(
-            ((PlainDeviceID) DEVICE3_NAME).toStringID(),
+    AlignedFullPath fullPath =
+        new AlignedFullPath(
+            DEVICE3_NAME,
             Arrays.asList("s1", "s2", "s3", "s4", "s5"),
             Arrays.asList(
                 new MeasurementSchema("s1", TSDataType.INT32, TSEncoding.RLE),
@@ -256,7 +262,7 @@ public class TsFilePlanRedoerTest {
                 new MeasurementSchema("s4", TSDataType.FLOAT, TSEncoding.RLE),
                 new MeasurementSchema("s5", TSDataType.TEXT, TSEncoding.PLAIN)));
     ReadOnlyMemChunk memChunk =
-        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null);
+        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null, null);
     IPointReader iterator = memChunk.getPointReader();
     int time = 6;
     while (iterator.hasNextTimeValuePair()) {
@@ -332,11 +338,11 @@ public class TsFilePlanRedoerTest {
     // check data in memTable
     IMemTable recoveryMemTable = planRedoer.getRecoveryMemTable();
     // check d1.s1
-    MeasurementPath fullPath =
-        new MeasurementPath(
-            DEVICE1_NAME, "s1", new MeasurementSchema("s1", TSDataType.INT32, TSEncoding.RLE));
+    NonAlignedFullPath fullPath =
+        new NonAlignedFullPath(
+            DEVICE1_NAME, new MeasurementSchema("s1", TSDataType.INT32, TSEncoding.RLE));
     ReadOnlyMemChunk memChunk =
-        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null);
+        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null, null);
     IPointReader iterator = memChunk.getPointReader();
     int time = 5;
     while (iterator.hasNextTimeValuePair()) {
@@ -348,9 +354,9 @@ public class TsFilePlanRedoerTest {
     assertEquals(8, time);
     // check d1.s2
     fullPath =
-        new MeasurementPath(
-            DEVICE1_NAME, "s2", new MeasurementSchema("s2", TSDataType.INT64, TSEncoding.RLE));
-    memChunk = recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null);
+        new NonAlignedFullPath(
+            DEVICE1_NAME, new MeasurementSchema("s2", TSDataType.INT64, TSEncoding.RLE));
+    memChunk = recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null, null);
     iterator = memChunk.getPointReader();
     time = 5;
     while (iterator.hasNextTimeValuePair()) {
@@ -438,9 +444,9 @@ public class TsFilePlanRedoerTest {
     // check data in memTable
     IMemTable recoveryMemTable = planRedoer.getRecoveryMemTable();
     // check d3
-    AlignedPath fullPath =
-        new AlignedPath(
-            ((PlainDeviceID) DEVICE3_NAME).toStringID(),
+    AlignedFullPath fullPath =
+        new AlignedFullPath(
+            DEVICE3_NAME,
             Arrays.asList("s1", "s2", "s3", "s4", "s5"),
             Arrays.asList(
                 new MeasurementSchema("s1", TSDataType.INT32, TSEncoding.RLE),
@@ -449,7 +455,7 @@ public class TsFilePlanRedoerTest {
                 new MeasurementSchema("s4", TSDataType.FLOAT, TSEncoding.RLE),
                 new MeasurementSchema("s5", TSDataType.TEXT, TSEncoding.PLAIN)));
     ReadOnlyMemChunk memChunk =
-        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null);
+        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null, null);
     IPointReader iterator = memChunk.getPointReader();
     int time = 6;
     while (iterator.hasNextTimeValuePair()) {
@@ -567,17 +573,17 @@ public class TsFilePlanRedoerTest {
     // check data in memTable
     IMemTable recoveryMemTable = planRedoer.getRecoveryMemTable();
     // check d1.s1
-    MeasurementPath fullPath =
-        new MeasurementPath(
-            DEVICE1_NAME, "s1", new MeasurementSchema("s1", TSDataType.INT32, TSEncoding.RLE));
+    NonAlignedFullPath fullPath =
+        new NonAlignedFullPath(
+            DEVICE1_NAME, new MeasurementSchema("s1", TSDataType.INT32, TSEncoding.RLE));
     ReadOnlyMemChunk memChunk =
-        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null);
+        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null, null);
     assertTrue(memChunk == null || memChunk.isEmpty());
     // check d1.s2
     fullPath =
-        new MeasurementPath(
-            DEVICE1_NAME, "s2", new MeasurementSchema("s2", TSDataType.INT64, TSEncoding.RLE));
-    memChunk = recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null);
+        new NonAlignedFullPath(
+            DEVICE1_NAME, new MeasurementSchema("s2", TSDataType.INT64, TSEncoding.RLE));
+    memChunk = recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null, null);
     assertTrue(memChunk == null || memChunk.isEmpty());
   }
 
@@ -596,16 +602,82 @@ public class TsFilePlanRedoerTest {
     DeleteDataNode deleteDataNode =
         new DeleteDataNode(
             new PlanNodeId(""),
-            Collections.singletonList(new PartialPath(DEVICE1_NAME)),
+            Collections.singletonList(new MeasurementPath(DEVICE1_NAME, "**")),
             Long.MIN_VALUE,
             Long.MAX_VALUE);
 
     // redo DeleteDataNode, vsg processor is used to test IdTable, don't test IdTable here
-    File modsFile = new File(FILE_NAME.concat(ModificationFile.FILE_SUFFIX));
+    File modsFile = ModificationFile.getExclusiveMods(new File(FILE_NAME));
     assertFalse(modsFile.exists());
     TsFilePlanRedoer planRedoer = new TsFilePlanRedoer(tsFileResource);
     planRedoer.redoDelete(deleteDataNode);
     assertTrue(modsFile.exists());
+  }
+
+  @Test
+  public void testRedoRelationalInsertTablet()
+      throws IOException,
+          WriteProcessException,
+          org.apache.iotdb.db.exception.WriteProcessException {
+    // generate .tsfile and update resource in memory
+    File file = new File(FILE_NAME);
+    generateCompleteFile(file);
+    tsFileResource = new TsFileResource(file);
+    IDeviceID existDevice = IDeviceID.Factory.DEFAULT_FACTORY.create("table1.tag1");
+    tsFileResource.updateStartTime(existDevice, 0);
+    tsFileResource.updateEndTime(existDevice, 1000);
+
+    long[] times = new long[] {110L, 111L, 112L, 113L, 114L, 115L, 116L};
+    List<TSDataType> dataTypes = new ArrayList<>();
+    dataTypes.add(TSDataType.STRING);
+    dataTypes.add(TSDataType.INT32);
+    dataTypes.add(TSDataType.BOOLEAN);
+
+    Object[] columns = new Object[3];
+    columns[0] = new Binary[times.length];
+    columns[1] = new int[times.length];
+    columns[2] = new boolean[times.length];
+
+    for (int r = 0; r < times.length; r++) {
+      ((Binary[]) columns[0])[r] = new Binary("tag" + (int) (r / 3), TSFileConfig.STRING_CHARSET);
+      ((int[]) columns[1])[r] = 100 + r;
+      ((boolean[]) columns[2])[r] = (r % 2 == 0);
+    }
+
+    BitMap[] bitMaps = new BitMap[dataTypes.size()];
+    for (int i = 0; i < dataTypes.size(); i++) {
+      if (bitMaps[i] == null) {
+        bitMaps[i] = new BitMap(times.length);
+      }
+    }
+
+    RelationalInsertTabletNode relationalInsertTabletNode =
+        new RelationalInsertTabletNode(
+            new PlanNodeId(""),
+            new PartialPath("table1", false),
+            false,
+            new String[] {
+              "t", "s1", "s2",
+            },
+            dataTypes.toArray(new TSDataType[3]),
+            new MeasurementSchema[] {
+              new MeasurementSchema("t", TSDataType.STRING),
+              new MeasurementSchema("s1", TSDataType.INT32),
+              new MeasurementSchema("s2", TSDataType.BOOLEAN),
+            },
+            times,
+            bitMaps,
+            columns,
+            times.length,
+            new TsTableColumnCategory[] {
+              TsTableColumnCategory.TAG, TsTableColumnCategory.FIELD, TsTableColumnCategory.FIELD,
+            });
+
+    TsFilePlanRedoer planRedoer = new TsFilePlanRedoer(tsFileResource);
+    planRedoer.redoInsert(relationalInsertTabletNode);
+    IMemTable recoveryMemTable = planRedoer.getRecoveryMemTable();
+    Assert.assertEquals(2, recoveryMemTable.getMemTableMap().size());
+    Assert.assertFalse(recoveryMemTable.getMemTableMap().containsKey(existDevice));
   }
 
   @Test
@@ -705,9 +777,9 @@ public class TsFilePlanRedoerTest {
     // check data in memTable
     IMemTable recoveryMemTable = planRedoer.getRecoveryMemTable();
     // check d3
-    AlignedPath fullPath =
-        new AlignedPath(
-            ((PlainDeviceID) DEVICE3_NAME).toStringID(),
+    AlignedFullPath fullPath =
+        new AlignedFullPath(
+            DEVICE3_NAME,
             Arrays.asList("s1", "s2", "s3", "s4", "s5"),
             Arrays.asList(
                 new MeasurementSchema("s1", TSDataType.INT32, TSEncoding.RLE),
@@ -716,7 +788,7 @@ public class TsFilePlanRedoerTest {
                 new MeasurementSchema("s4", TSDataType.FLOAT, TSEncoding.RLE),
                 new MeasurementSchema("s5", TSDataType.TEXT, TSEncoding.PLAIN)));
     ReadOnlyMemChunk memChunk =
-        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null);
+        recoveryMemTable.query(new QueryContext(), fullPath, Long.MIN_VALUE, null, null);
     IPointReader iterator = memChunk.getPointReader();
     time = 6;
     while (iterator.hasNextTimeValuePair()) {
@@ -750,24 +822,24 @@ public class TsFilePlanRedoerTest {
               new MeasurementSchema("s3", TSDataType.BOOLEAN, TSEncoding.RLE),
               new MeasurementSchema("s4", TSDataType.FLOAT, TSEncoding.RLE),
               new MeasurementSchema("s5", TSDataType.TEXT, TSEncoding.PLAIN)));
-      writer.write(
-          new TSRecord(1, DEVICE1_NAME)
+      writer.writeRecord(
+          new TSRecord(DEVICE1_NAME, 1)
               .addTuple(new IntDataPoint("s1", 1))
               .addTuple(new LongDataPoint("s2", 1)));
-      writer.write(
-          new TSRecord(2, DEVICE1_NAME)
+      writer.writeRecord(
+          new TSRecord(DEVICE1_NAME, 2)
               .addTuple(new IntDataPoint("s1", 2))
               .addTuple(new LongDataPoint("s2", 2)));
-      writer.write(
-          new TSRecord(3, DEVICE2_NAME)
+      writer.writeRecord(
+          new TSRecord(DEVICE2_NAME, 3)
               .addTuple(new FloatDataPoint("s1", 3))
               .addTuple(new DoubleDataPoint("s2", 3)));
-      writer.write(
-          new TSRecord(4, DEVICE2_NAME)
+      writer.writeRecord(
+          new TSRecord(DEVICE2_NAME, 4)
               .addTuple(new FloatDataPoint("s1", 4))
               .addTuple(new DoubleDataPoint("s2", 4)));
-      writer.writeAligned(
-          new TSRecord(5, DEVICE3_NAME)
+      writer.writeRecord(
+          new TSRecord(DEVICE3_NAME, 5)
               .addTuple(new IntDataPoint("s1", 5))
               .addTuple(new LongDataPoint("s2", 5))
               .addTuple(new BooleanDataPoint("s3", true))

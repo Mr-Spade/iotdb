@@ -22,15 +22,16 @@ github:
   homepage: https://iotdb.apache.org/
   labels:
     - timeseries
+    - nosql
     - database
     - iot
-    - nosql
     - big-data
     - java
     - tsdb
   features:
     wiki: true
     issues: true
+    discussions: true
   enabled_merge_buttons:
     # enable squash button:
     squash:  true
@@ -38,3 +39,15 @@ github:
     merge:   false
     # disable rebase button:
     rebase:  true
+  collaborators:
+    - shuwenwei
+    - liyuheng55555
+    - CritasWang
+    - HxpSerein
+    - DanielWang2035
+    - Pengzna
+    - Wei-hao-Li
+    - Colinleeo
+    - Caideyipi
+notifications:
+  discussions: dev@iotdb.apache.org

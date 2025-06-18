@@ -20,12 +20,16 @@
 package org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.subtask;
 
 import org.apache.iotdb.commons.exception.IllegalPathException;
+import org.apache.iotdb.commons.path.PatternTreeMap;
+import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.exception.WriteProcessException;
-import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.executor.fast.AlignedSeriesCompactionExecutor;
-import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.executor.fast.NonAlignedSeriesCompactionExecutor;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.executor.batch.BatchedFastAlignedSeriesCompactionExecutor;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.executor.fast.FastAlignedSeriesCompactionExecutor;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.executor.fast.FastNonAlignedSeriesCompactionExecutor;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.writer.AbstractCompactionWriter;
-import org.apache.iotdb.db.storageengine.dataregion.modification.Modification;
+import org.apache.iotdb.db.storageengine.dataregion.modification.ModEntry;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
+import org.apache.iotdb.db.utils.datastructure.PatternTreeMapFactory;
 
 import org.apache.tsfile.exception.write.PageException;
 import org.apache.tsfile.file.metadata.IDeviceID;
@@ -41,26 +45,29 @@ import java.util.concurrent.Callable;
 @SuppressWarnings("squid:S107")
 public class FastCompactionPerformerSubTask implements Callable<Void> {
 
-  private FastCompactionTaskSummary summary;
+  private final FastCompactionTaskSummary summary;
 
-  private AbstractCompactionWriter compactionWriter;
+  private final AbstractCompactionWriter compactionWriter;
 
-  private int subTaskId;
+  private final int subTaskId;
 
   // measurement -> tsfile resource -> timeseries metadata <startOffset, endOffset>
   // used to get the chunk metadatas from tsfile directly according to timeseries metadata offset.
-  private Map<String, Map<TsFileResource, Pair<Long, Long>>> timeseriesMetadataOffsetMap;
+  private final Map<String, Map<TsFileResource, Pair<Long, Long>>> timeseriesMetadataOffsetMap;
 
-  private Map<TsFileResource, TsFileSequenceReader> readerCacheMap;
+  private final Map<TsFileResource, TsFileSequenceReader> readerCacheMap;
 
-  private final Map<TsFileResource, List<Modification>> modificationCacheMap;
+  private final Map<String, PatternTreeMap<ModEntry, PatternTreeMapFactory.ModsSerializer>>
+      modificationCacheMap;
 
   // source files which are sorted by the start time of current device from old to new. Notice: If
   // the type of timeIndex is FileTimeIndex, it may contain resources in which the current device
   // does not exist.
-  private List<TsFileResource> sortedSourceFiles;
+  private final List<TsFileResource> sortedSourceFiles;
 
   private final boolean isAligned;
+
+  private final boolean ignoreAllNullRows;
 
   private IDeviceID deviceId;
 
@@ -74,7 +81,8 @@ public class FastCompactionPerformerSubTask implements Callable<Void> {
       AbstractCompactionWriter compactionWriter,
       Map<String, Map<TsFileResource, Pair<Long, Long>>> timeseriesMetadataOffsetMap,
       Map<TsFileResource, TsFileSequenceReader> readerCacheMap,
-      Map<TsFileResource, List<Modification>> modificationCacheMap,
+      Map<String, PatternTreeMap<ModEntry, PatternTreeMapFactory.ModsSerializer>>
+          modificationCacheMap,
       List<TsFileResource> sortedSourceFiles,
       List<String> measurements,
       IDeviceID deviceId,
@@ -90,6 +98,7 @@ public class FastCompactionPerformerSubTask implements Callable<Void> {
     this.sortedSourceFiles = sortedSourceFiles;
     this.measurements = measurements;
     this.summary = summary;
+    this.ignoreAllNullRows = true;
   }
 
   /** Used for aligned timeseries. */
@@ -97,11 +106,13 @@ public class FastCompactionPerformerSubTask implements Callable<Void> {
       AbstractCompactionWriter compactionWriter,
       Map<String, Map<TsFileResource, Pair<Long, Long>>> timeseriesMetadataOffsetMap,
       Map<TsFileResource, TsFileSequenceReader> readerCacheMap,
-      Map<TsFileResource, List<Modification>> modificationCacheMap,
+      Map<String, PatternTreeMap<ModEntry, PatternTreeMapFactory.ModsSerializer>>
+          modificationCacheMap,
       List<TsFileResource> sortedSourceFiles,
       List<IMeasurementSchema> measurementSchemas,
       IDeviceID deviceId,
-      FastCompactionTaskSummary summary) {
+      FastCompactionTaskSummary summary,
+      boolean ignoreAllNullRows) {
     this.compactionWriter = compactionWriter;
     this.subTaskId = 0;
     this.timeseriesMetadataOffsetMap = timeseriesMetadataOffsetMap;
@@ -112,14 +123,15 @@ public class FastCompactionPerformerSubTask implements Callable<Void> {
     this.sortedSourceFiles = sortedSourceFiles;
     this.measurementSchemas = measurementSchemas;
     this.summary = summary;
+    this.ignoreAllNullRows = ignoreAllNullRows;
   }
 
   @Override
   public Void call()
       throws IOException, PageException, WriteProcessException, IllegalPathException {
     if (!isAligned) {
-      NonAlignedSeriesCompactionExecutor seriesCompactionExecutor =
-          new NonAlignedSeriesCompactionExecutor(
+      FastNonAlignedSeriesCompactionExecutor seriesCompactionExecutor =
+          new FastNonAlignedSeriesCompactionExecutor(
               compactionWriter,
               readerCacheMap,
               modificationCacheMap,
@@ -132,17 +144,37 @@ public class FastCompactionPerformerSubTask implements Callable<Void> {
         seriesCompactionExecutor.execute();
       }
     } else {
-      AlignedSeriesCompactionExecutor seriesCompactionExecutor =
-          new AlignedSeriesCompactionExecutor(
-              compactionWriter,
-              timeseriesMetadataOffsetMap,
-              readerCacheMap,
-              modificationCacheMap,
-              sortedSourceFiles,
-              deviceId,
-              subTaskId,
-              measurementSchemas,
-              summary);
+      FastAlignedSeriesCompactionExecutor seriesCompactionExecutor;
+      if (measurementSchemas.size() - 1
+          > IoTDBDescriptor.getInstance()
+              .getConfig()
+              .getCompactionMaxAlignedSeriesNumInOneBatch()) {
+        seriesCompactionExecutor =
+            new BatchedFastAlignedSeriesCompactionExecutor(
+                compactionWriter,
+                timeseriesMetadataOffsetMap,
+                readerCacheMap,
+                modificationCacheMap,
+                sortedSourceFiles,
+                deviceId,
+                subTaskId,
+                measurementSchemas,
+                summary,
+                ignoreAllNullRows);
+      } else {
+        seriesCompactionExecutor =
+            new FastAlignedSeriesCompactionExecutor(
+                compactionWriter,
+                timeseriesMetadataOffsetMap,
+                readerCacheMap,
+                modificationCacheMap,
+                sortedSourceFiles,
+                deviceId,
+                subTaskId,
+                measurementSchemas,
+                summary,
+                ignoreAllNullRows);
+      }
       seriesCompactionExecutor.execute();
     }
     return null;

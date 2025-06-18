@@ -21,8 +21,8 @@ package org.apache.iotdb.confignode.manager.pipe.connector.payload;
 
 import org.apache.iotdb.commons.pipe.connector.payload.thrift.request.PipeRequestType;
 import org.apache.iotdb.commons.pipe.connector.payload.thrift.request.PipeTransferFileSealReqV2;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.confignode.persistence.schema.CNSnapshotFileType;
-import org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant;
 import org.apache.iotdb.service.rpc.thrift.TPipeTransferReq;
 
 import java.io.IOException;
@@ -48,16 +48,31 @@ public class PipeTransferConfigSnapshotSealReq extends PipeTransferFileSealReqV2
   /////////////////////////////// Thrift ///////////////////////////////
 
   public static PipeTransferConfigSnapshotSealReq toTPipeTransferReq(
-      String snapshotName,
-      long snapshotLength,
-      String templateFileName,
-      long templateFileLength,
-      CNSnapshotFileType fileType,
-      String typeString)
+      final String treePattern,
+      final String tablePatternDatabase,
+      final String tablePatternTable,
+      final boolean isTreeCaptured,
+      final boolean isTableCaptured,
+      final String snapshotName,
+      final long snapshotLength,
+      final String templateFileName,
+      final long templateFileLength,
+      final CNSnapshotFileType fileType,
+      final String typeString)
       throws IOException {
     final Map<String, String> parameters = new HashMap<>();
+    parameters.put(ColumnHeaderConstant.PATH_PATTERN, treePattern);
+    parameters.put(DATABASE_PATTERN, tablePatternDatabase);
+    parameters.put(ColumnHeaderConstant.TABLE_NAME, tablePatternTable);
+    if (isTreeCaptured) {
+      parameters.put(TREE, "");
+    }
+    if (isTableCaptured) {
+      parameters.put(TABLE, "");
+    }
     parameters.put(FILE_TYPE, Byte.toString(fileType.getType()));
     parameters.put(ColumnHeaderConstant.TYPE, typeString);
+
     return (PipeTransferConfigSnapshotSealReq)
         new PipeTransferConfigSnapshotSealReq()
             .convertToTPipeTransferReq(
@@ -70,7 +85,7 @@ public class PipeTransferConfigSnapshotSealReq extends PipeTransferFileSealReqV2
                 parameters);
   }
 
-  public static PipeTransferConfigSnapshotSealReq fromTPipeTransferReq(TPipeTransferReq req) {
+  public static PipeTransferConfigSnapshotSealReq fromTPipeTransferReq(final TPipeTransferReq req) {
     return (PipeTransferConfigSnapshotSealReq)
         new PipeTransferConfigSnapshotSealReq().translateFromTPipeTransferReq(req);
   }
@@ -78,14 +93,28 @@ public class PipeTransferConfigSnapshotSealReq extends PipeTransferFileSealReqV2
   /////////////////////////////// Air Gap ///////////////////////////////
 
   public static byte[] toTPipeTransferBytes(
-      String snapshotName,
-      long snapshotLength,
-      String templateFileName,
-      long templateFileLength,
-      CNSnapshotFileType fileType,
-      String typeString)
+      final String treePattern,
+      final String tablePatternDatabase,
+      final String tablePatternTable,
+      final boolean isTreeCaptured,
+      final boolean isTableCaptured,
+      final String snapshotName,
+      final long snapshotLength,
+      final String templateFileName,
+      final long templateFileLength,
+      final CNSnapshotFileType fileType,
+      final String typeString)
       throws IOException {
     final Map<String, String> parameters = new HashMap<>();
+    parameters.put(ColumnHeaderConstant.PATH_PATTERN, treePattern);
+    parameters.put(DATABASE_PATTERN, tablePatternDatabase);
+    parameters.put(ColumnHeaderConstant.TABLE_NAME, tablePatternTable);
+    if (isTreeCaptured) {
+      parameters.put(TREE, "");
+    }
+    if (isTableCaptured) {
+      parameters.put(TABLE, "");
+    }
     parameters.put(FILE_TYPE, Byte.toString(fileType.getType()));
     parameters.put(ColumnHeaderConstant.TYPE, typeString);
     return new PipeTransferConfigSnapshotSealReq()
@@ -102,7 +131,7 @@ public class PipeTransferConfigSnapshotSealReq extends PipeTransferFileSealReqV2
   /////////////////////////////// Object ///////////////////////////////
 
   @Override
-  public boolean equals(Object obj) {
+  public boolean equals(final Object obj) {
     return obj instanceof PipeTransferConfigSnapshotSealReq && super.equals(obj);
   }
 

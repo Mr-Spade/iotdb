@@ -36,19 +36,36 @@ import java.util.List;
 public class CreatePipePluginStatement extends Statement implements IConfigStatement {
 
   private final String pluginName;
+  private final boolean ifNotExistsCondition;
   private final String className;
   private final String uriString;
 
-  public CreatePipePluginStatement(String pluginName, String className, String uriString) {
+  private boolean isTableModel = false;
+
+  public CreatePipePluginStatement(
+      String pluginName, boolean ifNotExistsCondition, String className, String uriString) {
     super();
     statementType = StatementType.CREATE_PIPEPLUGIN;
     this.pluginName = pluginName;
+    this.ifNotExistsCondition = ifNotExistsCondition;
     this.className = className;
     this.uriString = uriString;
   }
 
+  public void markIsTableModel(final boolean isTableModel) {
+    this.isTableModel = isTableModel;
+  }
+
+  public boolean isTableModel() {
+    return isTableModel;
+  }
+
   public String getPluginName() {
     return pluginName;
+  }
+
+  public boolean hasIfNotExistsCondition() {
+    return ifNotExistsCondition;
   }
 
   public String getClassName() {
@@ -75,7 +92,7 @@ public class CreatePipePluginStatement extends Statement implements IConfigState
       return new TSStatus(TSStatusCode.SUCCESS_STATUS.getStatusCode());
     }
     return AuthorityChecker.getTSStatus(
-        AuthorityChecker.checkSystemPermission(userName, PrivilegeType.USE_PIPE.ordinal()),
+        AuthorityChecker.checkSystemPermission(userName, PrivilegeType.USE_PIPE),
         PrivilegeType.USE_PIPE);
   }
 

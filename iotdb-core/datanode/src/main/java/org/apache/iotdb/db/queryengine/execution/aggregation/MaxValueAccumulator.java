@@ -23,6 +23,7 @@ import org.apache.tsfile.block.column.Column;
 import org.apache.tsfile.block.column.ColumnBuilder;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.file.metadata.statistics.Statistics;
+import org.apache.tsfile.utils.Binary;
 import org.apache.tsfile.utils.BitMap;
 import org.apache.tsfile.utils.TsPrimitiveType;
 import org.apache.tsfile.write.UnSupportedDataTypeException;
@@ -45,9 +46,11 @@ public class MaxValueAccumulator implements Accumulator {
   public void addInput(Column[] columns, BitMap bitMap) {
     switch (seriesDataType) {
       case INT32:
+      case DATE:
         addIntInput(columns, bitMap);
         return;
       case INT64:
+      case TIMESTAMP:
         addLongInput(columns, bitMap);
         return;
       case FLOAT:
@@ -56,7 +59,11 @@ public class MaxValueAccumulator implements Accumulator {
       case DOUBLE:
         addDoubleInput(columns, bitMap);
         return;
+      case STRING:
+        addBinaryInput(columns, bitMap);
+        return;
       case TEXT:
+      case BLOB:
       case BOOLEAN:
       default:
         throw new UnSupportedDataTypeException(
@@ -73,9 +80,11 @@ public class MaxValueAccumulator implements Accumulator {
     }
     switch (seriesDataType) {
       case INT32:
+      case DATE:
         updateIntResult(partialResult[0].getInt(0));
         break;
       case INT64:
+      case TIMESTAMP:
         updateLongResult(partialResult[0].getLong(0));
         break;
       case FLOAT:
@@ -84,7 +93,11 @@ public class MaxValueAccumulator implements Accumulator {
       case DOUBLE:
         updateDoubleResult(partialResult[0].getDouble(0));
         break;
+      case STRING:
+        updateBinaryResult(partialResult[0].getBinary(0));
+        break;
       case TEXT:
+      case BLOB:
       case BOOLEAN:
       default:
         throw new UnSupportedDataTypeException(
@@ -99,9 +112,11 @@ public class MaxValueAccumulator implements Accumulator {
     }
     switch (seriesDataType) {
       case INT32:
+      case DATE:
         updateIntResult((int) statistics.getMaxValue());
         break;
       case INT64:
+      case TIMESTAMP:
         updateLongResult((long) statistics.getMaxValue());
         break;
       case FLOAT:
@@ -110,7 +125,11 @@ public class MaxValueAccumulator implements Accumulator {
       case DOUBLE:
         updateDoubleResult((double) statistics.getMaxValue());
         break;
+      case STRING:
+        updateBinaryResult((Binary) statistics.getMaxValue());
+        break;
       case TEXT:
+      case BLOB:
       case BOOLEAN:
       default:
         throw new UnSupportedDataTypeException(
@@ -127,9 +146,11 @@ public class MaxValueAccumulator implements Accumulator {
     initResult = true;
     switch (seriesDataType) {
       case INT32:
+      case DATE:
         maxResult.setInt(finalResult.getInt(0));
         break;
       case INT64:
+      case TIMESTAMP:
         maxResult.setLong(finalResult.getLong(0));
         break;
       case FLOAT:
@@ -138,7 +159,11 @@ public class MaxValueAccumulator implements Accumulator {
       case DOUBLE:
         maxResult.setDouble(finalResult.getDouble(0));
         break;
+      case STRING:
+        maxResult.setBinary(finalResult.getBinary(0));
+        break;
       case TEXT:
+      case BLOB:
       case BOOLEAN:
       default:
         throw new UnSupportedDataTypeException(
@@ -156,9 +181,11 @@ public class MaxValueAccumulator implements Accumulator {
     }
     switch (seriesDataType) {
       case INT32:
+      case DATE:
         columnBuilders[0].writeInt(maxResult.getInt());
         break;
       case INT64:
+      case TIMESTAMP:
         columnBuilders[0].writeLong(maxResult.getLong());
         break;
       case FLOAT:
@@ -167,7 +194,11 @@ public class MaxValueAccumulator implements Accumulator {
       case DOUBLE:
         columnBuilders[0].writeDouble(maxResult.getDouble());
         break;
+      case STRING:
+        columnBuilders[0].writeBinary(maxResult.getBinary());
+        break;
       case TEXT:
+      case BLOB:
       case BOOLEAN:
       default:
         throw new UnSupportedDataTypeException(
@@ -183,9 +214,11 @@ public class MaxValueAccumulator implements Accumulator {
     }
     switch (seriesDataType) {
       case INT32:
+      case DATE:
         columnBuilder.writeInt(maxResult.getInt());
         break;
       case INT64:
+      case TIMESTAMP:
         columnBuilder.writeLong(maxResult.getLong());
         break;
       case FLOAT:
@@ -194,7 +227,11 @@ public class MaxValueAccumulator implements Accumulator {
       case DOUBLE:
         columnBuilder.writeDouble(maxResult.getDouble());
         break;
+      case STRING:
+        columnBuilder.writeBinary(maxResult.getBinary());
+        break;
       case TEXT:
+      case BLOB:
       case BOOLEAN:
       default:
         throw new UnSupportedDataTypeException(
@@ -296,6 +333,25 @@ public class MaxValueAccumulator implements Accumulator {
     if (!initResult || maxVal > maxResult.getDouble()) {
       initResult = true;
       maxResult.setDouble(maxVal);
+    }
+  }
+
+  private void addBinaryInput(Column[] column, BitMap bitMap) {
+    int count = column[0].getPositionCount();
+    for (int i = 0; i < count; i++) {
+      if (bitMap != null && !bitMap.isMarked(i)) {
+        continue;
+      }
+      if (!column[1].isNull(i)) {
+        updateBinaryResult(column[1].getBinary(i));
+      }
+    }
+  }
+
+  private void updateBinaryResult(Binary maxVal) {
+    if (!initResult || maxVal.compareTo(maxResult.getBinary()) > 0) {
+      initResult = true;
+      maxResult.setBinary(maxVal);
     }
   }
 }

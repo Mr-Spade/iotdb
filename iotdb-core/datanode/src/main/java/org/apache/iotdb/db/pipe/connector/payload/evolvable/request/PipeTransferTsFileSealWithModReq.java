@@ -25,6 +25,7 @@ import org.apache.iotdb.service.rpc.thrift.TPipeTransferReq;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 
 public class PipeTransferTsFileSealWithModReq extends PipeTransferFileSealReqV2 {
@@ -38,20 +39,58 @@ public class PipeTransferTsFileSealWithModReq extends PipeTransferFileSealReqV2 
     return PipeRequestType.TRANSFER_TS_FILE_SEAL_WITH_MOD;
   }
 
+  protected static final String DATABASE_NAME_KEY_PREFIX = "DATABASE_NAME_";
+
+  public String getDatabaseNameByTsFileName() {
+    return parameters == null
+        ? null
+        : parameters.get(generateDatabaseNameWithFileNameKey(fileNames.get(fileNames.size() - 1)));
+  }
+
+  protected static String generateDatabaseNameWithFileNameKey(final String fileName) {
+    return DATABASE_NAME_KEY_PREFIX + fileName;
+  }
+
   /////////////////////////////// Thrift ///////////////////////////////
 
   public static PipeTransferTsFileSealWithModReq toTPipeTransferReq(
-      String modFileName, long modFileLength, String tsFileName, long tsFileLength)
+      final String modFileName,
+      final long modFileLength,
+      final String tsFileName,
+      final long tsFileLength)
+      throws IOException {
+    return toTPipeTransferReq(modFileName, modFileLength, tsFileName, tsFileLength, null);
+  }
+
+  public static PipeTransferTsFileSealWithModReq toTPipeTransferReq(
+      final String modFileName,
+      final long modFileLength,
+      final String tsFileName,
+      final long tsFileLength,
+      final String dataBaseName)
       throws IOException {
     return (PipeTransferTsFileSealWithModReq)
         new PipeTransferTsFileSealWithModReq()
             .convertToTPipeTransferReq(
                 Arrays.asList(modFileName, tsFileName),
                 Arrays.asList(modFileLength, tsFileLength),
-                new HashMap<>());
+                Collections.singletonMap(
+                    generateDatabaseNameWithFileNameKey(tsFileName), dataBaseName));
   }
 
-  public static PipeTransferTsFileSealWithModReq fromTPipeTransferReq(TPipeTransferReq req) {
+  public static PipeTransferTsFileSealWithModReq toTPipeTransferReq(
+      final String tsFileName, final long tsFileLength, final String dataBaseName)
+      throws IOException {
+    return (PipeTransferTsFileSealWithModReq)
+        new PipeTransferTsFileSealWithModReq()
+            .convertToTPipeTransferReq(
+                Collections.singletonList(tsFileName),
+                Collections.singletonList(tsFileLength),
+                Collections.singletonMap(
+                    generateDatabaseNameWithFileNameKey(tsFileName), dataBaseName));
+  }
+
+  public static PipeTransferTsFileSealWithModReq fromTPipeTransferReq(final TPipeTransferReq req) {
     return (PipeTransferTsFileSealWithModReq)
         new PipeTransferTsFileSealWithModReq().translateFromTPipeTransferReq(req);
   }
@@ -59,7 +98,10 @@ public class PipeTransferTsFileSealWithModReq extends PipeTransferFileSealReqV2 
   /////////////////////////////// Air Gap ///////////////////////////////
 
   public static byte[] toTPipeTransferBytes(
-      String modFileName, long modFileLength, String tsFileName, long tsFileLength)
+      final String modFileName,
+      final long modFileLength,
+      final String tsFileName,
+      final long tsFileLength)
       throws IOException {
     return new PipeTransferTsFileSealWithModReq()
         .convertToTPipeTransferSnapshotSealBytes(
@@ -68,10 +110,36 @@ public class PipeTransferTsFileSealWithModReq extends PipeTransferFileSealReqV2 
             new HashMap<>());
   }
 
+  public static byte[] toTPipeTransferBytes(
+      final String modFileName,
+      final long modFileLength,
+      final String tsFileName,
+      final long tsFileLength,
+      final String dataBaseName)
+      throws IOException {
+    return new PipeTransferTsFileSealWithModReq()
+        .convertToTPipeTransferSnapshotSealBytes(
+            Arrays.asList(modFileName, tsFileName),
+            Arrays.asList(modFileLength, tsFileLength),
+            Collections.singletonMap(
+                generateDatabaseNameWithFileNameKey(tsFileName), dataBaseName));
+  }
+
+  public static byte[] toTPipeTransferBytes(
+      final String tsFileName, final long tsFileLength, final String dataBaseName)
+      throws IOException {
+    return new PipeTransferTsFileSealWithModReq()
+        .convertToTPipeTransferSnapshotSealBytes(
+            Collections.singletonList(tsFileName),
+            Collections.singletonList(tsFileLength),
+            Collections.singletonMap(
+                generateDatabaseNameWithFileNameKey(tsFileName), dataBaseName));
+  }
+
   /////////////////////////////// Object ///////////////////////////////
 
   @Override
-  public boolean equals(Object obj) {
+  public boolean equals(final Object obj) {
     return obj instanceof PipeTransferTsFileSealWithModReq && super.equals(obj);
   }
 

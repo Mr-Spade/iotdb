@@ -22,10 +22,9 @@ package org.apache.iotdb.subscription.it.local;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
-import org.apache.iotdb.session.subscription.SubscriptionPullConsumer;
-import org.apache.iotdb.session.subscription.SubscriptionSession;
+import org.apache.iotdb.session.subscription.SubscriptionTreeSession;
+import org.apache.iotdb.session.subscription.consumer.tree.SubscriptionTreePullConsumer;
 
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -38,18 +37,14 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 @RunWith(IoTDBTestRunner.class)
 @Category({LocalStandaloneIT.class})
-public class IoTDBSubscriptionIdempotentIT {
+public class IoTDBSubscriptionIdempotentIT extends AbstractSubscriptionLocalIT {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(IoTDBSubscriptionIdempotentIT.class);
 
+  @Override
   @Before
   public void setUp() throws Exception {
-    EnvFactory.getEnv().initClusterEnvironment();
-  }
-
-  @After
-  public void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanClusterEnvironment();
+    super.setUp();
   }
 
   @Test
@@ -59,8 +54,8 @@ public class IoTDBSubscriptionIdempotentIT {
 
     // Subscribe non-existed topic
     final String topicName = "topic1";
-    try (final SubscriptionPullConsumer consumer =
-        new SubscriptionPullConsumer.Builder()
+    try (final SubscriptionTreePullConsumer consumer =
+        new SubscriptionTreePullConsumer.Builder()
             .host(host)
             .port(port)
             .consumerId("c1")
@@ -76,8 +71,8 @@ public class IoTDBSubscriptionIdempotentIT {
     }
 
     // Unsubscribe non-existed topic
-    try (final SubscriptionPullConsumer consumer =
-        new SubscriptionPullConsumer.Builder()
+    try (final SubscriptionTreePullConsumer consumer =
+        new SubscriptionTreePullConsumer.Builder()
             .host(host)
             .port(port)
             .consumerId("c1")
@@ -100,7 +95,7 @@ public class IoTDBSubscriptionIdempotentIT {
 
     // Create topic
     final String topicName = "topic2";
-    try (final SubscriptionSession session = new SubscriptionSession(host, port)) {
+    try (final SubscriptionTreeSession session = new SubscriptionTreeSession(host, port)) {
       session.open();
       session.createTopic(topicName);
     } catch (final Exception e) {
@@ -108,8 +103,8 @@ public class IoTDBSubscriptionIdempotentIT {
       Assert.fail(e.getMessage());
     }
 
-    try (final SubscriptionPullConsumer consumer =
-        new SubscriptionPullConsumer.Builder()
+    try (final SubscriptionTreePullConsumer consumer =
+        new SubscriptionTreePullConsumer.Builder()
             .host(host)
             .port(port)
             .consumerId("c1")
@@ -135,7 +130,7 @@ public class IoTDBSubscriptionIdempotentIT {
 
     // Create topic
     final String topicName = "topic3";
-    try (final SubscriptionSession session = new SubscriptionSession(host, port)) {
+    try (final SubscriptionTreeSession session = new SubscriptionTreeSession(host, port)) {
       session.open();
       session.createTopic(topicName);
     } catch (final Exception e) {
@@ -143,8 +138,8 @@ public class IoTDBSubscriptionIdempotentIT {
       Assert.fail(e.getMessage());
     }
 
-    try (final SubscriptionPullConsumer consumer =
-        new SubscriptionPullConsumer.Builder()
+    try (final SubscriptionTreePullConsumer consumer =
+        new SubscriptionTreePullConsumer.Builder()
             .host(host)
             .port(port)
             .consumerId("c1")

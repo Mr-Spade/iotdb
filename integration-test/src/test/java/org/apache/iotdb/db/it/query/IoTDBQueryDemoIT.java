@@ -18,11 +18,13 @@
  */
 package org.apache.iotdb.db.it.query;
 
+import org.apache.iotdb.isession.ISession;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
 
+import com.google.common.collect.ImmutableList;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -41,6 +43,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.apache.iotdb.db.it.utils.TestUtils.assertTestFail;
 import static org.junit.Assert.fail;
 
 @RunWith(IoTDBTestRunner.class)
@@ -121,14 +124,14 @@ public class IoTDBQueryDemoIT {
 
   @BeforeClass
   public static void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeClass();
+    EnvFactory.getEnv().initClusterEnvironment();
 
     importData();
   }
 
   @AfterClass
   public static void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterClass();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   private static void importData() {
@@ -466,18 +469,6 @@ public class IoTDBQueryDemoIT {
   }
 
   @Test
-  public void testWrongTextQuery() {
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-      statement.executeQuery("select * from root.ln.wf02.wt02 where hardware > 'v1'");
-    } catch (Exception e) {
-      Assert.assertEquals(
-          e.getMessage(),
-          "411: Error occurred in query process: For Basic operator,TEXT type only support EQUAL or NOTEQUAL operator");
-    }
-  }
-
-  @Test
   public void testRightTextQuery() {
     // Text type uses the equal operator to query the correct result
     String[] retArray =
@@ -498,6 +489,25 @@ public class IoTDBQueryDemoIT {
               });
 
       int cnt = 0;
+      while (resultSet.next()) {
+        String[] expectedStrings = retArray[cnt].split(",");
+        StringBuilder expectedBuilder = new StringBuilder();
+        StringBuilder actualBuilder = new StringBuilder();
+        for (int i = 1; i <= resultSetMetaData.getColumnCount(); i++) {
+          actualBuilder.append(resultSet.getString(i)).append(",");
+          expectedBuilder
+              .append(expectedStrings[actualIndexToExpectedIndexList.get(i - 1)])
+              .append(",");
+        }
+        Assert.assertEquals(expectedBuilder.toString(), actualBuilder.toString());
+        cnt++;
+      }
+      Assert.assertEquals(2, cnt);
+
+      resultSet =
+          statement.executeQuery("select hardware from root.ln.wf02.wt02 where hardware = 'v2'");
+      resultSetMetaData = resultSet.getMetaData();
+      cnt = 0;
       while (resultSet.next()) {
         String[] expectedStrings = retArray[cnt].split(",");
         StringBuilder expectedBuilder = new StringBuilder();
@@ -660,5 +670,27 @@ public class IoTDBQueryDemoIT {
       e.printStackTrace();
       fail(e.getMessage());
     }
+  }
+
+  @Test
+  public void selectWithTimeTest() {
+    try (ISession session = EnvFactory.getEnv().getSessionConnection()) {
+      session.executeRawDataQuery(
+          ImmutableList.of("root.ln.wf01.wt01.time", "root.ln.wf01.wt01.temperature"), 0, 100);
+
+      fail();
+    } catch (Exception e) {
+      e.getMessage().contains("509: root.ln.wf01.wt01.time is not a legal path");
+    }
+
+    String expectedErrMsg =
+        "701: Time column is no need to appear in SELECT Clause explicitly, it will always be returned if possible";
+    assertTestFail("select time from root.ln.wf01.wt01", expectedErrMsg);
+    assertTestFail("select time, temperature from root.ln.wf01.wt01", expectedErrMsg);
+    assertTestFail("select time from root.ln.wf01.wt01 where temperature > 1", expectedErrMsg);
+    // parse error when process 'wt01.time'
+    assertTestFail(
+        "select wt01.time, wt01.temperature from root.ln.wf01",
+        "700: Error occurred while parsing SQL to physical plan");
   }
 }

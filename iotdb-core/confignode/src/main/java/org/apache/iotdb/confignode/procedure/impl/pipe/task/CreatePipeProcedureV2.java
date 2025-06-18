@@ -19,12 +19,20 @@
 
 package org.apache.iotdb.confignode.procedure.impl.pipe.task;
 
+import org.apache.iotdb.common.rpc.thrift.TConsensusGroupId;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
+import org.apache.iotdb.commons.consensus.ConsensusGroupId;
 import org.apache.iotdb.commons.consensus.index.impl.MinimumProgressIndex;
-import org.apache.iotdb.commons.pipe.task.meta.PipeRuntimeMeta;
-import org.apache.iotdb.commons.pipe.task.meta.PipeStaticMeta;
-import org.apache.iotdb.commons.pipe.task.meta.PipeStatus;
-import org.apache.iotdb.commons.pipe.task.meta.PipeTaskMeta;
+import org.apache.iotdb.commons.consensus.index.impl.RecoverProgressIndex;
+import org.apache.iotdb.commons.consensus.index.impl.SimpleProgressIndex;
+import org.apache.iotdb.commons.pipe.agent.plugin.builtin.BuiltinPipePlugin;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeRuntimeMeta;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeStaticMeta;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeStatus;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeTaskMeta;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeType;
+import org.apache.iotdb.commons.pipe.config.constant.PipeConnectorConstant;
+import org.apache.iotdb.commons.pipe.config.constant.PipeExtractorConstant;
 import org.apache.iotdb.commons.schema.SchemaConstant;
 import org.apache.iotdb.confignode.conf.ConfigNodeDescriptor;
 import org.apache.iotdb.confignode.consensus.request.write.pipe.task.CreatePipePlanV2;
@@ -37,6 +45,8 @@ import org.apache.iotdb.confignode.procedure.impl.pipe.PipeTaskOperation;
 import org.apache.iotdb.confignode.procedure.store.ProcedureType;
 import org.apache.iotdb.confignode.rpc.thrift.TCreatePipeReq;
 import org.apache.iotdb.consensus.exception.ConsensusException;
+import org.apache.iotdb.pipe.api.PipePlugin;
+import org.apache.iotdb.pipe.api.customizer.parameter.PipeParameters;
 import org.apache.iotdb.pipe.api.exception.PipeException;
 import org.apache.iotdb.rpc.TSStatusCode;
 
@@ -47,12 +57,17 @@ import org.slf4j.LoggerFactory;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static org.apache.iotdb.commons.pipe.config.constant.PipeExtractorConstant.EXTRACTOR_CONSENSUS_GROUP_ID_KEY;
+import static org.apache.iotdb.commons.pipe.config.constant.PipeExtractorConstant.EXTRACTOR_CONSENSUS_SENDER_DATANODE_ID_KEY;
 
 public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
 
@@ -67,14 +82,14 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
     super();
   }
 
-  public CreatePipeProcedureV2(TCreatePipeReq createPipeRequest) throws PipeException {
+  public CreatePipeProcedureV2(final TCreatePipeReq createPipeRequest) throws PipeException {
     super();
     this.createPipeRequest = createPipeRequest;
   }
 
   /** This is only used when the pipe task info lock is held by another procedure. */
   public CreatePipeProcedureV2(
-      TCreatePipeReq createPipeRequest, AtomicReference<PipeTaskInfo> pipeTaskInfo)
+      final TCreatePipeReq createPipeRequest, final AtomicReference<PipeTaskInfo> pipeTaskInfo)
       throws PipeException {
     super();
     this.pipeTaskInfo = pipeTaskInfo;
@@ -102,8 +117,19 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
     return PipeTaskOperation.CREATE_PIPE;
   }
 
+  /**
+   * Check the {@link PipePlugin} configuration in Pipe. If there is an error, throw {@link
+   * PipeException}. If there is a Pipe with the same name and there is no IfNotExists condition in
+   * {@link #createPipeRequest}, throw {@link PipeException}. If there is an IfNotExists condition,
+   * return {@code false}. If there is no Pipe with the same name, return {@code true}.
+   *
+   * @param env the environment for the procedure
+   * @return {@code true} The pipeline does not exist {@code false} The pipeline already exists and
+   *     satisfies the IfNotExists condition
+   * @throws PipeException
+   */
   @Override
-  public boolean executeFromValidateTask(ConfigNodeProcedureEnv env) throws PipeException {
+  public boolean executeFromValidateTask(final ConfigNodeProcedureEnv env) throws PipeException {
     LOGGER.info(
         "CreatePipeProcedureV2: executeFromValidateTask({})", createPipeRequest.getPipeName());
 
@@ -115,13 +141,103 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
             createPipeRequest.getExtractorAttributes(),
             createPipeRequest.getProcessorAttributes(),
             createPipeRequest.getConnectorAttributes());
-    pipeTaskInfo.get().checkBeforeCreatePipe(createPipeRequest);
 
-    return false;
+    checkAndEnrichSourceAuthentication(env, createPipeRequest.getExtractorAttributes());
+    checkAndEnrichSinkAuthentication(env, createPipeRequest.getConnectorAttributes());
+
+    return pipeTaskInfo.get().checkBeforeCreatePipe(createPipeRequest);
+  }
+
+  public static void checkAndEnrichSourceAuthentication(
+      final ConfigNodeProcedureEnv env, final Map<String, String> extractorAttributes) {
+    if (Objects.isNull(extractorAttributes)) {
+      return;
+    }
+    final PipeParameters extractorParameters = new PipeParameters(extractorAttributes);
+
+    final String pluginName =
+        extractorParameters
+            .getStringOrDefault(
+                Arrays.asList(
+                    PipeExtractorConstant.EXTRACTOR_KEY, PipeExtractorConstant.SOURCE_KEY),
+                BuiltinPipePlugin.IOTDB_EXTRACTOR.getPipePluginName())
+            .toLowerCase();
+
+    if (!pluginName.equals(BuiltinPipePlugin.IOTDB_EXTRACTOR.getPipePluginName())
+        && !pluginName.equals(BuiltinPipePlugin.IOTDB_SOURCE.getPipePluginName())) {
+      return;
+    }
+
+    if (extractorParameters.hasAttribute(PipeExtractorConstant.EXTRACTOR_IOTDB_USER_KEY)
+        || extractorParameters.hasAttribute(PipeExtractorConstant.SOURCE_IOTDB_USER_KEY)
+        || extractorParameters.hasAttribute(PipeExtractorConstant.EXTRACTOR_IOTDB_USERNAME_KEY)
+        || extractorParameters.hasAttribute(PipeExtractorConstant.SOURCE_IOTDB_USERNAME_KEY)) {
+      final String hashedPassword =
+          env.getConfigManager()
+              .getPermissionManager()
+              .login4Pipe(
+                  extractorParameters.getStringByKeys(
+                      PipeExtractorConstant.EXTRACTOR_IOTDB_USER_KEY,
+                      PipeExtractorConstant.SOURCE_IOTDB_USER_KEY,
+                      PipeExtractorConstant.EXTRACTOR_IOTDB_USERNAME_KEY,
+                      PipeExtractorConstant.SOURCE_IOTDB_USERNAME_KEY),
+                  extractorParameters.getStringByKeys(
+                      PipeExtractorConstant.EXTRACTOR_IOTDB_PASSWORD_KEY,
+                      PipeExtractorConstant.SOURCE_IOTDB_PASSWORD_KEY));
+      if (Objects.isNull(hashedPassword)) {
+        throw new PipeException("Authentication failed.");
+      }
+      extractorParameters.addOrReplaceEquivalentAttributes(
+          new PipeParameters(
+              Collections.singletonMap(
+                  PipeExtractorConstant.SOURCE_IOTDB_PASSWORD_KEY, hashedPassword)));
+    }
+  }
+
+  public static void checkAndEnrichSinkAuthentication(
+      final ConfigNodeProcedureEnv env, final Map<String, String> connectorAttributes) {
+    final PipeParameters connectorParameters = new PipeParameters(connectorAttributes);
+
+    final String pluginName =
+        connectorParameters
+            .getStringOrDefault(
+                Arrays.asList(PipeConnectorConstant.CONNECTOR_KEY, PipeConnectorConstant.SINK_KEY),
+                BuiltinPipePlugin.IOTDB_THRIFT_SINK.getPipePluginName())
+            .toLowerCase();
+
+    if (!pluginName.equals(BuiltinPipePlugin.WRITE_BACK_CONNECTOR.getPipePluginName())
+        && !pluginName.equals(BuiltinPipePlugin.WRITE_BACK_SINK.getPipePluginName())) {
+      return;
+    }
+
+    if (connectorParameters.hasAttribute(PipeConnectorConstant.CONNECTOR_IOTDB_USER_KEY)
+        || connectorParameters.hasAttribute(PipeConnectorConstant.SINK_IOTDB_USER_KEY)
+        || connectorParameters.hasAttribute(PipeConnectorConstant.CONNECTOR_IOTDB_USERNAME_KEY)
+        || connectorParameters.hasAttribute(PipeConnectorConstant.SINK_IOTDB_USERNAME_KEY)) {
+      final String hashedPassword =
+          env.getConfigManager()
+              .getPermissionManager()
+              .login4Pipe(
+                  connectorParameters.getStringByKeys(
+                      PipeConnectorConstant.CONNECTOR_IOTDB_USER_KEY,
+                      PipeConnectorConstant.SINK_IOTDB_USER_KEY,
+                      PipeConnectorConstant.CONNECTOR_IOTDB_USERNAME_KEY,
+                      PipeConnectorConstant.SINK_IOTDB_USERNAME_KEY),
+                  connectorParameters.getStringByKeys(
+                      PipeConnectorConstant.CONNECTOR_IOTDB_PASSWORD_KEY,
+                      PipeConnectorConstant.SINK_IOTDB_PASSWORD_KEY));
+      if (Objects.isNull(hashedPassword)) {
+        throw new PipeException("Authentication failed.");
+      }
+      connectorParameters.addOrReplaceEquivalentAttributes(
+          new PipeParameters(
+              Collections.singletonMap(
+                  PipeConnectorConstant.SINK_IOTDB_PASSWORD_KEY, hashedPassword)));
+    }
   }
 
   @Override
-  public void executeFromCalculateInfoForTask(ConfigNodeProcedureEnv env) {
+  public void executeFromCalculateInfoForTask(final ConfigNodeProcedureEnv env) {
     LOGGER.info(
         "CreatePipeProcedureV2: executeFromCalculateInfoForTask({})",
         createPipeRequest.getPipeName());
@@ -137,38 +253,61 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
     final ConcurrentMap<Integer, PipeTaskMeta> consensusGroupIdToTaskMetaMap =
         new ConcurrentHashMap<>();
 
-    // data regions & schema regions
-    env.getConfigManager()
-        .getLoadManager()
-        .getRegionLeaderMap()
-        .forEach(
-            (regionGroupId, regionLeaderNodeId) -> {
-              final String databaseName =
-                  env.getConfigManager().getPartitionManager().getRegionStorageGroup(regionGroupId);
-              if (databaseName != null && !databaseName.equals(SchemaConstant.SYSTEM_DATABASE)) {
-                // Pipe only collect user's data, filter out metric database here.
-                consensusGroupIdToTaskMetaMap.put(
-                    regionGroupId.getId(),
-                    new PipeTaskMeta(MinimumProgressIndex.INSTANCE, regionLeaderNodeId));
-              }
-            });
+    if (PipeType.CONSENSUS.equals(pipeStaticMeta.getPipeType())) {
+      final TConsensusGroupId groupId =
+          ConsensusGroupId.Factory.createFromString(
+                  createPipeRequest.getExtractorAttributes().get(EXTRACTOR_CONSENSUS_GROUP_ID_KEY))
+              .convertToTConsensusGroupId();
 
-    // config region
-    consensusGroupIdToTaskMetaMap.put(
-        // 0 is the consensus group id of the config region, but data region id and schema region id
-        // also start from 0, so we use Integer.MIN_VALUE to represent the config region
-        Integer.MIN_VALUE,
-        new PipeTaskMeta(
-            MinimumProgressIndex.INSTANCE,
-            // The leader of the config region is the config node itself
-            ConfigNodeDescriptor.getInstance().getConf().getConfigNodeId()));
+      final int senderDataNodeId =
+          Integer.parseInt(
+              createPipeRequest
+                  .getExtractorAttributes()
+                  .get(EXTRACTOR_CONSENSUS_SENDER_DATANODE_ID_KEY));
+      consensusGroupIdToTaskMetaMap.put(
+          groupId.getId(),
+          new PipeTaskMeta(
+              new RecoverProgressIndex(senderDataNodeId, new SimpleProgressIndex(0, 0)),
+              senderDataNodeId));
+    } else {
+      // data regions & schema regions
+      env.getConfigManager()
+          .getLoadManager()
+          .getRegionLeaderMap()
+          .forEach(
+              (regionGroupId, regionLeaderNodeId) -> {
+                final String databaseName =
+                    env.getConfigManager().getPartitionManager().getRegionDatabase(regionGroupId);
+                if (databaseName != null
+                    && !databaseName.equals(SchemaConstant.SYSTEM_DATABASE)
+                    && !databaseName.startsWith(SchemaConstant.SYSTEM_DATABASE + ".")) {
+                  // Pipe only collect user's data, filter out metric database here.
+                  consensusGroupIdToTaskMetaMap.put(
+                      regionGroupId.getId(),
+                      new PipeTaskMeta(MinimumProgressIndex.INSTANCE, regionLeaderNodeId));
+                }
+              });
+
+      // config region
+      consensusGroupIdToTaskMetaMap.put(
+          // 0 is the consensus group id of the config region, but data region id and schema region
+          // id also start from 0, so we use Integer.MIN_VALUE to represent the config region
+          Integer.MIN_VALUE,
+          new PipeTaskMeta(
+              MinimumProgressIndex.INSTANCE,
+              // The leader of the config region is the config node itself
+              ConfigNodeDescriptor.getInstance().getConf().getConfigNodeId()));
+    }
 
     pipeRuntimeMeta = new PipeRuntimeMeta(consensusGroupIdToTaskMetaMap);
-    pipeRuntimeMeta.getStatus().set(PipeStatus.RUNNING);
+    if (!createPipeRequest.needManuallyStart) {
+      pipeRuntimeMeta.getStatus().set(PipeStatus.RUNNING);
+    }
   }
 
   @Override
-  public void executeFromWriteConfigNodeConsensus(ConfigNodeProcedureEnv env) throws PipeException {
+  public void executeFromWriteConfigNodeConsensus(final ConfigNodeProcedureEnv env)
+      throws PipeException {
     LOGGER.info(
         "CreatePipeProcedureV2: executeFromWriteConfigNodeConsensus({})",
         createPipeRequest.getPipeName());
@@ -179,7 +318,7 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
           env.getConfigManager()
               .getConsensusManager()
               .write(new CreatePipePlanV2(pipeStaticMeta, pipeRuntimeMeta));
-    } catch (ConsensusException e) {
+    } catch (final ConsensusException e) {
       LOGGER.warn("Failed in the write API executing the consensus layer due to: ", e);
       response = new TSStatus(TSStatusCode.EXECUTE_STATEMENT_ERROR.getStatusCode());
       response.setMessage(e.getMessage());
@@ -190,7 +329,7 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
   }
 
   @Override
-  public void executeFromOperateOnDataNodes(ConfigNodeProcedureEnv env) throws IOException {
+  public void executeFromOperateOnDataNodes(final ConfigNodeProcedureEnv env) throws IOException {
     final String pipeName = createPipeRequest.getPipeName();
     LOGGER.info("CreatePipeProcedureV2: executeFromOperateOnDataNodes({})", pipeName);
 
@@ -205,14 +344,14 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
   }
 
   @Override
-  public void rollbackFromValidateTask(ConfigNodeProcedureEnv env) {
+  public void rollbackFromValidateTask(final ConfigNodeProcedureEnv env) {
     LOGGER.info(
         "CreatePipeProcedureV2: rollbackFromValidateTask({})", createPipeRequest.getPipeName());
     // Do nothing
   }
 
   @Override
-  public void rollbackFromCalculateInfoForTask(ConfigNodeProcedureEnv env) {
+  public void rollbackFromCalculateInfoForTask(final ConfigNodeProcedureEnv env) {
     LOGGER.info(
         "CreatePipeProcedureV2: rollbackFromCalculateInfoForTask({})",
         createPipeRequest.getPipeName());
@@ -220,7 +359,7 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
   }
 
   @Override
-  public void rollbackFromWriteConfigNodeConsensus(ConfigNodeProcedureEnv env) {
+  public void rollbackFromWriteConfigNodeConsensus(final ConfigNodeProcedureEnv env) {
     LOGGER.info(
         "CreatePipeProcedureV2: rollbackFromWriteConfigNodeConsensus({})",
         createPipeRequest.getPipeName());
@@ -230,7 +369,7 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
           env.getConfigManager()
               .getConsensusManager()
               .write(new DropPipePlanV2(createPipeRequest.getPipeName()));
-    } catch (ConsensusException e) {
+    } catch (final ConsensusException e) {
       LOGGER.warn("Failed in the write API executing the consensus layer due to: ", e);
       response = new TSStatus(TSStatusCode.EXECUTE_STATEMENT_ERROR.getStatusCode());
       response.setMessage(e.getMessage());
@@ -241,7 +380,7 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
   }
 
   @Override
-  public void rollbackFromOperateOnDataNodes(ConfigNodeProcedureEnv env) throws IOException {
+  public void rollbackFromOperateOnDataNodes(final ConfigNodeProcedureEnv env) throws IOException {
     LOGGER.info(
         "CreatePipeProcedureV2: rollbackFromOperateOnDataNodes({})",
         createPipeRequest.getPipeName());
@@ -259,22 +398,25 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
   }
 
   @Override
-  public void serialize(DataOutputStream stream) throws IOException {
+  public void serialize(final DataOutputStream stream) throws IOException {
     stream.writeShort(ProcedureType.CREATE_PIPE_PROCEDURE_V2.getTypeCode());
     super.serialize(stream);
     ReadWriteIOUtils.write(createPipeRequest.getPipeName(), stream);
     ReadWriteIOUtils.write(createPipeRequest.getExtractorAttributesSize(), stream);
-    for (Map.Entry<String, String> entry : createPipeRequest.getExtractorAttributes().entrySet()) {
+    for (final Map.Entry<String, String> entry :
+        createPipeRequest.getExtractorAttributes().entrySet()) {
       ReadWriteIOUtils.write(entry.getKey(), stream);
       ReadWriteIOUtils.write(entry.getValue(), stream);
     }
     ReadWriteIOUtils.write(createPipeRequest.getProcessorAttributesSize(), stream);
-    for (Map.Entry<String, String> entry : createPipeRequest.getProcessorAttributes().entrySet()) {
+    for (final Map.Entry<String, String> entry :
+        createPipeRequest.getProcessorAttributes().entrySet()) {
       ReadWriteIOUtils.write(entry.getKey(), stream);
       ReadWriteIOUtils.write(entry.getValue(), stream);
     }
     ReadWriteIOUtils.write(createPipeRequest.getConnectorAttributesSize(), stream);
-    for (Map.Entry<String, String> entry : createPipeRequest.getConnectorAttributes().entrySet()) {
+    for (final Map.Entry<String, String> entry :
+        createPipeRequest.getConnectorAttributes().entrySet()) {
       ReadWriteIOUtils.write(entry.getKey(), stream);
       ReadWriteIOUtils.write(entry.getValue(), stream);
     }
@@ -287,7 +429,7 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
   }
 
   @Override
-  public void deserialize(ByteBuffer byteBuffer) {
+  public void deserialize(final ByteBuffer byteBuffer) {
     super.deserialize(byteBuffer);
     createPipeRequest =
         new TCreatePipeReq()
@@ -319,14 +461,14 @@ public class CreatePipeProcedureV2 extends AbstractOperatePipeProcedureV2 {
   }
 
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(final Object o) {
     if (this == o) {
       return true;
     }
     if (o == null || getClass() != o.getClass()) {
       return false;
     }
-    CreatePipeProcedureV2 that = (CreatePipeProcedureV2) o;
+    final CreatePipeProcedureV2 that = (CreatePipeProcedureV2) o;
     return this.createPipeRequest.getPipeName().equals(that.createPipeRequest.getPipeName())
         && this.createPipeRequest
             .getExtractorAttributes()

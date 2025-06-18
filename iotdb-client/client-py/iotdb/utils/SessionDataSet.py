@@ -21,7 +21,7 @@ from iotdb.utils.Field import Field
 
 # for package
 from iotdb.utils.IoTDBConstants import TSDataType
-from iotdb.utils.IoTDBRpcDataSet import IoTDBRpcDataSet
+from iotdb.utils.iotdb_rpc_dataset import IoTDBRpcDataSet
 from iotdb.utils.RowRecord import RowRecord
 
 import pandas as pd
@@ -37,11 +37,15 @@ class SessionDataSet(object):
         column_type_list,
         column_name_index,
         query_id,
-        client,
         statement_id,
+        client,
         session_id,
-        query_data_set,
+        query_result,
         ignore_timestamp,
+        time_out,
+        more_data,
+        fetch_size,
+        column_index_2_tsblock_column_index_list,
     ):
         self.iotdb_rpc_data_set = IoTDBRpcDataSet(
             sql,
@@ -49,21 +53,17 @@ class SessionDataSet(object):
             column_type_list,
             column_name_index,
             ignore_timestamp,
+            more_data,
             query_id,
             client,
             statement_id,
             session_id,
-            query_data_set,
-            5000,
+            query_result,
+            fetch_size,
+            time_out,
+            column_index_2_tsblock_column_index_list,
         )
-        self.column_size = self.iotdb_rpc_data_set.column_size
-        self.is_ignore_timestamp = self.iotdb_rpc_data_set.ignore_timestamp
-        self.column_names = tuple(self.iotdb_rpc_data_set.get_column_names())
-        self.column_ordinal_dict = self.iotdb_rpc_data_set.column_ordinal_dict
-        self.column_type_deduplicated_list = tuple(
-            self.iotdb_rpc_data_set.column_type_deduplicated_list
-        )
-        if self.is_ignore_timestamp:
+        if ignore_timestamp:
             self.__field_list = [
                 Field(data_type)
                 for data_type in self.iotdb_rpc_data_set.get_column_types()
@@ -105,14 +105,22 @@ class SessionDataSet(object):
     def construct_row_record_from_data_frame(self):
         df = self.iotdb_rpc_data_set.data_frame
         row = df.iloc[self.row_index].to_list()
-        row_values = row[1:]
-        for i, value in enumerate(row_values):
-            self.__field_list[i].value = value
+        if self.iotdb_rpc_data_set.ignore_timestamp:
+            for field, value in zip(self.__field_list, row):
+                field.value = value
 
-        row_record = RowRecord(
-            row[0],
-            self.__field_list,
-        )
+            row_record = RowRecord(
+                0,
+                self.__field_list,
+            )
+        else:
+            for field, value in zip(self.__field_list, row[1:]):
+                field.value = value
+
+            row_record = RowRecord(
+                row[0],
+                self.__field_list,
+            )
         self.row_index += 1
         if self.row_index == len(df):
             self.row_index = 0
@@ -124,29 +132,33 @@ class SessionDataSet(object):
     def close_operation_handle(self):
         self.iotdb_rpc_data_set.close()
 
-    def todf(self):
-        return resultset_to_pandas(self)
+    def todf(self) -> pd.DataFrame:
+        return result_set_to_pandas(self)
 
 
-def resultset_to_pandas(result_set: SessionDataSet) -> pd.DataFrame:
+def result_set_to_pandas(result_set: SessionDataSet) -> pd.DataFrame:
     """
     Transforms a SessionDataSet from IoTDB to a Pandas Data Frame
     Each Field from IoTDB is a column in Pandas
     :param result_set:
     :return:
     """
-    return result_set.iotdb_rpc_data_set.resultset_to_pandas()
+    return result_set.iotdb_rpc_data_set.result_set_to_pandas()
 
 
 def get_typed_point(field: Field, none_value=None):
     choices = {
         # In Case of Boolean, cast to 0 / 1
-        TSDataType.BOOLEAN: lambda field: 1 if field.get_bool_value() else 0,
-        TSDataType.TEXT: lambda field: field.get_string_value(),
-        TSDataType.FLOAT: lambda field: field.get_float_value(),
-        TSDataType.INT32: lambda field: field.get_int_value(),
-        TSDataType.DOUBLE: lambda field: field.get_double_value(),
-        TSDataType.INT64: lambda field: field.get_long_value(),
+        TSDataType.BOOLEAN: lambda f: 1 if f.get_bool_value() else 0,
+        TSDataType.TEXT: lambda f: f.get_string_value(),
+        TSDataType.FLOAT: lambda f: f.get_float_value(),
+        TSDataType.INT32: lambda f: f.get_int_value(),
+        TSDataType.DOUBLE: lambda f: f.get_double_value(),
+        TSDataType.INT64: lambda f: f.get_long_value(),
+        TSDataType.TIMESTAMP: lambda f: f.get_long_value(),
+        TSDataType.STRING: lambda f: f.get_string_value(),
+        TSDataType.DATE: lambda f: f.get_date_value(),
+        TSDataType.BLOB: lambda f: f.get_binary_value(),
     }
 
     result_next_type: TSDataType = field.get_data_type()

@@ -41,8 +41,13 @@ public enum PipeRequestType {
   TRANSFER_TS_FILE_PIECE_WITH_MOD((short) 8),
   TRANSFER_TS_FILE_SEAL_WITH_MOD((short) 9),
 
-  // Schema region
-  TRANSFER_SCHEMA_PLAN((short) 100),
+  TRANSFER_TABLET_INSERT_NODE_V2((short) 10),
+  TRANSFER_TABLET_RAW_V2((short) 11),
+  TRANSFER_TABLET_BINARY_V2((short) 12),
+  TRANSFER_TABLET_BATCH_V2((short) 13),
+
+  // Schema region / Delete Data
+  TRANSFER_PLAN_NODE((short) 100),
   TRANSFER_SCHEMA_SNAPSHOT_PIECE((short) 101),
   TRANSFER_SCHEMA_SNAPSHOT_SEAL((short) 102),
 
@@ -50,6 +55,12 @@ public enum PipeRequestType {
   TRANSFER_CONFIG_PLAN((short) 200),
   TRANSFER_CONFIG_SNAPSHOT_PIECE((short) 201),
   TRANSFER_CONFIG_SNAPSHOT_SEAL((short) 202),
+
+  // RPC Compression
+  TRANSFER_COMPRESSED((short) 300),
+
+  // Fallback Handling
+  TRANSFER_SLICE((short) 400),
   ;
 
   private final short type;

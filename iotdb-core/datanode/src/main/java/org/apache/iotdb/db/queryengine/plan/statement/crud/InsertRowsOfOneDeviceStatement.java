@@ -23,20 +23,30 @@ import org.apache.iotdb.common.rpc.thrift.TTimePartitionSlot;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.commons.utils.TimePartitionUtils;
 import org.apache.iotdb.db.exception.query.QueryProcessException;
+import org.apache.iotdb.db.exception.sql.SemanticException;
+import org.apache.iotdb.db.queryengine.common.MPPQueryContext;
 import org.apache.iotdb.db.queryengine.plan.analyze.schema.ISchemaValidation;
 import org.apache.iotdb.db.queryengine.plan.statement.StatementType;
 import org.apache.iotdb.db.queryengine.plan.statement.StatementVisitor;
+import org.apache.iotdb.db.schemaengine.schemaregion.attribute.update.UpdateDetailContainer;
 
+import org.apache.tsfile.annotations.TableModel;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.exception.NotImplementedException;
+import org.apache.tsfile.utils.RamUsageEstimator;
 
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 public class InsertRowsOfOneDeviceStatement extends InsertBaseStatement {
+
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(InsertRowsOfOneDeviceStatement.class);
 
   public InsertRowsOfOneDeviceStatement() {
     super();
@@ -96,7 +106,7 @@ public class InsertRowsOfOneDeviceStatement extends InsertBaseStatement {
   public List<PartialPath> getPaths() {
     List<PartialPath> ret = new ArrayList<>();
     for (String m : measurements) {
-      PartialPath fullPath = devicePath.concatNode(m);
+      PartialPath fullPath = devicePath.concatAsMeasurementPath(m);
       ret.add(fullPath);
     }
     return ret;
@@ -115,9 +125,9 @@ public class InsertRowsOfOneDeviceStatement extends InsertBaseStatement {
   }
 
   @Override
-  public void updateAfterSchemaValidation() throws QueryProcessException {
+  public void updateAfterSchemaValidation(MPPQueryContext context) throws QueryProcessException {
     for (InsertRowStatement insertRowStatement : insertRowStatementList) {
-      insertRowStatement.updateAfterSchemaValidation();
+      insertRowStatement.updateAfterSchemaValidation(context);
       if (!this.hasFailedMeasurements() && insertRowStatement.hasFailedMeasurements()) {
         this.failedMeasurementIndex2Info = insertRowStatement.failedMeasurementIndex2Info;
       }
@@ -127,6 +137,13 @@ public class InsertRowsOfOneDeviceStatement extends InsertBaseStatement {
   @Override
   protected boolean checkAndCastDataType(int columnIndex, TSDataType dataType) {
     return false;
+  }
+
+  @Override
+  public void semanticCheck() {
+    for (InsertRowStatement insertRowStatement : insertRowStatementList) {
+      insertRowStatement.semanticCheck();
+    }
   }
 
   @Override
@@ -158,5 +175,45 @@ public class InsertRowsOfOneDeviceStatement extends InsertBaseStatement {
       return splitResult;
     }
     return this;
+  }
+
+  @TableModel
+  @Override
+  public void toLowerCase() {
+    insertRowStatementList.forEach(InsertRowStatement::toLowerCase);
+  }
+
+  @Override
+  protected long calculateBytesUsed() {
+    return INSTANCE_SIZE
+        + (Objects.nonNull(insertRowStatementList)
+            ? UpdateDetailContainer.LIST_SIZE
+                + insertRowStatementList.stream()
+                    .mapToLong(InsertRowStatement::calculateBytesUsed)
+                    .reduce(0L, Long::sum)
+            : 0);
+  }
+
+  @Override
+  @TableModel
+  public Optional<String> getDatabaseName() {
+    Optional<String> database = Optional.empty();
+    for (InsertRowStatement rowStatement : insertRowStatementList) {
+      Optional<String> childDatabaseName = rowStatement.getDatabaseName();
+      if (childDatabaseName.isPresent()
+          && database.isPresent()
+          && !Objects.equals(childDatabaseName.get(), database.get())) {
+        throw new SemanticException(
+            "Cannot insert into multiple databases within one statement, please split them manually");
+      }
+
+      database = childDatabaseName;
+    }
+    return database;
+  }
+
+  @Override
+  protected void subRemoveAttributeColumns(List<Integer> columnsToKeep) {
+    insertRowStatementList.forEach(InsertRowStatement::removeAttributeColumns);
   }
 }

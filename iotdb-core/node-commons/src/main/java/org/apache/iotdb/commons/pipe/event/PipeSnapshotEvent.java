@@ -20,9 +20,10 @@
 package org.apache.iotdb.commons.pipe.event;
 
 import org.apache.iotdb.commons.consensus.index.ProgressIndex;
-import org.apache.iotdb.commons.pipe.pattern.PipePattern;
-import org.apache.iotdb.commons.pipe.resource.PipeSnapshotResourceManager;
-import org.apache.iotdb.commons.pipe.task.meta.PipeTaskMeta;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeTaskMeta;
+import org.apache.iotdb.commons.pipe.datastructure.pattern.TablePattern;
+import org.apache.iotdb.commons.pipe.datastructure.pattern.TreePattern;
+import org.apache.iotdb.commons.pipe.resource.snapshot.PipeSnapshotResourceManager;
 
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -35,10 +36,23 @@ public abstract class PipeSnapshotEvent extends EnrichedEvent implements Seriali
 
   protected PipeSnapshotEvent(
       final String pipeName,
+      final long creationTime,
       final PipeTaskMeta pipeTaskMeta,
-      final PipePattern pattern,
+      final TreePattern treePattern,
+      final TablePattern tablePattern,
+      final String userName,
+      final boolean skipIfNoPrivileges,
       final PipeSnapshotResourceManager resourceManager) {
-    super(pipeName, pipeTaskMeta, pattern, Long.MIN_VALUE, Long.MAX_VALUE);
+    super(
+        pipeName,
+        creationTime,
+        pipeTaskMeta,
+        treePattern,
+        tablePattern,
+        userName,
+        skipIfNoPrivileges,
+        Long.MIN_VALUE,
+        Long.MAX_VALUE);
     this.resourceManager = resourceManager;
   }
 
@@ -59,6 +73,11 @@ public abstract class PipeSnapshotEvent extends EnrichedEvent implements Seriali
 
   @Override
   public boolean mayEventTimeOverlappedWithTimeRange() {
+    return true;
+  }
+
+  @Override
+  public boolean mayEventPathsOverlappedWithPattern() {
     return true;
   }
 

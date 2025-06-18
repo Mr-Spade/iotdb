@@ -90,7 +90,9 @@ public class InternalCreateTimeSeriesStatement extends Statement {
 
   @Override
   public List<PartialPath> getPaths() {
-    return measurements.stream().map(devicePath::concatNode).collect(Collectors.toList());
+    return measurements.stream()
+        .map(devicePath::concatAsMeasurementPath)
+        .collect(Collectors.toList());
   }
 
   @Override
@@ -101,7 +103,7 @@ public class InternalCreateTimeSeriesStatement extends Statement {
     List<PartialPath> checkedPaths = getPaths();
     return AuthorityChecker.getTSStatus(
         AuthorityChecker.checkFullPathListPermission(
-            userName, checkedPaths, PrivilegeType.WRITE_SCHEMA.ordinal()),
+            userName, checkedPaths, PrivilegeType.WRITE_SCHEMA),
         checkedPaths,
         PrivilegeType.WRITE_SCHEMA);
   }

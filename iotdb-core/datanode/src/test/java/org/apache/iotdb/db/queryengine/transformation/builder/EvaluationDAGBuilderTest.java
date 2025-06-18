@@ -23,10 +23,12 @@ import org.apache.iotdb.common.rpc.thrift.TEndPoint;
 import org.apache.iotdb.commons.concurrent.IoTDBThreadPoolFactory;
 import org.apache.iotdb.commons.udf.service.UDFClassLoaderManager;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
+import org.apache.iotdb.db.protocol.session.IClientSession.SqlDialect;
 import org.apache.iotdb.db.queryengine.common.FragmentInstanceId;
 import org.apache.iotdb.db.queryengine.common.MPPQueryContext;
 import org.apache.iotdb.db.queryengine.common.PlanFragmentId;
 import org.apache.iotdb.db.queryengine.common.QueryId;
+import org.apache.iotdb.db.queryengine.common.SessionInfo;
 import org.apache.iotdb.db.queryengine.execution.fragment.DataNodeQueryContext;
 import org.apache.iotdb.db.queryengine.execution.fragment.FragmentInstanceContext;
 import org.apache.iotdb.db.queryengine.execution.fragment.FragmentInstanceStateMachine;
@@ -45,7 +47,7 @@ import org.apache.iotdb.db.queryengine.plan.planner.distribution.DistributionPla
 import org.apache.iotdb.db.queryengine.plan.planner.plan.FragmentInstance;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.LogicalQueryPlan;
 import org.apache.iotdb.db.queryengine.plan.statement.Statement;
-import org.apache.iotdb.db.queryengine.transformation.api.LayerPointReader;
+import org.apache.iotdb.db.queryengine.transformation.api.LayerReader;
 import org.apache.iotdb.db.queryengine.transformation.dag.transformer.multi.UDFQueryRowWindowTransformer;
 import org.apache.iotdb.db.storageengine.dataregion.DataRegion;
 import org.apache.iotdb.db.storageengine.dataregion.IDataRegionForQuery;
@@ -54,6 +56,7 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.Mockito;
 
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -73,7 +76,7 @@ public class EvaluationDAGBuilderTest {
       Assert.assertNotNull(operator);
       TransformOperator transformOperator =
           (TransformOperator) ((IdentitySinkOperator) operator).getChildren().get(0);
-      LayerPointReader[] transformers = transformOperator.getTransformers();
+      LayerReader[] transformers = transformOperator.getTransformers();
       Assert.assertEquals(6, transformers.length);
       Assert.assertTrue(transformers[0] instanceof UDFQueryRowWindowTransformer);
     } catch (Exception e) {
@@ -88,11 +91,13 @@ public class EvaluationDAGBuilderTest {
       Statement statement =
           StatementGenerator.createStatement(sql, ZonedDateTime.now().getOffset());
       QueryId queryId = new QueryId("test");
+      SessionInfo sessionInfo =
+          new SessionInfo(0, "root", ZoneId.systemDefault(), "root.db", SqlDialect.TREE);
       MPPQueryContext context =
           new MPPQueryContext(
               sql,
               queryId,
-              null,
+              sessionInfo,
               new TEndPoint("127.0.0.1", 6667),
               new TEndPoint("127.0.0.1", 6667));
       Analyzer analyzer =
@@ -127,7 +132,6 @@ public class EvaluationDAGBuilderTest {
     FragmentInstanceContext instanceContext =
         createFragmentInstanceContext(instanceId, stateMachine);
     IDataRegionForQuery dataRegionForQuery = Mockito.mock(DataRegion.class);
-    Mockito.when(dataRegionForQuery.getDataTTL()).thenReturn(1000L);
     instanceContext.setDataRegion(dataRegionForQuery);
     return instanceContext;
   }

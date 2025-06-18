@@ -20,10 +20,10 @@ package org.apache.iotdb.confignode.consensus.response.pipe;
 
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.consensus.index.impl.MinimumProgressIndex;
-import org.apache.iotdb.commons.pipe.task.meta.PipeMeta;
-import org.apache.iotdb.commons.pipe.task.meta.PipeRuntimeMeta;
-import org.apache.iotdb.commons.pipe.task.meta.PipeStaticMeta;
-import org.apache.iotdb.commons.pipe.task.meta.PipeTaskMeta;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeMeta;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeRuntimeMeta;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeStaticMeta;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeTaskMeta;
 import org.apache.iotdb.confignode.consensus.response.pipe.task.PipeTableResp;
 import org.apache.iotdb.rpc.TSStatusCode;
 
@@ -79,7 +79,7 @@ public class PipeTableRespTest {
     pipeTasks1.put(1, pipeTaskMeta1);
     PipeStaticMeta pipeStaticMeta1 =
         new PipeStaticMeta(
-            "testPipe", 121, extractorAttributes1, processorAttributes1, connectorAttributes1);
+            "testPipe1", 122, extractorAttributes1, processorAttributes1, connectorAttributes1);
     PipeRuntimeMeta pipeRuntimeMeta1 = new PipeRuntimeMeta(pipeTasks1);
     pipeMetaList.add(new PipeMeta(pipeStaticMeta1, pipeRuntimeMeta1));
 
@@ -99,7 +99,7 @@ public class PipeTableRespTest {
     pipeTasks2.put(1, pipeTaskMeta2);
     PipeStaticMeta pipeStaticMeta2 =
         new PipeStaticMeta(
-            "testPipe", 121, extractorAttributes2, processorAttributes2, connectorAttributes2);
+            "testPipe2", 123, extractorAttributes2, processorAttributes2, connectorAttributes2);
     PipeRuntimeMeta pipeRuntimeMeta2 = new PipeRuntimeMeta(pipeTasks2);
     pipeMetaList.add(new PipeMeta(pipeStaticMeta2, pipeRuntimeMeta2));
 

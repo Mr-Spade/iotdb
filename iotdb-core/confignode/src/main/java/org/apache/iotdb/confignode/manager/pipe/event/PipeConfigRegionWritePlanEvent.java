@@ -19,10 +19,11 @@
 
 package org.apache.iotdb.confignode.manager.pipe.event;
 
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeTaskMeta;
+import org.apache.iotdb.commons.pipe.datastructure.pattern.TablePattern;
+import org.apache.iotdb.commons.pipe.datastructure.pattern.TreePattern;
 import org.apache.iotdb.commons.pipe.event.EnrichedEvent;
 import org.apache.iotdb.commons.pipe.event.PipeWritePlanEvent;
-import org.apache.iotdb.commons.pipe.pattern.PipePattern;
-import org.apache.iotdb.commons.pipe.task.meta.PipeTaskMeta;
 import org.apache.iotdb.confignode.consensus.request.ConfigPhysicalPlan;
 
 import org.apache.tsfile.utils.ReadWriteIOUtils;
@@ -41,16 +42,28 @@ public class PipeConfigRegionWritePlanEvent extends PipeWritePlanEvent {
 
   public PipeConfigRegionWritePlanEvent(
       final ConfigPhysicalPlan configPhysicalPlan, final boolean isGeneratedByPipe) {
-    this(configPhysicalPlan, null, null, null, isGeneratedByPipe);
+    this(configPhysicalPlan, null, 0, null, null, null, null, true, isGeneratedByPipe);
   }
 
   public PipeConfigRegionWritePlanEvent(
       final ConfigPhysicalPlan configPhysicalPlan,
       final String pipeName,
+      final long creationTime,
       final PipeTaskMeta pipeTaskMeta,
-      final PipePattern pattern,
+      final TreePattern treePattern,
+      final TablePattern tablePattern,
+      final String userName,
+      final boolean skipIfNoPrivileges,
       final boolean isGeneratedByPipe) {
-    super(pipeName, pipeTaskMeta, pattern, isGeneratedByPipe);
+    super(
+        pipeName,
+        creationTime,
+        pipeTaskMeta,
+        treePattern,
+        tablePattern,
+        userName,
+        skipIfNoPrivileges,
+        isGeneratedByPipe);
     this.configPhysicalPlan = configPhysicalPlan;
   }
 
@@ -61,12 +74,24 @@ public class PipeConfigRegionWritePlanEvent extends PipeWritePlanEvent {
   @Override
   public EnrichedEvent shallowCopySelfAndBindPipeTaskMetaForProgressReport(
       final String pipeName,
+      final long creationTime,
       final PipeTaskMeta pipeTaskMeta,
-      final PipePattern pattern,
+      final TreePattern treePattern,
+      final TablePattern tablePattern,
+      final String userName,
+      final boolean skipIfNoPrivileges,
       final long startTime,
       final long endTime) {
     return new PipeConfigRegionWritePlanEvent(
-        configPhysicalPlan, pipeName, pipeTaskMeta, pattern, false);
+        configPhysicalPlan,
+        pipeName,
+        creationTime,
+        pipeTaskMeta,
+        treePattern,
+        tablePattern,
+        userName,
+        skipIfNoPrivileges,
+        false);
   }
 
   @Override

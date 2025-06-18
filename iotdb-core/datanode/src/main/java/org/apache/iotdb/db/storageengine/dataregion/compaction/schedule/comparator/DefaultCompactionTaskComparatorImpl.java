@@ -25,6 +25,8 @@ import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.Abst
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.CrossSpaceCompactionTask;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.InnerSpaceCompactionTask;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.InsertionCrossSpaceCompactionTask;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.RepairUnsortedFileCompactionTask;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.SettleCompactionTask;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.constant.CompactionPriority;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
 
@@ -36,6 +38,14 @@ public class DefaultCompactionTaskComparatorImpl implements ICompactionTaskCompa
   @SuppressWarnings({"squid:S3776", "javabugs:S6320"})
   @Override
   public int compare(AbstractCompactionTask o1, AbstractCompactionTask o2) {
+    if (o1 instanceof RepairUnsortedFileCompactionTask
+        && o2 instanceof RepairUnsortedFileCompactionTask) {
+      return o1.getSerialId() < o2.getSerialId() ? -1 : 1;
+    } else if (o1 instanceof RepairUnsortedFileCompactionTask) {
+      return -1;
+    } else if (o2 instanceof RepairUnsortedFileCompactionTask) {
+      return 1;
+    }
     if (o1 instanceof InsertionCrossSpaceCompactionTask
         && o2 instanceof InsertionCrossSpaceCompactionTask) {
       return o1.getSerialId() < o2.getSerialId() ? -1 : 1;
@@ -44,6 +54,14 @@ public class DefaultCompactionTaskComparatorImpl implements ICompactionTaskCompa
     } else if (o2 instanceof InsertionCrossSpaceCompactionTask) {
       return 1;
     }
+    if (o1 instanceof SettleCompactionTask && o2 instanceof SettleCompactionTask) {
+      return compareSettleCompactionTask((SettleCompactionTask) o1, (SettleCompactionTask) o2);
+    } else if (o1 instanceof SettleCompactionTask) {
+      return -1;
+    } else if (o2 instanceof SettleCompactionTask) {
+      return 1;
+    }
+
     if ((((o1 instanceof InnerSpaceCompactionTask) && (o2 instanceof CrossSpaceCompactionTask))
         || ((o2 instanceof InnerSpaceCompactionTask)
             && (o1 instanceof CrossSpaceCompactionTask)))) {
@@ -72,29 +90,21 @@ public class DefaultCompactionTaskComparatorImpl implements ICompactionTaskCompa
 
   public int compareInnerSpaceCompactionTask(
       InnerSpaceCompactionTask o1, InnerSpaceCompactionTask o2) {
-
-    // if compactionTaskPriorityType of o1 and o2 are different
-    // we prefer to execute task type with high priority type
-    if (o1.getCompactionTaskPriorityType() != o2.getCompactionTaskPriorityType()) {
-      return o2.getCompactionTaskPriorityType().getValue()
-              > o1.getCompactionTaskPriorityType().getValue()
-          ? 1
-          : -1;
+    // If the average file size of the two compaction tasks differs by more than 10%,
+    // we prefer to execute task with smaller avg file size
+    double avgFileSize1 = o1.getAvgFileSize();
+    double avgFileSize2 = o2.getAvgFileSize();
+    if (10 * Math.abs(avgFileSize1 - avgFileSize2) > Math.min(avgFileSize1, avgFileSize2)) {
+      return Double.compare(avgFileSize1, avgFileSize2);
     }
 
-    // if max mods file size of o1 and o2 are different
-    // we prefer to execute task with greater mods file
-    if (o1.getMaxModsFileSize() != o2.getMaxModsFileSize()) {
-      return o2.getMaxModsFileSize() > o1.getMaxModsFileSize() ? 1 : -1;
-    }
-
-    // if the sum of compaction count of the selected files are different
-    // we prefer to execute task with smaller compaction count
+    // if the avg of compaction count of the selected files are different
+    // we prefer to execute task with smaller avg compaction count
     // this can reduce write amplification
-    if (((double) o1.getSumOfCompactionCount()) / o1.getSelectedTsFileResourceList().size()
-        != ((double) o2.getSumOfCompactionCount()) / o2.getSelectedTsFileResourceList().size()) {
-      return o1.getSumOfCompactionCount() / o1.getSelectedTsFileResourceList().size()
-          - o2.getSumOfCompactionCount() / o2.getSelectedTsFileResourceList().size();
+    double avgCompactionCount1 = o1.getAvgCompactionCount();
+    double avgCompactionCount2 = o2.getAvgCompactionCount();
+    if (Math.abs(avgCompactionCount1 - avgCompactionCount2) > 1e-2) {
+      return Double.compare(avgCompactionCount1, avgCompactionCount2);
     }
 
     // if the time partition of o1 and o2 are different
@@ -122,7 +132,11 @@ public class DefaultCompactionTaskComparatorImpl implements ICompactionTaskCompa
     if (2 * fileNumDiff >= Math.min(selectedFilesOfO1.size(), selectedFilesOfO2.size())) {
       return selectedFilesOfO2.size() - selectedFilesOfO1.size();
     }
-    return 0;
+
+    // if the number of selected files is roughly the same,
+    // we prefer to execute the one with the smaller total
+    // file size
+    return o2.getSelectedFileSize() > o1.getSelectedFileSize() ? -1 : 1;
   }
 
   public int compareCrossSpaceCompactionTask(
@@ -149,5 +163,33 @@ public class DefaultCompactionTaskComparatorImpl implements ICompactionTaskCompa
     // we prefer the task with more unsequence files
     // because this type of tasks reduce more unsequence files
     return o2.getSelectedUnsequenceFiles().size() - o1.getSelectedUnsequenceFiles().size();
+  }
+
+  public int compareSettleCompactionTask(SettleCompactionTask o1, SettleCompactionTask o2) {
+    // we prefer the task with more all_deleted files
+    if (o1.getFullyDirtyFiles().size() != o2.getFullyDirtyFiles().size()) {
+      return o1.getFullyDirtyFiles().size() > o2.getFullyDirtyFiles().size() ? -1 : 1;
+    }
+    // we prefer the task with larger all_deleted files
+    if (o1.getFullyDirtyFileSize() != o2.getFullyDirtyFileSize()) {
+      return o1.getFullyDirtyFileSize() > o2.getFullyDirtyFileSize() ? -1 : 1;
+    }
+    // we prefer the task with larger mods file
+    if (o1.getTotalModsSize() != o2.getTotalModsSize()) {
+      return o1.getTotalModsSize() > o2.getTotalModsSize() ? -1 : 1;
+    }
+    // we prefer the task with more partial_deleted files
+    if (o1.getPartiallyDirtyFiles().size() != o2.getPartiallyDirtyFiles().size()) {
+      return o1.getPartiallyDirtyFiles().size() > o2.getPartiallyDirtyFiles().size() ? -1 : 1;
+    }
+    // we prefer the task with larger partial_deleted files
+    if (o1.getPartiallyDirtyFileSize() != o2.getPartiallyDirtyFileSize()) {
+      return o1.getPartiallyDirtyFileSize() > o2.getPartiallyDirtyFileSize() ? -1 : 1;
+    }
+    // we prefer task with smaller serial id
+    if (o1.getSerialId() != o2.getSerialId()) {
+      return o1.getSerialId() < o2.getSerialId() ? -1 : 1;
+    }
+    return 0;
   }
 }

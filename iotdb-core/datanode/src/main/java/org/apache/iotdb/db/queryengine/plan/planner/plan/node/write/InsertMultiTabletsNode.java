@@ -22,7 +22,7 @@ import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.consensus.index.ProgressIndex;
 import org.apache.iotdb.commons.utils.StatusUtils;
-import org.apache.iotdb.db.queryengine.plan.analyze.Analysis;
+import org.apache.iotdb.db.queryengine.plan.analyze.IAnalysis;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNodeId;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNodeType;
@@ -98,6 +98,11 @@ public class InsertMultiTabletsNode extends InsertNode {
     insertTabletNodeList = new ArrayList<>();
   }
 
+  @Override
+  public InsertNode mergeInsertNode(List<InsertNode> insertNodes) {
+    throw new UnsupportedOperationException("InsertMultiTabletsNode not support merge");
+  }
+
   public InsertMultiTabletsNode(
       PlanNodeId id,
       List<Integer> parentInsertTabletNodeIndexList,
@@ -135,7 +140,7 @@ public class InsertMultiTabletsNode extends InsertNode {
   }
 
   @Override
-  public List<WritePlanNode> splitByPartition(Analysis analysis) {
+  public List<WritePlanNode> splitByPartition(IAnalysis analysis) {
     Map<TRegionReplicaSet, InsertMultiTabletsNode> splitMap = new HashMap<>();
     for (int i = 0; i < insertTabletNodeList.size(); i++) {
       InsertTabletNode insertTabletNode = insertTabletNodeList.get(i);
@@ -166,11 +171,6 @@ public class InsertMultiTabletsNode extends InsertNode {
 
   public TSStatus[] getFailingStatus() {
     return StatusUtils.getFailingStatus(results, insertTabletNodeList.size());
-  }
-
-  @Override
-  public List<PlanNode> getChildren() {
-    return null;
   }
 
   @Override
@@ -254,6 +254,12 @@ public class InsertMultiTabletsNode extends InsertNode {
   public void markAsGeneratedByPipe() {
     isGeneratedByPipe = true;
     insertTabletNodeList.forEach(InsertTabletNode::markAsGeneratedByPipe);
+  }
+
+  @Override
+  public void markAsGeneratedByRemoteConsensusLeader() {
+    super.markAsGeneratedByRemoteConsensusLeader();
+    insertTabletNodeList.forEach(InsertTabletNode::markAsGeneratedByRemoteConsensusLeader);
   }
 
   @Override

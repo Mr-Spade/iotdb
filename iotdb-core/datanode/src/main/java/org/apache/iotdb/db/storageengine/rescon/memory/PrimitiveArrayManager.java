@@ -18,8 +18,12 @@
  */
 package org.apache.iotdb.db.storageengine.rescon.memory;
 
+import org.apache.iotdb.commons.memory.IMemoryBlock;
+import org.apache.iotdb.commons.memory.MemoryBlockType;
+import org.apache.iotdb.db.conf.DataNodeMemoryConfig;
 import org.apache.iotdb.db.conf.IoTDBConfig;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
+import org.apache.iotdb.db.service.metrics.memory.StorageEngineMemoryMetrics;
 import org.apache.iotdb.db.utils.datastructure.TVListSortAlgorithm;
 
 import org.apache.tsfile.enums.TSDataType;
@@ -39,6 +43,9 @@ public class PrimitiveArrayManager {
 
   private static final IoTDBConfig CONFIG = IoTDBDescriptor.getInstance().getConfig();
 
+  private static final DataNodeMemoryConfig MEMORY_CONFIG =
+      IoTDBDescriptor.getInstance().getMemoryConfig();
+
   public static final int ARRAY_SIZE = CONFIG.getPrimitiveArraySize();
 
   public static final TVListSortAlgorithm TVLIST_SORT_ALGORITHM = CONFIG.getTvListSortAlgorithm();
@@ -49,31 +56,34 @@ public class PrimitiveArrayManager {
    */
   private static final double AMPLIFICATION_FACTOR = 1.5;
 
+  /** memory block for all arrays */
+  private static final IMemoryBlock POOLED_ARRAYS_MEMORY_BLOCK =
+      MEMORY_CONFIG
+          .getBufferedArraysMemoryManager()
+          .exactAllocate("BufferedArrays", MemoryBlockType.DYNAMIC);
+
   /** threshold total size of arrays for all data types */
   private static final double POOLED_ARRAYS_MEMORY_THRESHOLD =
-      CONFIG.getAllocateMemoryForStorageEngine()
-          * CONFIG.getBufferedArraysMemoryProportion()
-          / AMPLIFICATION_FACTOR;
+      POOLED_ARRAYS_MEMORY_BLOCK.getTotalMemorySizeInBytes() / AMPLIFICATION_FACTOR;
 
   /** TSDataType#serialize() -> ArrayDeque<Array>, VECTOR and UNKNOWN are ignored */
-  private static final ArrayDeque[] POOLED_ARRAYS = new ArrayDeque[TSDataType.values().length - 2];
+  private static final ArrayDeque[] POOLED_ARRAYS = new ArrayDeque[TSDataType.values().length];
 
   /** TSDataType#serialize() -> max size of ArrayDeque<Array>, VECTOR and UNKNOWN are ignored */
-  private static final int[] LIMITS = new int[TSDataType.values().length - 2];
+  private static final int[] LIMITS = new int[TSDataType.values().length];
 
   /** LIMITS should be updated if (TOTAL_ALLOCATION_REQUEST_COUNT.get() > limitUpdateThreshold) */
   private static long limitUpdateThreshold;
 
   /** TSDataType#serialize() -> count of allocation requests, VECTOR is ignored */
   private static final AtomicLong[] ALLOCATION_REQUEST_COUNTS =
-      new AtomicLong[] {
-        new AtomicLong(0),
-        new AtomicLong(0),
-        new AtomicLong(0),
-        new AtomicLong(0),
-        new AtomicLong(0),
-        new AtomicLong(0)
-      };
+      new AtomicLong[TSDataType.values().length];
+
+  static {
+    for (int i = 0; i < ALLOCATION_REQUEST_COUNTS.length; ++i) {
+      ALLOCATION_REQUEST_COUNTS[i] = new AtomicLong(0);
+    }
+  }
 
   private static final AtomicLong TOTAL_ALLOCATION_REQUEST_COUNT = new AtomicLong(0);
 
@@ -144,9 +154,12 @@ public class PrimitiveArrayManager {
     synchronized (POOLED_ARRAYS[order]) {
       array = POOLED_ARRAYS[order].poll();
     }
+    StorageEngineMemoryMetrics.getInstance().incPamAllocation();
     if (array == null) {
       array = createPrimitiveArray(dataType);
+      StorageEngineMemoryMetrics.getInstance().incPamAllocationFailure();
     }
+
     return array;
   }
 
@@ -220,9 +233,11 @@ public class PrimitiveArrayManager {
         dataArray = new boolean[ARRAY_SIZE];
         break;
       case INT32:
+      case DATE:
         dataArray = new int[ARRAY_SIZE];
         break;
       case INT64:
+      case TIMESTAMP:
         dataArray = new long[ARRAY_SIZE];
         break;
       case FLOAT:
@@ -232,6 +247,8 @@ public class PrimitiveArrayManager {
         dataArray = new double[ARRAY_SIZE];
         break;
       case TEXT:
+      case STRING:
+      case BLOB:
         dataArray = new Binary[ARRAY_SIZE];
         break;
       default:
@@ -265,10 +282,13 @@ public class PrimitiveArrayManager {
       throw new UnSupportedDataTypeException(array.getClass().toString());
     }
 
+    StorageEngineMemoryMetrics.getInstance().incPamRelease();
     synchronized (POOLED_ARRAYS[order]) {
       ArrayDeque<Object> arrays = POOLED_ARRAYS[order];
       if (arrays.size() < LIMITS[order]) {
         arrays.add(array);
+      } else {
+        StorageEngineMemoryMetrics.getInstance().incPamReleaseFailure();
       }
     }
   }
@@ -294,12 +314,14 @@ public class PrimitiveArrayManager {
         }
         return booleans;
       case INT32:
+      case DATE:
         int[][] ints = new int[arrayNumber][];
         for (int i = 0; i < arrayNumber; i++) {
           ints[i] = new int[ARRAY_SIZE];
         }
         return ints;
       case INT64:
+      case TIMESTAMP:
         long[][] longs = new long[arrayNumber][];
         for (int i = 0; i < arrayNumber; i++) {
           longs[i] = new long[ARRAY_SIZE];
@@ -318,6 +340,8 @@ public class PrimitiveArrayManager {
         }
         return doubles;
       case TEXT:
+      case STRING:
+      case BLOB:
         Binary[][] binaries = new Binary[arrayNumber][];
         for (int i = 0; i < arrayNumber; i++) {
           binaries[i] = new Binary[ARRAY_SIZE];

@@ -18,20 +18,24 @@
  */
 package org.apache.iotdb.commons.path;
 
-import org.apache.iotdb.commons.conf.IoTDBConstant;
+import org.apache.iotdb.commons.exception.IllegalPathException;
+
+import org.apache.tsfile.file.metadata.IDeviceID;
 
 import javax.annotation.concurrent.NotThreadSafe;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
 @NotThreadSafe
 public class PatternTreeMap<V, VSerializer extends PathPatternNode.Serializer<V>> {
-  private final PathPatternNode<V, VSerializer> root;
+  private final Map<String, PathPatternNode<V, VSerializer>> rootMap;
   private final Supplier<? extends Set<V>> supplier;
   private final BiConsumer<V, Set<V>> appendFunction;
   private final BiConsumer<V, Set<V>> deleteFunction;
@@ -49,11 +53,15 @@ public class PatternTreeMap<V, VSerializer extends PathPatternNode.Serializer<V>
       BiConsumer<V, Set<V>> appendFunction,
       BiConsumer<V, Set<V>> deleteFunction,
       VSerializer serializer) {
-    this.root = new PathPatternNode<>(IoTDBConstant.PATH_ROOT, supplier, serializer);
+    this.rootMap = new HashMap<>();
     this.supplier = supplier;
     this.appendFunction = appendFunction;
     this.deleteFunction = deleteFunction;
     this.serializer = serializer;
+  }
+
+  private PathPatternNode<V, VSerializer> getRoot(String rootName) {
+    return rootMap.computeIfAbsent(rootName, r -> new PathPatternNode<>(r, supplier, serializer));
   }
 
   /**
@@ -67,7 +75,7 @@ public class PatternTreeMap<V, VSerializer extends PathPatternNode.Serializer<V>
       throw new UnsupportedOperationException();
     }
     String[] pathNodes = key.getNodes();
-    PathPatternNode<V, VSerializer> curNode = root;
+    PathPatternNode<V, VSerializer> curNode = getRoot(pathNodes[0]);
     for (int i = 1; i < pathNodes.length; i++) {
       PathPatternNode<V, VSerializer> nextNode = curNode.getChildren(pathNodes[i]);
       if (nextNode == null) {
@@ -89,7 +97,8 @@ public class PatternTreeMap<V, VSerializer extends PathPatternNode.Serializer<V>
     if (deleteFunction == null) {
       throw new UnsupportedOperationException();
     }
-    deletePathNode(root, key.getNodes(), 0, value);
+    String[] nodes = key.getNodes();
+    deletePathNode(getRoot(nodes[0]), nodes, 0, value);
   }
 
   /**
@@ -125,8 +134,20 @@ public class PatternTreeMap<V, VSerializer extends PathPatternNode.Serializer<V>
    */
   public List<V> getOverlapped(PartialPath fullPath) {
     Set<V> res = new HashSet<>();
-    searchOverlapped(root, fullPath.getNodes(), 0, res);
+    String[] nodes = fullPath.getNodes();
+    searchOverlapped(getRoot(nodes[0]), nodes, 0, res);
     return new ArrayList<>(res);
+  }
+
+  public List<V> getOverlapped(IDeviceID deviceID, String measurement) {
+    // TODO change this way
+    PartialPath devicePath;
+    try {
+      devicePath = new PartialPath(deviceID);
+    } catch (IllegalPathException e) {
+      throw new RuntimeException(e);
+    }
+    return getOverlapped(devicePath.concatAsMeasurementPath(measurement));
   }
 
   /**
@@ -164,7 +185,8 @@ public class PatternTreeMap<V, VSerializer extends PathPatternNode.Serializer<V>
     for (int i = 0; i < measurements.size(); i++) {
       resultSet.add(new HashSet<>());
     }
-    searchOverlapped(root, devicePath.getNodes(), 0, measurements, resultSet);
+    String[] nodes = devicePath.getNodes();
+    searchOverlapped(getRoot(nodes[0]), nodes, 0, measurements, resultSet);
     List<List<V>> res = new ArrayList<>();
     for (Set<V> set : resultSet) {
       res.add(new ArrayList<>(set));
@@ -203,6 +225,48 @@ public class PatternTreeMap<V, VSerializer extends PathPatternNode.Serializer<V>
     }
     for (PathPatternNode<V, VSerializer> child : node.getMatchChildren(deviceNodes[pos + 1])) {
       searchOverlapped(child, deviceNodes, pos + 1, measurements, resultSet);
+    }
+  }
+
+  /**
+   * Get a list of value lists related to PathPattern that overlapped with device.
+   *
+   * <p>Attention!: The results may contain imprecise and redundant values. Values that appear in
+   * the result set are not necessarily belong to current device, but those that do not appear are
+   * definitely not included.
+   *
+   * @param devicePath device path without wildcard
+   * @return de-duplicated value list
+   */
+  public List<V> getDeviceOverlapped(PartialPath devicePath) {
+    Set<V> resultSet = new HashSet<>();
+    String[] nodes = devicePath.getNodes();
+    searchDeviceOverlapped(getRoot(nodes[0]), nodes, 0, resultSet);
+    return new ArrayList<>(resultSet);
+  }
+
+  /**
+   * Recursive method for search overlapped pattern for devicePath.
+   *
+   * @param node current PathPatternNode
+   * @param deviceNodes pathNodes of device
+   * @param pos current index of deviceNodes
+   * @param resultSet result set
+   */
+  private void searchDeviceOverlapped(
+      PathPatternNode<V, VSerializer> node, String[] deviceNodes, int pos, Set<V> resultSet) {
+    if (pos == deviceNodes.length - 1) {
+      resultSet.addAll(node.getValues());
+      for (PathPatternNode<V, VSerializer> child : node.getChildren().values()) {
+        resultSet.addAll(child.getValues());
+      }
+      return;
+    }
+    if (node.isMultiLevelWildcard()) {
+      searchDeviceOverlapped(node, deviceNodes, pos + 1, resultSet);
+    }
+    for (PathPatternNode<V, VSerializer> child : node.getMatchChildren(deviceNodes[pos + 1])) {
+      searchDeviceOverlapped(child, deviceNodes, pos + 1, resultSet);
     }
   }
 }

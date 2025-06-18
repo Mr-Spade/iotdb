@@ -20,10 +20,10 @@
 package org.apache.iotdb.db.queryengine.plan.execution.config.metadata;
 
 import org.apache.iotdb.common.rpc.thrift.TTimePartitionSlot;
-import org.apache.iotdb.commons.conf.CommonDescriptor;
+import org.apache.iotdb.commons.schema.column.ColumnHeader;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
+import org.apache.iotdb.commons.utils.TimePartitionUtils;
 import org.apache.iotdb.confignode.rpc.thrift.TGetTimeSlotListResp;
-import org.apache.iotdb.db.queryengine.common.header.ColumnHeader;
-import org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant;
 import org.apache.iotdb.db.queryengine.common.header.DatasetHeader;
 import org.apache.iotdb.db.queryengine.common.header.DatasetHeaderFactory;
 import org.apache.iotdb.db.queryengine.plan.execution.config.ConfigTaskResult;
@@ -62,9 +62,7 @@ public class GetTimeSlotListTask implements IConfigTask {
     builder.getTimeColumnBuilder().writeLong(0L);
     builder
         .getColumnBuilder(0)
-        .writeLong(
-            timePartitionSlot.getStartTime()
-                / CommonDescriptor.getInstance().getConfig().getTimePartitionInterval());
+        .writeLong(TimePartitionUtils.getTimePartitionId(timePartitionSlot.getStartTime()));
     builder
         .getColumnBuilder(1)
         .writeBinary(

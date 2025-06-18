@@ -23,9 +23,11 @@ import org.apache.iotdb.common.rpc.thrift.TDataNodeConfiguration;
 import org.apache.iotdb.common.rpc.thrift.TDataNodeLocation;
 import org.apache.iotdb.common.rpc.thrift.TEndPoint;
 import org.apache.iotdb.common.rpc.thrift.TNodeResource;
+import org.apache.iotdb.commons.auth.entity.PrivilegeType;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.confignode.consensus.request.ConfigPhysicalPlanType;
-import org.apache.iotdb.confignode.consensus.request.auth.AuthorPlan;
+import org.apache.iotdb.confignode.consensus.request.write.auth.AuthorRelationalPlan;
+import org.apache.iotdb.confignode.consensus.request.write.auth.AuthorTreePlan;
 import org.apache.iotdb.confignode.procedure.store.ProcedureFactory;
 
 import org.apache.tsfile.utils.PublicBAOS;
@@ -37,6 +39,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 
 import static org.junit.Assert.fail;
@@ -45,10 +48,10 @@ public class AuthOperationProcedureTest {
 
   @Test
   public void serializeDeserializeTest() throws IOException {
-    PublicBAOS byteArrayOutputStream = new PublicBAOS();
-    DataOutputStream outputStream = new DataOutputStream(byteArrayOutputStream);
+    final PublicBAOS byteArrayOutputStream = new PublicBAOS();
+    final DataOutputStream outputStream = new DataOutputStream(byteArrayOutputStream);
 
-    TDataNodeLocation dataNodeLocation = new TDataNodeLocation();
+    final TDataNodeLocation dataNodeLocation = new TDataNodeLocation();
     dataNodeLocation.setDataNodeId(1);
     dataNodeLocation.setClientRpcEndPoint(new TEndPoint("0.0.0.0", 6667));
     dataNodeLocation.setInternalEndPoint(new TEndPoint("0.0.0.0", 10730));
@@ -56,21 +59,20 @@ public class AuthOperationProcedureTest {
     dataNodeLocation.setDataRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 10760));
     dataNodeLocation.setSchemaRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 10750));
 
-    TDataNodeConfiguration dataNodeConfiguration = new TDataNodeConfiguration();
+    final TDataNodeConfiguration dataNodeConfiguration = new TDataNodeConfiguration();
     dataNodeConfiguration.setLocation(dataNodeLocation);
     dataNodeConfiguration.setResource(new TNodeResource(16, 34359738368L));
 
-    List<TDataNodeConfiguration> datanodes = new ArrayList<>();
+    final List<TDataNodeConfiguration> datanodes = new ArrayList<>();
     datanodes.add(dataNodeConfiguration);
 
     try {
-      int begin = ConfigPhysicalPlanType.CreateUser.ordinal();
-      int end = ConfigPhysicalPlanType.ListRoleUsers.ordinal();
+      final int begin = ConfigPhysicalPlanType.CreateUser.ordinal();
+      final int end = ConfigPhysicalPlanType.UpdateUser.ordinal();
       for (int i = begin; i <= end; i++) {
-        PartialPath path = new PartialPath(new String("root.t1"));
-        AuthOperationProcedure proc =
+        final AuthOperationProcedure proc =
             new AuthOperationProcedure(
-                new AuthorPlan(
+                new AuthorTreePlan(
                     ConfigPhysicalPlanType.values()[i],
                     "user1",
                     "role1",
@@ -78,20 +80,52 @@ public class AuthOperationProcedureTest {
                     "123456",
                     Collections.singleton(1),
                     false,
-                    Collections.singletonList(path)),
+                    Collections.singletonList(new PartialPath("root.t1"))),
                 datanodes,
                 false);
         proc.serialize(outputStream);
-        ByteBuffer buffer =
+        final ByteBuffer buffer =
             ByteBuffer.wrap(byteArrayOutputStream.getBuf(), 0, byteArrayOutputStream.size());
 
-        AuthOperationProcedure proc2 =
+        final AuthOperationProcedure proc2 =
             (AuthOperationProcedure) ProcedureFactory.getInstance().create(buffer);
-        Assert.assertTrue(proc.equals(proc2));
+        Assert.assertEquals(proc, proc2);
         buffer.clear();
         byteArrayOutputStream.reset();
       }
-    } catch (Exception e) {
+    } catch (final Exception e) {
+      e.printStackTrace();
+      fail();
+    }
+
+    try {
+      final int begin = ConfigPhysicalPlanType.RCreateUser.ordinal();
+      final int end = ConfigPhysicalPlanType.RRevokeRoleSysPri.ordinal();
+      for (int i = begin; i <= end; i++) {
+        final AuthOperationProcedure proc =
+            new AuthOperationProcedure(
+                new AuthorRelationalPlan(
+                    ConfigPhysicalPlanType.values()[i],
+                    "user1",
+                    "role1",
+                    "database",
+                    "table",
+                    new HashSet<>(PrivilegeType.CREATE.ordinal(), PrivilegeType.SELECT.ordinal()),
+                    false,
+                    "password"),
+                datanodes,
+                false);
+        proc.serialize(outputStream);
+        final ByteBuffer buffer =
+            ByteBuffer.wrap(byteArrayOutputStream.getBuf(), 0, byteArrayOutputStream.size());
+
+        final AuthOperationProcedure proc2 =
+            (AuthOperationProcedure) ProcedureFactory.getInstance().create(buffer);
+        Assert.assertEquals(proc, proc2);
+        buffer.clear();
+        byteArrayOutputStream.reset();
+      }
+    } catch (final Exception e) {
       e.printStackTrace();
       fail();
     }

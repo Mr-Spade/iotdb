@@ -151,7 +151,6 @@ public class IoTDBClusterNodeGetterIT {
       Assert.assertEquals(
           expectedParameters.getSeriesPartitionExecutorClass(),
           clusterParameters.getSeriesPartitionExecutorClass());
-      Assert.assertEquals(expectedParameters.getDefaultTTL(), clusterParameters.getDefaultTTL());
       Assert.assertEquals(
           expectedParameters.getTimePartitionInterval(),
           clusterParameters.getTimePartitionInterval());
@@ -163,12 +162,10 @@ public class IoTDBClusterNodeGetterIT {
           clusterParameters.getSchemaReplicationFactor());
       Assert.assertEquals(
           expectedParameters.getDataRegionPerDataNode(),
-          clusterParameters.getDataRegionPerDataNode(),
-          0.01);
+          clusterParameters.getDataRegionPerDataNode());
       Assert.assertEquals(
           expectedParameters.getSchemaRegionPerDataNode(),
-          clusterParameters.getSchemaRegionPerDataNode(),
-          0.01);
+          clusterParameters.getSchemaRegionPerDataNode());
       Assert.assertEquals(
           expectedParameters.getDiskSpaceWarningThreshold(),
           clusterParameters.getDiskSpaceWarningThreshold(),
@@ -242,7 +239,7 @@ public class IoTDBClusterNodeGetterIT {
       }
 
       // Test stop ConfigNode
-      status = client.stopConfigNode(removedConfigNodeLocation);
+      status = client.stopAndClearConfigNode(removedConfigNodeLocation);
       assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), status.getCode());
     }
   }

@@ -19,10 +19,14 @@
 
 package org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.writer;
 
+import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.executor.fast.element.AlignedPageElement;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.executor.fast.element.ChunkMetadataElement;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.writer.flushcontroller.AbstractCompactionFlushController;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
 
 import org.apache.tsfile.exception.write.PageException;
 import org.apache.tsfile.file.header.PageHeader;
+import org.apache.tsfile.file.metadata.AbstractAlignedChunkMetadata;
 import org.apache.tsfile.file.metadata.ChunkMetadata;
 import org.apache.tsfile.file.metadata.IChunkMetadata;
 import org.apache.tsfile.read.common.Chunk;
@@ -38,6 +42,10 @@ public class FastInnerCompactionWriter extends AbstractInnerCompactionWriter {
 
   public FastInnerCompactionWriter(TsFileResource targetFileResource) throws IOException {
     super(targetFileResource);
+  }
+
+  public FastInnerCompactionWriter(List<TsFileResource> targetFileResources) throws IOException {
+    super(targetFileResources);
   }
 
   @Override
@@ -66,8 +74,8 @@ public class FastInnerCompactionWriter extends AbstractInnerCompactionWriter {
     }
     flushNonAlignedChunkToFileWriter(fileWriter, chunk, chunkMetadata, subTaskId);
 
-    isEmptyFile = false;
     lastTime[subTaskId] = chunkMetadata.getEndTime();
+    lastTimeSet[subTaskId] = true;
     return true;
   }
 
@@ -80,13 +88,15 @@ public class FastInnerCompactionWriter extends AbstractInnerCompactionWriter {
    * @throws IOException if io errors occurred
    */
   @Override
-  public boolean flushAlignedChunk(
-      Chunk timeChunk,
-      IChunkMetadata timeChunkMetadata,
-      List<Chunk> valueChunks,
-      List<IChunkMetadata> valueChunkMetadatas,
-      int subTaskId)
+  public boolean flushAlignedChunk(ChunkMetadataElement chunkMetadataElement, int subTaskId)
       throws IOException {
+    AbstractAlignedChunkMetadata alignedChunkMetadata =
+        (AbstractAlignedChunkMetadata) chunkMetadataElement.chunkMetadata;
+    IChunkMetadata timeChunkMetadata = alignedChunkMetadata.getTimeChunkMetadata();
+    List<IChunkMetadata> valueChunkMetadatas = alignedChunkMetadata.getValueChunkMetadataList();
+    Chunk timeChunk = chunkMetadataElement.chunk;
+    List<Chunk> valueChunks = chunkMetadataElement.valueChunks;
+
     checkPreviousTimestamp(timeChunkMetadata.getStartTime(), subTaskId);
     if (chunkPointNumArray[subTaskId] != 0
         && chunkWriters[subTaskId].checkIsChunkSizeOverThreshold(
@@ -102,8 +112,39 @@ public class FastInnerCompactionWriter extends AbstractInnerCompactionWriter {
     flushAlignedChunkToFileWriter(
         fileWriter, timeChunk, timeChunkMetadata, valueChunks, valueChunkMetadatas, subTaskId);
 
-    isEmptyFile = false;
     lastTime[subTaskId] = timeChunkMetadata.getEndTime();
+    lastTimeSet[subTaskId] = true;
+    return true;
+  }
+
+  @Override
+  public boolean flushBatchedValueChunk(
+      ChunkMetadataElement chunkMetadataElement,
+      int subTaskId,
+      AbstractCompactionFlushController flushController)
+      throws IOException {
+    AbstractAlignedChunkMetadata alignedChunkMetadata =
+        (AbstractAlignedChunkMetadata) chunkMetadataElement.chunkMetadata;
+    IChunkMetadata timeChunkMetadata = alignedChunkMetadata.getTimeChunkMetadata();
+    List<IChunkMetadata> valueChunkMetadatas = alignedChunkMetadata.getValueChunkMetadataList();
+    List<Chunk> valueChunks = chunkMetadataElement.valueChunks;
+
+    checkPreviousTimestamp(timeChunkMetadata.getStartTime(), subTaskId);
+    if (chunkPointNumArray[subTaskId] != 0 && flushController.shouldSealChunkWriter()) {
+      sealChunk(fileWriter, chunkWriters[subTaskId], subTaskId);
+    }
+    // if there is unsealed chunk, then deserialize the chunk
+    if (chunkPointNumArray[subTaskId] != 0) {
+      return false;
+    }
+    if (!flushController.shouldCompactChunkByDirectlyFlush(timeChunkMetadata)) {
+      return false;
+    }
+    flushAlignedChunkToFileWriter(
+        fileWriter, null, timeChunkMetadata, valueChunks, valueChunkMetadatas, subTaskId);
+
+    lastTime[subTaskId] = timeChunkMetadata.getEndTime();
+    lastTimeSet[subTaskId] = true;
     return true;
   }
 
@@ -116,13 +157,13 @@ public class FastInnerCompactionWriter extends AbstractInnerCompactionWriter {
    * @throws IOException if io errors occurred
    * @throws PageException if errors occurred when write data page header
    */
-  public boolean flushAlignedPage(
-      ByteBuffer compressedTimePageData,
-      PageHeader timePageHeader,
-      List<ByteBuffer> compressedValuePageDatas,
-      List<PageHeader> valuePageHeaders,
-      int subTaskId)
+  public boolean flushAlignedPage(AlignedPageElement alignedPageElement, int subTaskId)
       throws IOException, PageException {
+    PageHeader timePageHeader = alignedPageElement.getTimePageHeader();
+    List<PageHeader> valuePageHeaders = alignedPageElement.getValuePageHeaders();
+    ByteBuffer compressedTimePageData = alignedPageElement.getTimePageData();
+    List<ByteBuffer> compressedValuePageDatas = alignedPageElement.getValuePageDataList();
+
     checkPreviousTimestamp(timePageHeader.getStartTime(), subTaskId);
     boolean isUnsealedPageOverThreshold =
         chunkWriters[subTaskId].checkIsUnsealedPageOverThreshold(
@@ -141,8 +182,44 @@ public class FastInnerCompactionWriter extends AbstractInnerCompactionWriter {
         valuePageHeaders,
         subTaskId);
 
-    isEmptyFile = false;
     lastTime[subTaskId] = timePageHeader.getEndTime();
+    lastTimeSet[subTaskId] = true;
+    return true;
+  }
+
+  @Override
+  public boolean flushBatchedValuePage(
+      AlignedPageElement alignedPageElement,
+      int subTaskId,
+      AbstractCompactionFlushController flushController)
+      throws PageException, IOException {
+    PageHeader timePageHeader = alignedPageElement.getTimePageHeader();
+    List<PageHeader> valuePageHeaders = alignedPageElement.getValuePageHeaders();
+    ByteBuffer compressedTimePageData = alignedPageElement.getTimePageData();
+    List<ByteBuffer> compressedValuePageDatas = alignedPageElement.getValuePageDataList();
+
+    checkPreviousTimestamp(timePageHeader.getStartTime(), subTaskId);
+    if (flushController.shouldSealChunkWriter()) {
+      sealChunk(fileWriter, chunkWriters[subTaskId], subTaskId);
+    }
+    boolean isUnsealedPageOverThreshold =
+        chunkWriters[subTaskId].checkIsUnsealedPageOverThreshold(
+            pageSizeLowerBoundInCompaction, pagePointNumLowerBoundInCompaction, true);
+    // there is unsealed page or current page is not large enough , then deserialize the page
+    if (!isUnsealedPageOverThreshold) {
+      return false;
+    }
+
+    flushAlignedPageToChunkWriter(
+        (AlignedChunkWriterImpl) chunkWriters[subTaskId],
+        compressedTimePageData,
+        timePageHeader,
+        compressedValuePageDatas,
+        valuePageHeaders,
+        subTaskId);
+
+    lastTime[subTaskId] = timePageHeader.getEndTime();
+    lastTimeSet[subTaskId] = true;
     return true;
   }
 
@@ -167,8 +244,8 @@ public class FastInnerCompactionWriter extends AbstractInnerCompactionWriter {
     flushNonAlignedPageToChunkWriter(
         (ChunkWriterImpl) chunkWriters[subTaskId], compressedPageData, pageHeader, subTaskId);
 
-    isEmptyFile = false;
     lastTime[subTaskId] = pageHeader.getEndTime();
+    lastTimeSet[subTaskId] = true;
     return true;
   }
 

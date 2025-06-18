@@ -29,13 +29,13 @@ import org.apache.iotdb.commons.consensus.DataRegionId;
 import org.apache.iotdb.commons.consensus.SchemaRegionId;
 import org.apache.iotdb.commons.exception.IllegalPathException;
 import org.apache.iotdb.commons.exception.MetadataException;
-import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.consensus.common.Peer;
 import org.apache.iotdb.consensus.exception.ConsensusException;
 import org.apache.iotdb.consensus.exception.ConsensusGroupAlreadyExistException;
 import org.apache.iotdb.db.consensus.DataRegionConsensusImpl;
 import org.apache.iotdb.db.consensus.SchemaRegionConsensusImpl;
 import org.apache.iotdb.db.exception.DataRegionException;
+import org.apache.iotdb.db.pipe.agent.PipeDataNodeAgent;
 import org.apache.iotdb.db.schemaengine.SchemaEngine;
 import org.apache.iotdb.db.storageengine.StorageEngine;
 import org.apache.iotdb.rpc.RpcUtils;
@@ -99,20 +99,21 @@ public class DataNodeRegionManager {
 
   public ReentrantReadWriteLock getRegionLock(ConsensusGroupId consensusGroupId) {
     return consensusGroupId instanceof DataRegionId
-        ? dataRegionLockMap.get((DataRegionId) consensusGroupId)
-        : schemaRegionLockMap.get((SchemaRegionId) consensusGroupId);
+        ? dataRegionLockMap.get(consensusGroupId)
+        : schemaRegionLockMap.get(consensusGroupId);
   }
 
-  public TSStatus createSchemaRegion(TRegionReplicaSet regionReplicaSet, String storageGroup) {
+  public TSStatus createSchemaRegion(
+      final TRegionReplicaSet regionReplicaSet, final String storageGroup) {
     TSStatus tsStatus;
-    SchemaRegionId schemaRegionId = new SchemaRegionId(regionReplicaSet.getRegionId().getId());
+    final SchemaRegionId schemaRegionId =
+        new SchemaRegionId(regionReplicaSet.getRegionId().getId());
     try {
-      PartialPath storageGroupPartitionPath = new PartialPath(storageGroup);
-      schemaEngine.createSchemaRegion(storageGroupPartitionPath, schemaRegionId);
+      schemaEngine.createSchemaRegion(storageGroup, schemaRegionId);
       schemaRegionLockMap.put(schemaRegionId, new ReentrantReadWriteLock(false));
-      List<Peer> peers = new ArrayList<>();
-      for (TDataNodeLocation dataNodeLocation : regionReplicaSet.getDataNodeLocations()) {
-        TEndPoint endpoint =
+      final List<Peer> peers = new ArrayList<>();
+      for (final TDataNodeLocation dataNodeLocation : regionReplicaSet.getDataNodeLocations()) {
+        final TEndPoint endpoint =
             new TEndPoint(
                 dataNodeLocation.getSchemaRegionConsensusEndPoint().getIp(),
                 dataNodeLocation.getSchemaRegionConsensusEndPoint().getPort());
@@ -120,31 +121,30 @@ public class DataNodeRegionManager {
       }
       SchemaRegionConsensusImpl.getInstance().createLocalPeer(schemaRegionId, peers);
       tsStatus = new TSStatus(TSStatusCode.SUCCESS_STATUS.getStatusCode());
-    } catch (IllegalPathException e1) {
+    } catch (final IllegalPathException e1) {
       LOGGER.error("Create Schema Region {} failed because path is illegal.", storageGroup);
       tsStatus = new TSStatus(TSStatusCode.ILLEGAL_PATH.getStatusCode());
       tsStatus.setMessage("Create Schema Region failed because storageGroup path is illegal.");
-    } catch (MetadataException e2) {
+    } catch (final MetadataException e2) {
       LOGGER.error("Create Schema Region {} failed because {}", storageGroup, e2.getMessage());
       tsStatus = new TSStatus(TSStatusCode.CREATE_REGION_ERROR.getStatusCode());
       tsStatus.setMessage(
           String.format("Create Schema Region failed because of %s", e2.getMessage()));
-    } catch (ConsensusGroupAlreadyExistException e) {
+    } catch (final ConsensusGroupAlreadyExistException e) {
       tsStatus = new TSStatus(TSStatusCode.SUCCESS_STATUS.getStatusCode());
       tsStatus.setMessage(String.format("SchemaRegion %d already exists.", schemaRegionId.getId()));
-    } catch (ConsensusException e) {
+    } catch (final ConsensusException e) {
       tsStatus = new TSStatus(TSStatusCode.CREATE_REGION_ERROR.getStatusCode());
       tsStatus.setMessage(e.getMessage());
     }
     return tsStatus;
   }
 
-  public TSStatus createDataRegion(
-      TRegionReplicaSet regionReplicaSet, String storageGroup, long ttl) {
+  public TSStatus createDataRegion(TRegionReplicaSet regionReplicaSet, String storageGroup) {
     TSStatus tsStatus;
     DataRegionId dataRegionId = new DataRegionId(regionReplicaSet.getRegionId().getId());
     try {
-      storageEngine.createDataRegion(dataRegionId, storageGroup, ttl);
+      storageEngine.createDataRegion(dataRegionId, storageGroup);
       dataRegionLockMap.put(dataRegionId, new ReentrantReadWriteLock(false));
       List<Peer> peers = new ArrayList<>();
       for (TDataNodeLocation dataNodeLocation : regionReplicaSet.getDataNodeLocations()) {
@@ -170,20 +170,20 @@ public class DataNodeRegionManager {
     return tsStatus;
   }
 
-  public TSStatus createNewRegion(ConsensusGroupId regionId, String storageGroup, long ttl) {
-    TSStatus status = new TSStatus(TSStatusCode.SUCCESS_STATUS.getStatusCode());
+  public TSStatus createNewRegion(final ConsensusGroupId regionId, final String storageGroup) {
+    final TSStatus status = new TSStatus(TSStatusCode.SUCCESS_STATUS.getStatusCode());
     LOGGER.info("start to create new region {}", regionId);
     try {
       if (regionId instanceof DataRegionId) {
-        DataRegionId dataRegionId = (DataRegionId) regionId;
-        storageEngine.createDataRegion(dataRegionId, storageGroup, ttl);
-        dataRegionLockMap.put(dataRegionId, new ReentrantReadWriteLock(false));
+        final DataRegionId dataRegionId = (DataRegionId) regionId;
+        storageEngine.createDataRegion(dataRegionId, storageGroup);
+        dataRegionLockMap.putIfAbsent(dataRegionId, new ReentrantReadWriteLock(false));
       } else {
         SchemaRegionId schemaRegionId = (SchemaRegionId) regionId;
-        schemaEngine.createSchemaRegion(new PartialPath(storageGroup), schemaRegionId);
-        schemaRegionLockMap.put(schemaRegionId, new ReentrantReadWriteLock(false));
+        schemaEngine.createSchemaRegion(storageGroup, schemaRegionId);
+        schemaRegionLockMap.putIfAbsent(schemaRegionId, new ReentrantReadWriteLock(false));
       }
-    } catch (Exception e) {
+    } catch (final Exception e) {
       LOGGER.error("create new region {} error", regionId, e);
       status.setCode(TSStatusCode.CREATE_REGION_ERROR.getStatusCode());
       status.setMessage("create new region " + regionId + "error,  exception:" + e.getMessage());
@@ -203,6 +203,7 @@ public class DataNodeRegionManager {
   public TSStatus deleteSchemaRegion(SchemaRegionId schemaRegionId) {
     try {
       schemaEngine.deleteSchemaRegion(schemaRegionId);
+      PipeDataNodeAgent.runtime().schemaListener(schemaRegionId).close();
       schemaRegionLockMap.remove(schemaRegionId);
       return RpcUtils.getStatus(TSStatusCode.SUCCESS_STATUS, "Execute successfully");
     } catch (MetadataException e) {

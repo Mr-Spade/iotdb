@@ -37,6 +37,7 @@ import org.apache.iotdb.consensus.config.RatisConfig;
 import org.apache.iotdb.consensus.exception.ConsensusException;
 import org.apache.iotdb.consensus.exception.RatisReadUnavailableException;
 import org.apache.iotdb.consensus.ratis.utils.Retriable;
+import org.apache.iotdb.consensus.ratis.utils.Utils;
 
 import org.apache.ratis.thirdparty.com.google.common.base.Preconditions;
 import org.apache.ratis.util.FileUtils;
@@ -50,10 +51,12 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.net.ServerSocket;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Scanner;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -249,7 +252,7 @@ public class TestUtils {
       this.servers = new ArrayList<>();
 
       for (int i = 0; i < replicas; i++) {
-        peers.add(new Peer(gid, i, new TEndPoint("127.0.0.1", 6001 + i)));
+        peers.add(new Peer(gid, i, new TEndPoint("127.0.0.1", randomFreePort())));
 
         final File storage = storageProvider.apply(i);
         FileUtils.deleteFileQuietly(storage);
@@ -441,6 +444,25 @@ public class TestUtils {
       final ByteBufferConsensusRequest getReq = TestUtils.TestRequest.getRequest();
       return servers.get(serverIndex).read(gid, getReq);
     }
+
+    boolean hasSnapshot(ConsensusGroupId gid, int serverIndex) {
+      try {
+        return Objects.requireNonNull(
+                    servers
+                        .get(serverIndex)
+                        .getServer()
+                        .getDivision(Utils.fromConsensusGroupIdToRaftGroupId(gid))
+                        .getRaftStorage()
+                        .getStorageDir()
+                        .getStateMachineDir()
+                        .listFiles())
+                .length
+            != 0;
+      } catch (IOException ioe) {
+        logger.error("caught IOException:", ioe);
+        return false; // required by the compiler
+      }
+    }
   }
 
   static class MiniClusterFactory {
@@ -470,6 +492,14 @@ public class TestUtils {
 
     MiniCluster create() {
       return new MiniCluster(gid, replicas, peerStorageProvider, smProvider, ratisConfig);
+    }
+  }
+
+  private static int randomFreePort() {
+    try (ServerSocket socket = new ServerSocket(0)) {
+      return socket.getLocalPort();
+    } catch (IOException e) {
+      throw new IllegalStateException("Failed to find free server socket port.", e);
     }
   }
 }

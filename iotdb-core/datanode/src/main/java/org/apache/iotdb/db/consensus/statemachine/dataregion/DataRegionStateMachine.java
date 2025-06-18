@@ -21,22 +21,19 @@ package org.apache.iotdb.db.consensus.statemachine.dataregion;
 
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.conf.CommonDescriptor;
+import org.apache.iotdb.commons.consensus.ConsensusGroupId;
 import org.apache.iotdb.commons.consensus.DataRegionId;
-import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.consensus.common.DataSet;
 import org.apache.iotdb.consensus.common.request.IConsensusRequest;
 import org.apache.iotdb.consensus.common.request.IndexedConsensusRequest;
 import org.apache.iotdb.consensus.iot.log.GetConsensusReqReaderPlan;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.consensus.statemachine.BaseStateMachine;
+import org.apache.iotdb.db.pipe.agent.PipeDataNodeAgent;
 import org.apache.iotdb.db.queryengine.execution.fragment.FragmentInstanceManager;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.FragmentInstance;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNode;
-import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertMultiTabletsNode;
-import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertNode;
-import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertRowNode;
-import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertRowsNode;
-import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertTabletNode;
+import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.SearchNode;
 import org.apache.iotdb.db.storageengine.StorageEngine;
 import org.apache.iotdb.db.storageengine.buffer.BloomFilterCache;
 import org.apache.iotdb.db.storageengine.buffer.ChunkCache;
@@ -51,10 +48,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class DataRegionStateMachine extends BaseStateMachine {
 
@@ -91,7 +86,9 @@ public class DataRegionStateMachine extends BaseStateMachine {
   @Override
   public boolean takeSnapshot(File snapshotDir) {
     try {
-      return new SnapshotTaker(region).takeFullSnapshot(snapshotDir.getAbsolutePath(), true);
+      SnapshotTaker snapshotTaker = new SnapshotTaker(region);
+      snapshotTaker.cleanSnapshot();
+      return snapshotTaker.takeFullSnapshot(snapshotDir.getAbsolutePath(), true);
     } catch (Exception e) {
       logger.error(
           "Exception occurs when taking snapshot for {}-{} in {}",
@@ -120,6 +117,11 @@ public class DataRegionStateMachine extends BaseStateMachine {
   }
 
   @Override
+  public boolean clearSnapshot() {
+    return SnapshotTaker.clearSnapshotOfDataRegion(region);
+  }
+
+  @Override
   public void loadSnapshot(File latestSnapshotRootDir) {
     DataRegion newRegion =
         new SnapshotLoader(
@@ -143,83 +145,48 @@ public class DataRegionStateMachine extends BaseStateMachine {
     }
   }
 
-  protected PlanNode grabInsertNode(IndexedConsensusRequest indexedRequest) {
-    List<InsertNode> insertNodes = new ArrayList<>(indexedRequest.getRequests().size());
+  protected PlanNode grabPlanNode(IndexedConsensusRequest indexedRequest) {
+    List<SearchNode> searchNodes = new ArrayList<>();
+    PlanNode onlyOne = null;
     for (IConsensusRequest req : indexedRequest.getRequests()) {
       // PlanNode in IndexedConsensusRequest should always be InsertNode
       PlanNode planNode = getPlanNode(req);
-      if (planNode instanceof InsertNode) {
-        InsertNode innerNode = (InsertNode) planNode;
-        innerNode.setSearchIndex(indexedRequest.getSearchIndex());
-        insertNodes.add(innerNode);
-      } else if (indexedRequest.getRequests().size() == 1) {
-        // If the planNode is not InsertNode, it is expected that the IndexedConsensusRequest only
-        // contains one request
-        return planNode;
+      if (planNode instanceof SearchNode) {
+        ((SearchNode) planNode).setSearchIndex(indexedRequest.getSearchIndex());
+        searchNodes.add((SearchNode) planNode);
       } else {
+        logger.warn("Unexpected PlanNode type {}, which is not SearchNode", planNode.getClass());
+        if (onlyOne == null) {
+          onlyOne = planNode;
+        } else {
+          throw new IllegalArgumentException(
+              String.format(
+                  "There are two types of PlanNode in one request: %s and %s",
+                  onlyOne.getClass(), planNode.getClass()));
+        }
+      }
+    }
+    if (onlyOne != null) {
+      if (!searchNodes.isEmpty()) {
         throw new IllegalArgumentException(
-            "PlanNodes in IndexedConsensusRequest are not InsertNode and "
-                + "the size of requests are larger than 1");
+            String.format(
+                "There are two types of PlanNode in one request: %s and SearchNode",
+                onlyOne.getClass()));
       }
+      return onlyOne;
     }
-    return mergeInsertNodes(insertNodes);
-  }
-
-  /**
-   * Merge insert nodes sharing same search index ( e.g. tablet-100, tablet-100, tablet-100 will be
-   * merged to one multi-tablet). <br>
-   * Notice: the continuity of insert nodes sharing same search index should be protected by the
-   * upper layer.
-   *
-   * @exception RuntimeException when insertNodes is empty
-   */
-  protected InsertNode mergeInsertNodes(List<InsertNode> insertNodes) {
-    int size = insertNodes.size();
-    if (size == 0) {
-      throw new RuntimeException();
-    }
-    if (size == 1) {
-      return insertNodes.get(0);
-    }
-
-    InsertNode result;
-    // merge to InsertMultiTabletsNode
-    if (insertNodes.get(0) instanceof InsertTabletNode) {
-      List<Integer> index = new ArrayList<>(size);
-      List<InsertTabletNode> insertTabletNodes = new ArrayList<>(size);
-      int i = 0;
-      for (InsertNode insertNode : insertNodes) {
-        insertTabletNodes.add((InsertTabletNode) insertNode);
-        index.add(i);
-        i++;
-      }
-      result =
-          new InsertMultiTabletsNode(insertNodes.get(0).getPlanNodeId(), index, insertTabletNodes);
-    } else { // merge to InsertRowsNode
-      PartialPath device = insertNodes.get(0).getDevicePath();
-      List<Integer> index = new ArrayList<>(size);
-      List<InsertRowNode> insertRowNodes = new ArrayList<>(size);
-      int i = 0;
-      for (InsertNode insertNode : insertNodes) {
-        insertRowNodes.add((InsertRowNode) insertNode);
-        index.add(i);
-        i++;
-      }
-      result = new InsertRowsNode(insertNodes.get(0).getPlanNodeId(), index, insertRowNodes);
-    }
-    result.setSearchIndex(insertNodes.get(0).getSearchIndex());
-    result.setDevicePath(insertNodes.get(0).getDevicePath());
-    return result;
+    // searchNodes should never be empty here
+    return searchNodes.get(0).merge(searchNodes);
   }
 
   @Override
-  public List<Path> getSnapshotFiles(File latestSnapshotRootDir) {
+  public List<File> getSnapshotFiles(File latestSnapshotRootDir) {
     try {
       return new SnapshotLoader(
               latestSnapshotRootDir.getAbsolutePath(),
               region.getDatabaseName(),
               region.getDataRegionId())
-          .getSnapshotFileInfo().stream().map(File::toPath).collect(Collectors.toList());
+          .getSnapshotFileInfo();
     } catch (IOException e) {
       logger.error(
           "Meets error when getting snapshot files for {}-{}",
@@ -272,17 +239,28 @@ public class DataRegionStateMachine extends BaseStateMachine {
   @Override
   public DataSet read(IConsensusRequest request) {
     if (request instanceof GetConsensusReqReaderPlan) {
-      return region.getWALNode();
+      return region.getWALNode().orElseThrow(UnsupportedOperationException::new);
     } else {
       FragmentInstance fragmentInstance;
       try {
         fragmentInstance = getFragmentInstance(request);
       } catch (IllegalArgumentException e) {
-        logger.error(e.getMessage());
+        logger.error("Get fragment instance failed", e);
         return null;
       }
       return QUERY_INSTANCE_MANAGER.execDataQueryFragmentInstance(fragmentInstance, region);
     }
+  }
+
+  public boolean hasPipeReleaseRegionRelatedResource(ConsensusGroupId groupId) {
+    return PipeDataNodeAgent.task().hasPipeReleaseRegionRelatedResource(groupId.getId());
+  }
+
+  @Override
+  public boolean hasReleaseAllRegionRelatedResource(ConsensusGroupId groupId) {
+    boolean releaseAllResource = true;
+    releaseAllResource &= hasPipeReleaseRegionRelatedResource(groupId);
+    return releaseAllResource;
   }
 
   @Override

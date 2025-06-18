@@ -21,18 +21,32 @@ package org.apache.iotdb.db.queryengine.plan.statement.crud;
 
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.exception.query.QueryProcessException;
+import org.apache.iotdb.db.exception.sql.SemanticException;
+import org.apache.iotdb.db.queryengine.common.MPPQueryContext;
 import org.apache.iotdb.db.queryengine.plan.analyze.schema.ISchemaValidation;
+import org.apache.iotdb.db.queryengine.plan.relational.sql.ast.InsertRows;
+import org.apache.iotdb.db.queryengine.plan.relational.sql.ast.Statement;
 import org.apache.iotdb.db.queryengine.plan.statement.StatementType;
 import org.apache.iotdb.db.queryengine.plan.statement.StatementVisitor;
+import org.apache.iotdb.db.schemaengine.schemaregion.attribute.update.UpdateDetailContainer;
 
+import org.apache.tsfile.annotations.TableModel;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.exception.NotImplementedException;
+import org.apache.tsfile.utils.RamUsageEstimator;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 public class InsertRowsStatement extends InsertBaseStatement {
+
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(InsertRowsStatement.class);
 
   /** the InsertRowsStatement list */
   private List<InsertRowStatement> insertRowStatementList;
@@ -114,9 +128,9 @@ public class InsertRowsStatement extends InsertBaseStatement {
   }
 
   @Override
-  public void updateAfterSchemaValidation() throws QueryProcessException {
+  public void updateAfterSchemaValidation(MPPQueryContext context) throws QueryProcessException {
     for (InsertRowStatement insertRowStatement : insertRowStatementList) {
-      insertRowStatement.updateAfterSchemaValidation();
+      insertRowStatement.updateAfterSchemaValidation(context);
       if (!this.hasFailedMeasurements() && insertRowStatement.hasFailedMeasurements()) {
         this.failedMeasurementIndex2Info = insertRowStatement.failedMeasurementIndex2Info;
       }
@@ -126,6 +140,13 @@ public class InsertRowsStatement extends InsertBaseStatement {
   @Override
   protected boolean checkAndCastDataType(int columnIndex, TSDataType dataType) {
     return false;
+  }
+
+  @Override
+  public void semanticCheck() {
+    for (InsertRowStatement insertRowStatement : insertRowStatementList) {
+      insertRowStatement.semanticCheck();
+    }
   }
 
   @Override
@@ -153,5 +174,66 @@ public class InsertRowsStatement extends InsertBaseStatement {
     InsertRowsStatement splitResult = new InsertRowsStatement();
     splitResult.setInsertRowStatementList(mergedList);
     return splitResult;
+  }
+
+  public List<Object[]> getDeviceIdListNoTableName() {
+    return insertRowStatementList.stream()
+        .map(
+            s -> {
+              Object[] segments = s.getTableDeviceID().getSegments();
+              return Arrays.copyOfRange(segments, 1, segments.length);
+            })
+        .collect(Collectors.toList());
+  }
+
+  @TableModel
+  @Override
+  public void toLowerCase() {
+    insertRowStatementList.forEach(InsertRowStatement::toLowerCase);
+  }
+
+  @Override
+  protected long calculateBytesUsed() {
+    return INSTANCE_SIZE
+        + (Objects.nonNull(insertRowStatementList)
+            ? UpdateDetailContainer.LIST_SIZE
+                + insertRowStatementList.stream()
+                    .mapToLong(InsertRowStatement::calculateBytesUsed)
+                    .reduce(0L, Long::sum)
+            : 0);
+  }
+
+  @Override
+  @TableModel
+  public Optional<String> getDatabaseName() {
+    Optional<String> database = Optional.empty();
+    for (InsertRowStatement rowStatement : insertRowStatementList) {
+      Optional<String> childDatabaseName = rowStatement.getDatabaseName();
+      if (childDatabaseName.isPresent()
+          && database.isPresent()
+          && !Objects.equals(childDatabaseName.get(), database.get())) {
+        throw new SemanticException(
+            "Cannot insert into multiple databases within one statement, please split them manually");
+      }
+
+      database = childDatabaseName;
+    }
+    return database;
+  }
+
+  @TableModel
+  @Override
+  public Statement toRelationalStatement(MPPQueryContext context) {
+    return new InsertRows(this, context);
+  }
+
+  @Override
+  public void removeAttributeColumns() {
+    subRemoveAttributeColumns(Collections.emptyList());
+  }
+
+  @Override
+  protected void subRemoveAttributeColumns(List<Integer> columnsToKeep) {
+    insertRowStatementList.forEach(InsertBaseStatement::removeAttributeColumns);
   }
 }

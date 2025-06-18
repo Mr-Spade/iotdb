@@ -22,7 +22,10 @@ package org.apache.iotdb.commons.partition;
 import org.apache.iotdb.common.rpc.thrift.TConsensusGroupId;
 import org.apache.iotdb.common.rpc.thrift.TSeriesPartitionSlot;
 import org.apache.iotdb.common.rpc.thrift.TTimePartitionSlot;
+import org.apache.iotdb.commons.conf.CommonDescriptor;
+import org.apache.iotdb.commons.utils.CommonDateTimeUtils;
 import org.apache.iotdb.commons.utils.ThriftCommonsSerDeUtils;
+import org.apache.iotdb.commons.utils.TimePartitionUtils;
 import org.apache.iotdb.confignode.rpc.thrift.TTimeSlotList;
 
 import org.apache.thrift.TException;
@@ -34,26 +37,35 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.TreeMap;
 import java.util.Vector;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 public class SeriesPartitionTable {
 
-  private final TreeMap<TTimePartitionSlot, List<TConsensusGroupId>> seriesPartitionMap;
+  // should only be used in CN scope, in DN scope should directly use
+  // TimePartitionUtils.getTimePartitionInterval()
+  private static final long TIME_PARTITION_INTERVAL =
+      CommonDateTimeUtils.convertMilliTimeWithPrecision(
+          TimePartitionUtils.getTimePartitionInterval(),
+          CommonDescriptor.getInstance().getConfig().getTimestampPrecision());
+
+  private final ConcurrentSkipListMap<TTimePartitionSlot, List<TConsensusGroupId>>
+      seriesPartitionMap;
 
   public SeriesPartitionTable() {
-    this.seriesPartitionMap = new TreeMap<>();
+    this.seriesPartitionMap = new ConcurrentSkipListMap<>();
   }
 
   public SeriesPartitionTable(Map<TTimePartitionSlot, List<TConsensusGroupId>> seriesPartitionMap) {
-    this.seriesPartitionMap = new TreeMap<>(seriesPartitionMap);
+    this.seriesPartitionMap = new ConcurrentSkipListMap<>(seriesPartitionMap);
   }
 
   public Map<TTimePartitionSlot, List<TConsensusGroupId>> getSeriesPartitionMap() {
@@ -61,7 +73,7 @@ public class SeriesPartitionTable {
   }
 
   public void putDataPartition(TTimePartitionSlot timePartitionSlot, TConsensusGroupId groupId) {
-    seriesPartitionMap.computeIfAbsent(timePartitionSlot, empty -> new ArrayList<>()).add(groupId);
+    seriesPartitionMap.computeIfAbsent(timePartitionSlot, empty -> new Vector<>()).add(groupId);
   }
 
   /**
@@ -75,7 +87,6 @@ public class SeriesPartitionTable {
       TTimeSlotList partitionSlotList, SeriesPartitionTable seriesPartitionTable) {
     AtomicBoolean result = new AtomicBoolean(true);
     List<TTimePartitionSlot> partitionSlots = partitionSlotList.getTimePartitionSlots();
-
     if (partitionSlots.isEmpty()) {
       // Return all DataPartitions in one SeriesPartitionSlot
       // when the queried TimePartitionSlots are empty
@@ -84,7 +95,8 @@ public class SeriesPartitionTable {
       boolean isNeedLeftAll = partitionSlotList.isNeedLeftAll(),
           isNeedRightAll = partitionSlotList.isNeedRightAll();
       if (isNeedLeftAll || isNeedRightAll) {
-        // we need to calculate the leftMargin which contains all the time partition on the unclosed
+        // we need to calculate the leftMargin which contains all the time partition on the
+        // unclosed
         // left side: (-oo, leftMargin)
         // and the rightMargin which contains all the time partition on the unclosed right side:
         // (rightMargin, +oo)
@@ -106,7 +118,6 @@ public class SeriesPartitionTable {
                         })
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
       }
-
       // Return the DataPartition for each match TimePartitionSlot
       partitionSlots.forEach(
           timePartitionSlot -> {
@@ -119,7 +130,6 @@ public class SeriesPartitionTable {
             }
           });
     }
-
     return result.get();
   }
 
@@ -153,7 +163,7 @@ public class SeriesPartitionTable {
    * @return the timePartition's corresponding dataRegionIds. return the dataRegions which
    *     timeslotIds are in the time range [startTimeSlotId, endTimeSlotId].
    */
-  List<TConsensusGroupId> getRegionId(
+  public List<TConsensusGroupId> getRegionId(
       TTimePartitionSlot startTimeSlotId, TTimePartitionSlot endTimeSlotId) {
     return seriesPartitionMap.entrySet().stream()
         .filter(
@@ -164,7 +174,7 @@ public class SeriesPartitionTable {
         .collect(Collectors.toList());
   }
 
-  List<TTimePartitionSlot> getTimeSlotList(
+  public List<TTimePartitionSlot> getTimeSlotList(
       TConsensusGroupId regionId, long startTime, long endTime) {
     if (regionId.getId() == -1) {
       return seriesPartitionMap.keySet().stream()
@@ -214,14 +224,12 @@ public class SeriesPartitionTable {
   public synchronized List<TTimePartitionSlot> filterUnassignedDataPartitionSlots(
       List<TTimePartitionSlot> partitionSlots) {
     List<TTimePartitionSlot> result = new Vector<>();
-
     partitionSlots.forEach(
         timePartitionSlot -> {
           if (!seriesPartitionMap.containsKey(timePartitionSlot)) {
             result.add(timePartitionSlot);
           }
         });
-
     return result;
   }
 
@@ -237,6 +245,29 @@ public class SeriesPartitionTable {
       return null;
     }
     return lastEntry.getValue().get(lastEntry.getValue().size() - 1);
+  }
+
+  /**
+   * Remove PartitionTable where the TimeSlot is expired.
+   *
+   * @param TTL The Time To Live
+   * @param currentTimeSlot The current TimeSlot
+   */
+  public List<TTimePartitionSlot> autoCleanPartitionTable(
+      long TTL, TTimePartitionSlot currentTimeSlot) {
+    List<TTimePartitionSlot> removedTimePartitions = new ArrayList<>();
+    Iterator<Map.Entry<TTimePartitionSlot, List<TConsensusGroupId>>> iterator =
+        seriesPartitionMap.entrySet().iterator();
+    while (iterator.hasNext()) {
+      Map.Entry<TTimePartitionSlot, List<TConsensusGroupId>> entry = iterator.next();
+      TTimePartitionSlot timePartitionSlot = entry.getKey();
+      if (timePartitionSlot.getStartTime() + TIME_PARTITION_INTERVAL + TTL
+          <= currentTimeSlot.getStartTime()) {
+        removedTimePartitions.add(timePartitionSlot);
+        iterator.remove();
+      }
+    }
+    return removedTimePartitions;
   }
 
   public void serialize(OutputStream outputStream, TProtocol protocol)
@@ -258,13 +289,11 @@ public class SeriesPartitionTable {
     for (int i = 0; i < timePartitionSlotNum; i++) {
       TTimePartitionSlot timePartitionSlot =
           ThriftCommonsSerDeUtils.deserializeTTimePartitionSlot(buffer);
-
       int consensusGroupIdNum = buffer.getInt();
       List<TConsensusGroupId> consensusGroupIds = new Vector<>();
       for (int j = 0; j < consensusGroupIdNum; j++) {
         consensusGroupIds.add(ThriftCommonsSerDeUtils.deserializeTConsensusGroupId(buffer));
       }
-
       seriesPartitionMap.put(timePartitionSlot, consensusGroupIds);
     }
   }
@@ -276,7 +305,6 @@ public class SeriesPartitionTable {
     for (int i = 0; i < timePartitionSlotNum; i++) {
       TTimePartitionSlot timePartitionSlot = new TTimePartitionSlot();
       timePartitionSlot.read(protocol);
-
       int consensusGroupIdNum = ReadWriteIOUtils.readInt(inputStream);
       List<TConsensusGroupId> consensusGroupIds = new Vector<>();
       for (int j = 0; j < consensusGroupIdNum; j++) {
@@ -284,7 +312,6 @@ public class SeriesPartitionTable {
         consensusGroupId.read(protocol);
         consensusGroupIds.add(consensusGroupId);
       }
-
       seriesPartitionMap.put(timePartitionSlot, consensusGroupIds);
     }
   }

@@ -20,6 +20,7 @@
 package org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task;
 
 import org.apache.iotdb.commons.conf.IoTDBConstant;
+import org.apache.iotdb.commons.utils.TestOnly;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.service.metrics.CompactionMetrics;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.constant.CompactionTaskType;
@@ -32,8 +33,8 @@ import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.performer
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.CompactionUtils;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.log.CompactionTaskStage;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.log.TsFileIdentifier;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.repair.RepairDataFileScanUtil;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.CompactionTaskManager;
-import org.apache.iotdb.db.storageengine.dataregion.modification.ModificationFile;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileManager;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileRepairStatus;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
@@ -71,16 +72,16 @@ public abstract class AbstractCompactionTask {
   protected int hashCode = -1;
   protected CompactionTaskSummary summary;
   protected long serialId;
-  protected boolean crossTask;
-  protected boolean innerSeqTask;
   protected CompactionTaskStage taskStage;
   protected long memoryCost = 0L;
 
   protected boolean recoverMemoryStatus;
-  protected CompactionTaskPriorityType compactionTaskPriorityType;
+
+  protected boolean needRecoverTaskInfoFromLogFile;
 
   private boolean memoryAcquired = false;
   private boolean fileHandleAcquired = false;
+  protected long compactionConfigVersion = Long.MAX_VALUE;
 
   protected AbstractCompactionTask(
       String storageGroupName,
@@ -88,31 +89,24 @@ public abstract class AbstractCompactionTask {
       long timePartition,
       TsFileManager tsFileManager,
       long serialId) {
-    this(
-        storageGroupName,
-        dataRegionId,
-        timePartition,
-        tsFileManager,
-        serialId,
-        CompactionTaskPriorityType.NORMAL);
-  }
-
-  protected AbstractCompactionTask(
-      String storageGroupName,
-      String dataRegionId,
-      long timePartition,
-      TsFileManager tsFileManager,
-      long serialId,
-      CompactionTaskPriorityType compactionTaskPriorityType) {
     this.storageGroupName = storageGroupName;
     this.dataRegionId = dataRegionId;
     this.timePartition = timePartition;
     this.tsFileManager = tsFileManager;
     this.serialId = serialId;
-    this.compactionTaskPriorityType = compactionTaskPriorityType;
   }
 
   public abstract List<TsFileResource> getAllSourceTsFiles();
+
+  public long getCompactionConfigVersion() {
+    // This parameter should not take effect by default unless it is overridden by a subclass
+    return Long.MAX_VALUE;
+  }
+
+  public void setCompactionConfigVersion(long compactionConfigVersion) {
+    // This parameter should not take effect by default unless it is overridden by a subclass
+    this.compactionConfigVersion = Long.MAX_VALUE;
+  }
 
   /**
    * This method will try to set the files to COMPACTION_CANDIDATE. If failed, it should roll back
@@ -123,7 +117,7 @@ public abstract class AbstractCompactionTask {
   public boolean setSourceFilesToCompactionCandidate() {
     List<TsFileResource> files = getAllSourceTsFiles();
     for (int i = 0; i < files.size(); i++) {
-      if (!files.get(i).setStatus(TsFileResourceStatus.COMPACTION_CANDIDATE)) {
+      if (!files.get(i).transformStatus(TsFileResourceStatus.COMPACTION_CANDIDATE)) {
         // rollback status to NORMAL
         for (int j = 0; j < i; j++) {
           files.get(j).setStatus(TsFileResourceStatus.NORMAL);
@@ -144,10 +138,10 @@ public abstract class AbstractCompactionTask {
     if (e instanceof CompactionLastTimeCheckFailedException
         || e instanceof CompactionValidationFailedException) {
       logger.error(
-          "{}-{} [Compaction] Meet errors {}: {}.",
-          getCompactionTaskType(),
+          "{}-{} [Compaction] {} task meets error: {}.",
           storageGroupName,
           dataRegionId,
+          getCompactionTaskType(),
           e.getMessage());
       List<TsFileResource> unsortedTsFileResources = new ArrayList<>();
       if (e instanceof CompactionLastTimeCheckFailedException) {
@@ -155,28 +149,33 @@ public abstract class AbstractCompactionTask {
       } else {
         CompactionValidationFailedException validationException =
             (CompactionValidationFailedException) e;
-        TsFileResource overlappedTsFileResource = validationException.getOverlappedTsFileResource();
-        if (overlappedTsFileResource != null) {
-          unsortedTsFileResources.add(overlappedTsFileResource);
-        }
+        List<TsFileResource> overlappedTsFileResource =
+            validationException.getOverlappedTsFileResources();
+        unsortedTsFileResources =
+            overlappedTsFileResource == null ? unsortedTsFileResources : overlappedTsFileResource;
       }
       // these exceptions generally caused by unsorted data, mark all source files as NEED_TO_REPAIR
       for (TsFileResource resource : unsortedTsFileResources) {
         if (resource.getTsFileRepairStatus() != TsFileRepairStatus.CAN_NOT_REPAIR) {
-          resource.setTsFileRepairStatus(TsFileRepairStatus.NEED_TO_REPAIR);
+          resource.setTsFileRepairStatus(TsFileRepairStatus.NEED_TO_CHECK);
         }
       }
     } else if (e instanceof InterruptedException
         || Thread.interrupted()
-        || e instanceof StopReadTsFileByInterruptException) {
-      logger.warn("{}-{} [Compaction] Compaction interrupted", storageGroupName, dataRegionId);
+        || e instanceof StopReadTsFileByInterruptException
+        || !tsFileManager.isAllowCompaction()) {
+      logger.warn(
+          "{}-{} [Compaction] {} task interrupted",
+          storageGroupName,
+          dataRegionId,
+          getCompactionTaskType());
       Thread.currentThread().interrupt();
     } else {
       logger.error(
-          "{}-{} [Compaction] Meet errors {}.",
-          getCompactionTaskType(),
+          "{}-{} [Compaction] {} task meets error: {}.",
           storageGroupName,
           dataRegionId,
+          getCompactionTaskType(),
           e);
     }
   }
@@ -250,7 +249,7 @@ public abstract class AbstractCompactionTask {
 
   public void transitSourceFilesToMerging() throws FileCannotTransitToCompactingException {
     for (TsFileResource f : getAllSourceTsFiles()) {
-      if (!f.setStatus(TsFileResourceStatus.COMPACTING)) {
+      if (!f.transformStatus(TsFileResourceStatus.COMPACTING)) {
         throw new FileCannotTransitToCompactingException(f);
       }
     }
@@ -307,7 +306,7 @@ public abstract class AbstractCompactionTask {
 
   protected boolean checkAllSourceFileExists(List<TsFileResource> tsFileResources) {
     for (TsFileResource tsFileResource : tsFileResources) {
-      if (!tsFileResource.getTsFile().exists() || !tsFileResource.resourceFileExists()) {
+      if (!tsFileResource.tsFileExists() || !tsFileResource.resourceFileExists()) {
         return false;
       }
     }
@@ -315,6 +314,11 @@ public abstract class AbstractCompactionTask {
   }
 
   protected void handleRecoverException(Exception e) {
+    // all files in this data region may be deleted directly without acquire lock or transfer
+    // TsFileResourceStatus
+    if (!tsFileManager.isAllowCompaction()) {
+      return;
+    }
     LOGGER.error(
         "{} [Compaction][Recover] Failed to recover compaction. TaskInfo: {}, Exception: {}",
         dataRegionId,
@@ -371,10 +375,7 @@ public abstract class AbstractCompactionTask {
   protected void deleteCompactionModsFile(List<TsFileResource> tsFileResourceList)
       throws IOException {
     for (TsFileResource tsFile : tsFileResourceList) {
-      ModificationFile modificationFile = tsFile.getCompactionModFile();
-      if (modificationFile.exists()) {
-        modificationFile.remove();
-      }
+      tsFile.removeCompactionModFile();
     }
   }
 
@@ -426,24 +427,12 @@ public abstract class AbstractCompactionTask {
 
   protected abstract void createSummary();
 
-  public boolean isCrossTask() {
-    return crossTask;
-  }
-
   public long getTemporalFileSize() {
     return summary.getTemporalFileSize();
   }
 
-  public boolean isInnerSeqTask() {
-    return innerSeqTask;
-  }
-
-  public CompactionTaskPriorityType getCompactionTaskPriorityType() {
-    return compactionTaskPriorityType;
-  }
-
   public boolean isDiskSpaceCheckPassed() {
-    if (compactionTaskPriorityType == CompactionTaskPriorityType.MOD_SETTLE) {
+    if (getCompactionTaskType() == CompactionTaskType.SETTLE) {
       return true;
     }
     return CompactionUtils.isDiskHasSpace();
@@ -464,32 +453,7 @@ public abstract class AbstractCompactionTask {
 
     TsFileValidator validator = TsFileValidator.getInstance();
     if (needToValidatePartitionSeqSpaceOverlap) {
-      List<TsFileResource> timePartitionSeqFiles =
-          new ArrayList<>(tsFileManager.getOrCreateSequenceListByTimePartition(timePartition));
-      timePartitionSeqFiles.removeAll(sourceSeqFiles);
-      timePartitionSeqFiles.addAll(validTargetFiles);
-      timePartitionSeqFiles.sort(
-          (f1, f2) -> {
-            int timeDiff =
-                Long.compareUnsigned(
-                    Long.parseLong(f1.getTsFile().getName().split("-")[0]),
-                    Long.parseLong(f2.getTsFile().getName().split("-")[0]));
-            return timeDiff == 0
-                ? Long.compareUnsigned(
-                    Long.parseLong(f1.getTsFile().getName().split("-")[1]),
-                    Long.parseLong(f2.getTsFile().getName().split("-")[1]))
-                : timeDiff;
-          });
-      if (!validator.validateTsFilesIsHasNoOverlap(timePartitionSeqFiles)) {
-        LOGGER.error(
-            "Failed to pass compaction validation, source seq files: {}, source unseq files: {}, target files: {}",
-            sourceSeqFiles,
-            sourceUnseqFiles,
-            targetFiles);
-        throw new CompactionValidationFailedException(
-            "Failed to pass compaction validation, sequence files has overlap, time partition id is "
-                + timePartition);
-      }
+      checkSequenceSpaceOverlap(sourceSeqFiles, sourceUnseqFiles, targetFiles, validTargetFiles);
     }
     if (needToValidateTsFileCorrectness && !validator.validateTsFiles(validTargetFiles)) {
       LOGGER.error(
@@ -502,15 +466,96 @@ public abstract class AbstractCompactionTask {
     }
   }
 
-  public CompactionTaskType getCompactionTaskType() {
-    if (this instanceof CrossSpaceCompactionTask) {
-      return CompactionTaskType.CROSS;
-    } else if (this instanceof InsertionCrossSpaceCompactionTask) {
-      return CompactionTaskType.INSERTION;
-    } else if (innerSeqTask) {
-      return CompactionTaskType.INNER_SEQ;
-    } else {
-      return CompactionTaskType.INNER_UNSEQ;
+  protected void checkSequenceSpaceOverlap(
+      List<TsFileResource> sourceSeqFiles,
+      List<TsFileResource> sourceUnseqFiles,
+      List<TsFileResource> targetFiles,
+      List<TsFileResource> validTargetFiles) {
+    List<TsFileResource> timePartitionSeqFiles =
+        new ArrayList<>(tsFileManager.getOrCreateSequenceListByTimePartition(timePartition));
+    timePartitionSeqFiles.removeAll(sourceSeqFiles);
+    timePartitionSeqFiles.addAll(validTargetFiles);
+    timePartitionSeqFiles.sort(
+        (f1, f2) -> {
+          int timeDiff =
+              Long.compareUnsigned(
+                  Long.parseLong(f1.getTsFile().getName().split("-")[0]),
+                  Long.parseLong(f2.getTsFile().getName().split("-")[0]));
+          return timeDiff == 0
+              ? Long.compareUnsigned(
+                  Long.parseLong(f1.getTsFile().getName().split("-")[1]),
+                  Long.parseLong(f2.getTsFile().getName().split("-")[1]))
+              : timeDiff;
+        });
+    if (this instanceof InnerSpaceCompactionTask
+        || this instanceof InsertionCrossSpaceCompactionTask) {
+      timePartitionSeqFiles =
+          filterResourcesByFileTimeIndexInOverlapValidation(
+              timePartitionSeqFiles, validTargetFiles);
+    }
+    List<TsFileResource> overlapFilesInTimePartition =
+        RepairDataFileScanUtil.checkTimePartitionHasOverlap(timePartitionSeqFiles, true);
+    if (!overlapFilesInTimePartition.isEmpty()) {
+      LOGGER.error(
+          "Failed to pass compaction overlap validation, source seq files: {}, source unseq files: {}, target files: {}",
+          sourceSeqFiles,
+          sourceUnseqFiles,
+          targetFiles);
+      if (!IoTDBDescriptor.getInstance().getConfig().isEnableAutoRepairCompaction()) {
+        throw new CompactionValidationFailedException(overlapFilesInTimePartition);
+      }
+      for (TsFileResource resource : overlapFilesInTimePartition) {
+        if (resource.getTsFileRepairStatus() != TsFileRepairStatus.CAN_NOT_REPAIR) {
+          resource.setTsFileRepairStatus(TsFileRepairStatus.NEED_TO_CHECK);
+        }
+      }
     }
   }
+
+  private List<TsFileResource> filterResourcesByFileTimeIndexInOverlapValidation(
+      List<TsFileResource> timePartitionSeqFiles, List<TsFileResource> targetFiles) {
+    if (targetFiles.isEmpty()) {
+      return timePartitionSeqFiles;
+    }
+    TsFileResource firstTargetResource = targetFiles.get(0);
+    TsFileResource lastTargetResource = targetFiles.get(targetFiles.size() - 1);
+    long minStartTimeInTargetFiles =
+        targetFiles.stream().mapToLong(TsFileResource::getFileStartTime).min().getAsLong();
+    long maxEndTimeInTargetFiles =
+        targetFiles.stream().mapToLong(TsFileResource::getFileEndTime).max().getAsLong();
+    List<TsFileResource> result = new ArrayList<>(timePartitionSeqFiles.size());
+    int idx;
+    for (idx = 0; idx < timePartitionSeqFiles.size(); idx++) {
+      TsFileResource resource = timePartitionSeqFiles.get(idx);
+      if (resource == firstTargetResource) {
+        break;
+      }
+      if (resource.getFileEndTime() >= minStartTimeInTargetFiles) {
+        result.add(resource);
+      }
+    }
+    for (; idx < timePartitionSeqFiles.size(); idx++) {
+      TsFileResource resource = timePartitionSeqFiles.get(idx);
+      result.add(resource);
+      if (resource == lastTargetResource) {
+        break;
+      }
+    }
+    for (idx += 1; idx < timePartitionSeqFiles.size(); idx++) {
+      TsFileResource resource = timePartitionSeqFiles.get(idx);
+      if (resource.getFileStartTime() <= maxEndTimeInTargetFiles) {
+        result.add(resource);
+      }
+    }
+    return result;
+  }
+
+  public abstract CompactionTaskType getCompactionTaskType();
+
+  @TestOnly
+  public void setRecoverMemoryStatus(boolean recoverMemoryStatus) {
+    this.recoverMemoryStatus = recoverMemoryStatus;
+  }
+
+  public abstract long getSelectedFileSize();
 }

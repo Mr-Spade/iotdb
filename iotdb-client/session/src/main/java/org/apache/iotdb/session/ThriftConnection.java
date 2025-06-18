@@ -58,6 +58,9 @@ public class ThriftConnection {
   protected IClientRPCService.Iface client;
   protected long sessionId;
   protected long statementId;
+  private ZoneId zoneId;
+
+  private int timeFactor;
 
   public ThriftConnection(
       TEndPoint endPoint,
@@ -100,6 +103,7 @@ public class ThriftConnection {
       if (!transport.isOpen()) {
         transport.open();
       }
+      this.zoneId = zoneId;
     } catch (TTransportException e) {
       throw new IoTDBConnectionException(e);
     }
@@ -121,6 +125,8 @@ public class ThriftConnection {
       TSOpenSessionResp openResp = client.openSession(openReq);
 
       RpcUtils.verifySuccess(openResp.getStatus());
+
+      this.timeFactor = RpcUtils.getTimeFactor(openResp);
 
       if (Session.protocolVersion.getValue() != openResp.getServerProtocolVersion().getValue()) {
         LOGGER.warn(
@@ -172,7 +178,11 @@ public class ThriftConnection {
         execResp.isIgnoreTimeStamp(),
         timeout,
         execResp.moreData,
-        fetchSize);
+        fetchSize,
+        zoneId,
+        timeFactor,
+        execResp.isSetTableModel() && execResp.isTableModel(),
+        execResp.getColumnIndex2TsBlockColumnIndexList());
   }
 
   public void close() {

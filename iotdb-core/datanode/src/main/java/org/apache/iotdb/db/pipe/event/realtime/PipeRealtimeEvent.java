@@ -20,10 +20,15 @@
 package org.apache.iotdb.db.pipe.event.realtime;
 
 import org.apache.iotdb.commons.consensus.index.ProgressIndex;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeTaskMeta;
+import org.apache.iotdb.commons.pipe.datastructure.pattern.TablePattern;
+import org.apache.iotdb.commons.pipe.datastructure.pattern.TreePattern;
 import org.apache.iotdb.commons.pipe.event.EnrichedEvent;
-import org.apache.iotdb.commons.pipe.pattern.PipePattern;
-import org.apache.iotdb.commons.pipe.task.meta.PipeTaskMeta;
+import org.apache.iotdb.db.pipe.event.common.PipeInsertionEvent;
+import org.apache.iotdb.db.pipe.extractor.dataregion.realtime.PipeRealtimeDataRegionExtractor;
 import org.apache.iotdb.db.pipe.extractor.dataregion.realtime.epoch.TsFileEpoch;
+
+import org.apache.tsfile.file.metadata.IDeviceID;
 
 import java.util.Map;
 
@@ -37,28 +42,49 @@ public class PipeRealtimeEvent extends EnrichedEvent {
   private final EnrichedEvent event;
   private final TsFileEpoch tsFileEpoch;
 
-  private Map<String, String[]> device2Measurements;
+  private Map<IDeviceID, String[]> device2Measurements;
 
   public PipeRealtimeEvent(
       final EnrichedEvent event,
       final TsFileEpoch tsFileEpoch,
-      final Map<String, String[]> device2Measurements,
-      final PipePattern pattern) {
-    this(event, tsFileEpoch, device2Measurements, null, pattern, Long.MIN_VALUE, Long.MAX_VALUE);
+      final Map<IDeviceID, String[]> device2Measurements) {
+    this(
+        event,
+        tsFileEpoch,
+        device2Measurements,
+        null,
+        null,
+        null,
+        null,
+        true,
+        Long.MIN_VALUE,
+        Long.MAX_VALUE);
   }
 
   public PipeRealtimeEvent(
       final EnrichedEvent event,
       final TsFileEpoch tsFileEpoch,
-      final Map<String, String[]> device2Measurements,
+      final Map<IDeviceID, String[]> device2Measurements,
       final PipeTaskMeta pipeTaskMeta,
-      final PipePattern pattern,
+      final TreePattern treePattern,
+      final TablePattern tablePattern,
+      final String userName,
+      final boolean skipIfNoPrivileges,
       final long startTime,
       final long endTime) {
     // PipeTaskMeta is used to report the progress of the event, the PipeRealtimeEvent
     // is only used in the realtime event extractor, which does not need to report the progress
     // of the event, so the pipeTaskMeta is always null.
-    super(event != null ? event.getPipeName() : null, pipeTaskMeta, pattern, startTime, endTime);
+    super(
+        event != null ? event.getPipeName() : null,
+        event != null ? event.getCreationTime() : 0,
+        pipeTaskMeta,
+        treePattern,
+        tablePattern,
+        userName,
+        skipIfNoPrivileges,
+        startTime,
+        endTime);
 
     this.event = event;
     this.tsFileEpoch = tsFileEpoch;
@@ -73,12 +99,29 @@ public class PipeRealtimeEvent extends EnrichedEvent {
     return tsFileEpoch;
   }
 
-  public Map<String, String[]> getSchemaInfo() {
+  public Map<IDeviceID, String[]> getSchemaInfo() {
     return device2Measurements;
   }
 
   public void gcSchemaInfo() {
     device2Measurements = null;
+  }
+
+  public boolean mayExtractorUseTablets(final PipeRealtimeDataRegionExtractor extractor) {
+    final TsFileEpoch.State state = tsFileEpoch.getState(extractor);
+    return state.equals(TsFileEpoch.State.EMPTY) || state.equals(TsFileEpoch.State.USING_TABLET);
+  }
+
+  public void markAsTableModelEvent() {
+    if (event instanceof PipeInsertionEvent) {
+      ((PipeInsertionEvent) event).markAsTableModelEvent();
+    }
+  }
+
+  public void markAsTreeModelEvent() {
+    if (event instanceof PipeInsertionEvent) {
+      ((PipeInsertionEvent) event).markAsTreeModelEvent();
+    }
   }
 
   @Override
@@ -123,10 +166,6 @@ public class PipeRealtimeEvent extends EnrichedEvent {
     return event.getProgressIndex();
   }
 
-  /**
-   * If pipe's pattern is database-level, then no need to parse event by pattern cause pipes are
-   * data-region-level.
-   */
   @Override
   public void skipParsingPattern() {
     event.skipParsingPattern();
@@ -138,19 +177,56 @@ public class PipeRealtimeEvent extends EnrichedEvent {
   }
 
   @Override
+  public boolean shouldParseTime() {
+    return event.shouldParseTime();
+  }
+
+  @Override
+  public boolean shouldParsePattern() {
+    return event.shouldParsePattern();
+  }
+
+  @Override
+  public boolean mayEventTimeOverlappedWithTimeRange() {
+    return event.mayEventTimeOverlappedWithTimeRange();
+  }
+
+  @Override
+  public boolean mayEventPathsOverlappedWithPattern() {
+    return event.mayEventPathsOverlappedWithPattern();
+  }
+
+  @Override
   public PipeRealtimeEvent shallowCopySelfAndBindPipeTaskMetaForProgressReport(
       final String pipeName,
+      final long creationTime,
       final PipeTaskMeta pipeTaskMeta,
-      final PipePattern pattern,
+      final TreePattern treePattern,
+      final TablePattern tablePattern,
+      final String userName,
+      final boolean skipIfNoPrivileges,
       final long startTime,
       final long endTime) {
     return new PipeRealtimeEvent(
         event.shallowCopySelfAndBindPipeTaskMetaForProgressReport(
-            pipeName, pipeTaskMeta, pattern, startTime, endTime),
+            pipeName,
+            creationTime,
+            pipeTaskMeta,
+            treePattern,
+            tablePattern,
+            userName,
+            skipIfNoPrivileges,
+            startTime,
+            endTime),
         this.tsFileEpoch,
-        this.device2Measurements,
+        // device2Measurements is not used anymore, so it is not copied.
+        // If null is not passed, the field will not be GCed and may cause OOM.
+        null,
         pipeTaskMeta,
-        pattern,
+        treePattern,
+        tablePattern,
+        userName,
+        skipIfNoPrivileges,
         startTime,
         endTime);
   }
@@ -158,11 +234,6 @@ public class PipeRealtimeEvent extends EnrichedEvent {
   @Override
   public boolean isGeneratedByPipe() {
     return event.isGeneratedByPipe();
-  }
-
-  @Override
-  public boolean mayEventTimeOverlappedWithTimeRange() {
-    return event.mayEventTimeOverlappedWithTimeRange();
   }
 
   @Override

@@ -19,6 +19,7 @@
 
 package org.apache.iotdb.commons.executable;
 
+import org.apache.iotdb.commons.conf.CommonDescriptor;
 import org.apache.iotdb.commons.trigger.exception.TriggerJarTooLargeException;
 
 import org.apache.commons.io.FileUtils;
@@ -232,6 +233,9 @@ public class ExecutableManager {
     try {
       Path path = Paths.get(destination);
       if (!Files.exists(path)) {
+        if (!Files.exists(path.getParent())) {
+          Files.createDirectories(path.getParent());
+        }
         Files.createFile(path);
       }
       // FileOutPutStream is not in append mode by default, so the file will be overridden if it
@@ -278,5 +282,15 @@ public class ExecutableManager {
 
   public String getInstallDir() {
     return libRoot + File.separator + INSTALL_DIR;
+  }
+
+  public static boolean isUriTrusted(String uri) {
+    return CommonDescriptor.getInstance().getConfig().getTrustedUriPattern().matcher(uri).matches();
+  }
+
+  public static String getUnTrustedUriErrorMsg(String uri) {
+    return String.format(
+        "Untrusted uri %s, current trusted_uri_pattern is %s",
+        uri, CommonDescriptor.getInstance().getConfig().getTrustedUriPattern());
   }
 }

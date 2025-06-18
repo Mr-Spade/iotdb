@@ -20,20 +20,22 @@
 package org.apache.iotdb.db.pipe.agent.runtime;
 
 import org.apache.iotdb.commons.consensus.SchemaRegionId;
+import org.apache.iotdb.commons.consensus.index.ProgressIndex;
 import org.apache.iotdb.commons.consensus.index.impl.RecoverProgressIndex;
 import org.apache.iotdb.commons.exception.StartupException;
 import org.apache.iotdb.commons.exception.pipe.PipeRuntimeCriticalException;
 import org.apache.iotdb.commons.exception.pipe.PipeRuntimeException;
+import org.apache.iotdb.commons.pipe.agent.runtime.PipePeriodicalJobExecutor;
+import org.apache.iotdb.commons.pipe.agent.runtime.PipePeriodicalPhantomReferenceCleaner;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeTaskMeta;
 import org.apache.iotdb.commons.pipe.config.PipeConfig;
 import org.apache.iotdb.commons.pipe.event.EnrichedEvent;
-import org.apache.iotdb.commons.pipe.task.meta.PipeTaskMeta;
 import org.apache.iotdb.commons.service.IService;
 import org.apache.iotdb.commons.service.ServiceType;
 import org.apache.iotdb.commons.utils.TestOnly;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
-import org.apache.iotdb.db.pipe.agent.PipeAgent;
+import org.apache.iotdb.db.pipe.agent.PipeDataNodeAgent;
 import org.apache.iotdb.db.pipe.extractor.schemaregion.SchemaRegionListeningQueue;
-import org.apache.iotdb.db.pipe.progress.SimpleConsensusProgressIndexAssigner;
 import org.apache.iotdb.db.pipe.resource.PipeDataNodeHardlinkOrCopiedFileDirStartupCleaner;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertNode;
 import org.apache.iotdb.db.service.ResourcesInformationHolder;
@@ -55,11 +57,14 @@ public class PipeDataNodeRuntimeAgent implements IService {
   private final PipeSchemaRegionListenerManager regionListenerManager =
       new PipeSchemaRegionListenerManager();
 
-  private final SimpleConsensusProgressIndexAssigner simpleConsensusProgressIndexAssigner =
-      new SimpleConsensusProgressIndexAssigner();
+  private final SimpleProgressIndexAssigner simpleProgressIndexAssigner =
+      new SimpleProgressIndexAssigner();
 
   private final PipePeriodicalJobExecutor pipePeriodicalJobExecutor =
       new PipePeriodicalJobExecutor();
+
+  private final PipePeriodicalPhantomReferenceCleaner pipePeriodicalPhantomReferenceCleaner =
+      new PipePeriodicalPhantomReferenceCleaner();
 
   //////////////////////////// System Service Interface ////////////////////////////
 
@@ -69,10 +74,10 @@ public class PipeDataNodeRuntimeAgent implements IService {
     PipeDataNodeHardlinkOrCopiedFileDirStartupCleaner.clean();
 
     // Clean receiver file dir
-    PipeAgent.receiver().cleanPipeReceiverDirs();
+    PipeDataNodeAgent.receiver().cleanPipeReceiverDirs();
 
     PipeAgentLauncher.launchPipePluginAgent(resourcesInformationHolder);
-    simpleConsensusProgressIndexAssigner.start();
+    simpleProgressIndexAssigner.start();
   }
 
   @Override
@@ -82,9 +87,13 @@ public class PipeDataNodeRuntimeAgent implements IService {
 
     registerPeriodicalJob(
         "PipeTaskAgent#restartAllStuckPipes",
-        PipeAgent.task()::restartAllStuckPipes,
+        PipeDataNodeAgent.task()::restartAllStuckPipes,
         PipeConfig.getInstance().getPipeStuckRestartIntervalSeconds());
     pipePeriodicalJobExecutor.start();
+
+    if (PipeConfig.getInstance().getPipeEventReferenceTrackingEnabled()) {
+      pipePeriodicalPhantomReferenceCleaner.start();
+    }
 
     isShutdown.set(false);
   }
@@ -97,7 +106,7 @@ public class PipeDataNodeRuntimeAgent implements IService {
     isShutdown.set(true);
 
     pipePeriodicalJobExecutor.stop();
-    PipeAgent.task().dropAllPipeTasks();
+    PipeDataNodeAgent.task().dropAllPipeTasks();
   }
 
   public boolean isShutdown() {
@@ -142,7 +151,14 @@ public class PipeDataNodeRuntimeAgent implements IService {
   ////////////////////// SimpleConsensus ProgressIndex Assigner //////////////////////
 
   public void assignSimpleProgressIndexIfNeeded(InsertNode insertNode) {
-    simpleConsensusProgressIndexAssigner.assignIfNeeded(insertNode);
+    simpleProgressIndexAssigner.assignIfNeeded(insertNode);
+  }
+
+  ////////////////////// PipeConsensus ProgressIndex Assigner //////////////////////
+
+  public ProgressIndex assignProgressIndexForPipeConsensus() {
+    return new RecoverProgressIndex(
+        DATA_NODE_ID, simpleProgressIndexAssigner.getSimpleProgressIndex());
   }
 
   ////////////////////// Load ProgressIndex Assigner //////////////////////
@@ -154,8 +170,7 @@ public class PipeDataNodeRuntimeAgent implements IService {
 
   public RecoverProgressIndex getNextProgressIndexForTsFileLoad() {
     return new RecoverProgressIndex(
-        DATA_NODE_ID,
-        simpleConsensusProgressIndexAssigner.getSimpleProgressIndexForTsFileRecovery());
+        DATA_NODE_ID, simpleProgressIndexAssigner.getSimpleProgressIndex());
   }
 
   ////////////////////// Recover ProgressIndex Assigner //////////////////////
@@ -163,14 +178,13 @@ public class PipeDataNodeRuntimeAgent implements IService {
   public void assignProgressIndexForTsFileRecovery(TsFileResource tsFileResource) {
     tsFileResource.updateProgressIndex(
         new RecoverProgressIndex(
-            DATA_NODE_ID,
-            simpleConsensusProgressIndexAssigner.getSimpleProgressIndexForTsFileRecovery()));
+            DATA_NODE_ID, simpleProgressIndexAssigner.getSimpleProgressIndex()));
   }
 
   ////////////////////// Provided for Subscription Agent //////////////////////
 
   public int getRebootTimes() {
-    return simpleConsensusProgressIndexAssigner.getRebootTimes();
+    return simpleProgressIndexAssigner.getRebootTimes();
   }
 
   //////////////////////////// Runtime Exception Handlers ////////////////////////////
@@ -195,7 +209,7 @@ public class PipeDataNodeRuntimeAgent implements IService {
     // Quick stop all pipes locally if critical exception occurs,
     // no need to wait for the next heartbeat cycle.
     if (pipeRuntimeException instanceof PipeRuntimeCriticalException) {
-      PipeAgent.task().stopAllPipesWithCriticalException();
+      PipeDataNodeAgent.task().stopAllPipesWithCriticalException();
     }
   }
 
@@ -218,5 +232,10 @@ public class PipeDataNodeRuntimeAgent implements IService {
   @TestOnly
   public void clearPeriodicalJobExecutor() {
     pipePeriodicalJobExecutor.clear();
+  }
+
+  public void registerPhantomReferenceCleanJob(
+      String id, Runnable periodicalJob, long intervalInSeconds) {
+    pipePeriodicalPhantomReferenceCleaner.register(id, periodicalJob, intervalInSeconds);
   }
 }

@@ -34,6 +34,7 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 /**
@@ -69,6 +70,25 @@ public class PipeParameters {
       }
     }
     return false;
+  }
+
+  public void addAttribute(final String key, final String values) {
+    attributes.put(KeyReducer.reduce(key), values);
+  }
+
+  public void computeAttributeIfExists(
+      final BiFunction<String, String, String> valueComputer, final String... keys) {
+    for (String key : keys) {
+      if (attributes.containsKey(key)) {
+        attributes.compute(key, valueComputer);
+        return;
+      }
+      key = KeyReducer.reduce(key);
+      if (attributes.containsKey(key)) {
+        attributes.compute(key, valueComputer);
+        return;
+      }
+    }
   }
 
   public String getString(final String key) {
@@ -278,11 +298,30 @@ public class PipeParameters {
         .collect(
             Collectors.toMap(
                 Entry::getKey,
-                entry -> ValueHider.hide(entry.getKey(), entry.getValue()),
-                // The key won't be duplicated thus we just return the oldValue
-                (u, v) -> u,
+                entry -> {
+                  final String value = ValueHider.hide(entry.getKey(), entry.getValue());
+                  return value == null ? "null" : value;
+                },
+                (v1, v2) -> {
+                  final boolean v1IsNull = isNullValue(v1);
+                  final boolean v2IsNull = isNullValue(v2);
+                  if (v1IsNull && v2IsNull) {
+                    return "null";
+                  }
+                  if (v1IsNull) {
+                    return v2;
+                  }
+                  if (v2IsNull) {
+                    return v1;
+                  }
+                  return v1;
+                },
                 TreeMap::new))
         .toString();
+  }
+
+  private static boolean isNullValue(final String value) {
+    return value == null || value.equals("null");
   }
 
   /**
@@ -360,6 +399,7 @@ public class PipeParameters {
 
     static {
       KEYS.add("ssl.trust-store-pwd");
+      KEYS.add("password");
     }
 
     static String hide(final String key, final String value) {

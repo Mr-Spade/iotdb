@@ -104,7 +104,7 @@ public class AlignedTVListTest {
     }
 
     tvList.putAlignedValues(
-        ArrayUtils.toPrimitive(timeList.toArray(new Long[0])), vectorArray, null, 0, 1000);
+        ArrayUtils.toPrimitive(timeList.toArray(new Long[0])), vectorArray, null, 0, 1000, null);
     for (long i = 0; i < tvList.rowCount; i++) {
       Assert.assertEquals(tvList.rowCount - i, tvList.getTime((int) i));
     }
@@ -132,7 +132,7 @@ public class AlignedTVListTest {
     }
 
     tvList.putAlignedValues(
-        ArrayUtils.toPrimitive(timeList.toArray(new Long[0])), vectorArray, bitMaps, 0, 1000);
+        ArrayUtils.toPrimitive(timeList.toArray(new Long[0])), vectorArray, bitMaps, 0, 1000, null);
     for (long i = 0; i < tvList.rowCount; i++) {
       Assert.assertEquals(tvList.rowCount - i, tvList.getTime((int) i));
       if (i % 100 == 0) {
@@ -164,7 +164,7 @@ public class AlignedTVListTest {
     }
 
     tvList.putAlignedValues(
-        ArrayUtils.toPrimitive(timeList.toArray(new Long[0])), vectorArray, bitMaps, 0, 1000);
+        ArrayUtils.toPrimitive(timeList.toArray(new Long[0])), vectorArray, bitMaps, 0, 1000, null);
 
     AlignedTVList clonedTvList = tvList.clone();
     for (long i = 0; i < tvList.rowCount; i++) {
@@ -220,32 +220,32 @@ public class AlignedTVListTest {
     }
 
     tvList.putAlignedValues(
-        ArrayUtils.toPrimitive(timeList.toArray(new Long[0])), vectorArray, bitMaps, 0, 10);
+        ArrayUtils.toPrimitive(timeList.toArray(new Long[0])), vectorArray, bitMaps, 0, 10, null);
     Assert.assertEquals(tvList.memoryBinaryChunkSize[1], 720);
 
     tvList.delete(5, 15);
-    Assert.assertEquals(tvList.memoryBinaryChunkSize[1], 324);
+    Assert.assertEquals(tvList.memoryBinaryChunkSize[1], 720);
 
     tvList.deleteColumn(0);
-    Assert.assertEquals(tvList.memoryBinaryChunkSize.length, 1);
-    Assert.assertEquals(tvList.memoryBinaryChunkSize[0], 324);
+    Assert.assertEquals(tvList.memoryBinaryChunkSize.length, 2);
+    Assert.assertEquals(tvList.memoryBinaryChunkSize[1], 720);
 
     tvList.extendColumn(TSDataType.INT32);
-    Assert.assertEquals(tvList.memoryBinaryChunkSize.length, 2);
-    Assert.assertEquals(tvList.memoryBinaryChunkSize[0], 324);
+    Assert.assertEquals(tvList.memoryBinaryChunkSize.length, 3);
+    Assert.assertEquals(tvList.memoryBinaryChunkSize[1], 720);
 
     tvList.extendColumn(TSDataType.TEXT);
-    Assert.assertEquals(tvList.memoryBinaryChunkSize.length, 3);
-    Assert.assertEquals(tvList.memoryBinaryChunkSize[0], 324);
+    Assert.assertEquals(tvList.memoryBinaryChunkSize.length, 4);
+    Assert.assertEquals(tvList.memoryBinaryChunkSize[1], 720);
     Assert.assertEquals(tvList.memoryBinaryChunkSize[2], 0);
 
     tvList.delete(4, 6);
-    Assert.assertEquals(tvList.memoryBinaryChunkSize.length, 3);
-    Assert.assertEquals(tvList.memoryBinaryChunkSize[0], 216);
+    Assert.assertEquals(tvList.memoryBinaryChunkSize.length, 4);
+    Assert.assertEquals(tvList.memoryBinaryChunkSize[1], 720);
     Assert.assertEquals(tvList.memoryBinaryChunkSize[2], 0);
 
     tvList.clear();
-    Assert.assertEquals(tvList.memoryBinaryChunkSize[0], 0);
+    Assert.assertEquals(tvList.memoryBinaryChunkSize[1], 0);
     Assert.assertEquals(tvList.memoryBinaryChunkSize[2], 0);
   }
 }

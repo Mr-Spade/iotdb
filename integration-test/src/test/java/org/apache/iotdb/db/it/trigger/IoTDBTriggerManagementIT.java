@@ -19,12 +19,11 @@
 
 package org.apache.iotdb.db.it.trigger;
 
-import org.apache.iotdb.db.mpp.common.header.ColumnHeaderConstant;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
-import org.apache.iotdb.rpc.TSStatusCode;
 
 import org.junit.After;
 import org.junit.Before;
@@ -56,22 +55,22 @@ public class IoTDBTriggerManagementIT {
           + "test-classes"
           + File.separator;
 
-  private static final String TRIGGER_JAR_PREFIX =
+  public static final String TRIGGER_JAR_PREFIX =
       new File(TRIGGER_COUNTER_PREFIX).toURI().toString();
-  private static final String TRIGGER_FILE_TIMES_COUNTER =
+  public static final String TRIGGER_FILE_TIMES_COUNTER =
       "org.apache.iotdb.db.trigger.example.TriggerFireTimesCounter";
 
   private static final String STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX =
-      "statelessTriggerBeforeInsertion_";
+      "statelessTriggerBeforeInsertionTriggerManagement_";
 
   private static final String STATELESS_TRIGGER_AFTER_INSERTION_PREFIX =
-      "statelessTriggerAfterInsertion_";
+      "statelessTriggerAfterInsertionTriggerManagement_";
 
   private static final String STATEFUL_TRIGGER_BEFORE_INSERTION_PREFIX =
-      "statefulTriggerBeforeInsertion_";
+      "statefulTriggerBeforeInsertionTriggerManagement_";
 
   private static final String STATEFUL_TRIGGER_AFTER_INSERTION_PREFIX =
-      "statefulTriggerAfterInsertion_";
+      "statefulTriggerAfterInsertionTriggerManagement_";
 
   private static final String STATEFUL = "STATEFUL";
 
@@ -85,13 +84,13 @@ public class IoTDBTriggerManagementIT {
 
   @Before
   public void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeClass();
+    EnvFactory.getEnv().initClusterEnvironment();
     createTimeSeries();
   }
 
   @After
   public void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterClass();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   private static void createTimeSeries() {
@@ -268,6 +267,53 @@ public class IoTDBTriggerManagementIT {
               TRIGGER_FILE_TIMES_COUNTER,
               TRIGGER_JAR_PREFIX + "TriggerFireTimesCounter.jar",
               STATEFUL_TRIGGER_AFTER_INSERTION_PREFIX + "all"));
+      ResultSet resultSet = statement.executeQuery("show triggers");
+      int cnt = 0;
+      while (resultSet.next()) {
+        cnt++;
+        String triggerName = resultSet.getString(ColumnHeaderConstant.TRIGGER_NAME);
+        String[] triggerInformation = result.get(triggerName);
+        assertEquals(triggerInformation[0], triggerName);
+        assertEquals(triggerInformation[1], resultSet.getString(ColumnHeaderConstant.EVENT));
+        assertEquals(triggerInformation[2], resultSet.getString(ColumnHeaderConstant.TYPE));
+        assertEquals(triggerInformation[3], resultSet.getString(ColumnHeaderConstant.STATE));
+        assertEquals(triggerInformation[4], resultSet.getString(ColumnHeaderConstant.PATH_PATTERN));
+        assertEquals(triggerInformation[5], resultSet.getString(ColumnHeaderConstant.CLASS_NAME));
+      }
+      assertEquals(cnt, result.size());
+    } catch (Exception e) {
+      fail(e.getMessage());
+    }
+  }
+
+  @Test
+  public void testCreateTriggersNormally2() {
+    try (Connection connection = EnvFactory.getEnv().getConnection();
+        Statement statement = connection.createStatement()) {
+      Map<String, String[]> result =
+          new HashMap<String, String[]>() {
+            {
+              put(
+                  STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a",
+                  new String[] {
+                    STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a",
+                    BEFORE_INSERT,
+                    STATELESS,
+                    ACTIVE,
+                    "root.test.stateless.a",
+                    TRIGGER_FILE_TIMES_COUNTER
+                  });
+            }
+          };
+
+      // create stateless triggers before insertion
+      statement.execute(
+          String.format(
+              "create stateless trigger %s before insert on root.test.stateless.a as '%s' with (\"name\"=\"%s\")",
+              STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a",
+              TRIGGER_FILE_TIMES_COUNTER,
+              STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a"));
+
       ResultSet resultSet = statement.executeQuery("show triggers");
       int cnt = 0;
       while (resultSet.next()) {
@@ -522,118 +568,6 @@ public class IoTDBTriggerManagementIT {
           String.format("drop trigger %s", STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "all"));
     } catch (Exception e) {
       assertTrue(e.getMessage().contains("has not been created"));
-    }
-  }
-
-  @Test
-  public void testCreateAuth() {
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-
-      statement.execute("CREATE USER `zmty` 'zmty'");
-
-      try (Connection connection2 = EnvFactory.getEnv().getConnection("zmty", "zmty");
-          Statement statement2 = connection2.createStatement()) {
-        try {
-          statement2.execute(
-              String.format(
-                  "create stateless trigger %s before insert on root.test.stateless.a as '%s' using URI '%s' with (\"name\"=\"%s\")",
-                  STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a",
-                  TRIGGER_FILE_TIMES_COUNTER,
-                  TRIGGER_JAR_PREFIX + "TriggerFireTimesCounter.jar",
-                  STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a"));
-          fail();
-        } catch (Exception e) {
-          assertEquals(
-              TSStatusCode.NO_PERMISSION.getStatusCode()
-                  + ": No permissions for this operation, please add privilege CREATE_TRIGGER",
-              e.getMessage());
-        }
-
-        statement.execute("GRANT USER `zmty` PRIVILEGES CREATE_TRIGGER on root.test.stateless.a");
-
-        try {
-          statement2.execute(
-              String.format(
-                  "create stateless trigger %s before insert on root.test.stateless.a as '%s' using URI '%s' with (\"name\"=\"%s\")",
-                  STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a",
-                  TRIGGER_FILE_TIMES_COUNTER,
-                  TRIGGER_JAR_PREFIX + "TriggerFireTimesCounter.jar",
-                  STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a"));
-        } catch (Exception e) {
-          fail(e.getMessage());
-        }
-
-        try {
-          statement2.execute(
-              String.format(
-                  "create stateless trigger %s before insert on root.test.stateless.b as '%s' using URI '%s' with (\"name\"=\"%s\")",
-                  STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "b",
-                  TRIGGER_FILE_TIMES_COUNTER,
-                  TRIGGER_JAR_PREFIX + "TriggerFireTimesCounter.jar",
-                  STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "b"));
-          fail();
-        } catch (Exception e) {
-          assertEquals(
-              TSStatusCode.NO_PERMISSION.getStatusCode()
-                  + ": No permissions for this operation, please add privilege CREATE_TRIGGER",
-              e.getMessage());
-        }
-      }
-    } catch (Exception e) {
-      fail(e.getMessage());
-    }
-  }
-
-  @Test
-  public void testDropAuth() {
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-
-      statement.execute("CREATE USER `zmty` 'zmty'");
-
-      try (Connection connection2 = EnvFactory.getEnv().getConnection("zmty", "zmty");
-          Statement statement2 = connection2.createStatement()) {
-        try {
-          statement.execute(
-              String.format(
-                  "create stateless trigger %s before insert on root.test.stateless.a as '%s' using URI '%s' with (\"name\"=\"%s\")",
-                  STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a",
-                  TRIGGER_FILE_TIMES_COUNTER,
-                  TRIGGER_JAR_PREFIX + "TriggerFireTimesCounter.jar",
-                  STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a"));
-
-          statement2.execute("drop trigger " + STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a");
-          fail();
-        } catch (Exception e) {
-          assertEquals(
-              TSStatusCode.NO_PERMISSION.getStatusCode()
-                  + ": No permissions for this operation, please add privilege DROP_TRIGGER",
-              e.getMessage());
-        }
-
-        statement.execute("GRANT USER `zmty` PRIVILEGES CREATE_TRIGGER on root.test.stateless.b");
-
-        try {
-          statement2.execute("drop trigger " + STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a");
-          fail();
-        } catch (Exception e) {
-          assertEquals(
-              TSStatusCode.NO_PERMISSION.getStatusCode()
-                  + ": No permissions for this operation, please add privilege DROP_TRIGGER",
-              e.getMessage());
-        }
-
-        statement.execute("GRANT USER `zmty` PRIVILEGES DROP_TRIGGER on root.test.stateless.a");
-
-        try {
-          statement2.execute("drop trigger " + STATELESS_TRIGGER_BEFORE_INSERTION_PREFIX + "a");
-        } catch (Exception e) {
-          fail(e.getMessage());
-        }
-      }
-    } catch (Exception e) {
-      fail(e.getMessage());
     }
   }
 }

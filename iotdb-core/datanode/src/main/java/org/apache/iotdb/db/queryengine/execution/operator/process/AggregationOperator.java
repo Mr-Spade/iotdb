@@ -19,7 +19,8 @@
 
 package org.apache.iotdb.db.queryengine.execution.operator.process;
 
-import org.apache.iotdb.db.queryengine.execution.aggregation.Aggregator;
+import org.apache.iotdb.db.queryengine.execution.MemoryEstimationHelper;
+import org.apache.iotdb.db.queryengine.execution.aggregation.TreeAggregator;
 import org.apache.iotdb.db.queryengine.execution.aggregation.timerangeiterator.ITimeRangeIterator;
 import org.apache.iotdb.db.queryengine.execution.operator.Operator;
 import org.apache.iotdb.db.queryengine.execution.operator.OperatorContext;
@@ -28,6 +29,7 @@ import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.read.common.TimeRange;
 import org.apache.tsfile.read.common.block.TsBlock;
 import org.apache.tsfile.read.common.block.TsBlockBuilder;
+import org.apache.tsfile.utils.RamUsageEstimator;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -43,11 +45,14 @@ import static org.apache.iotdb.db.queryengine.execution.operator.AggregationUtil
  */
 public class AggregationOperator extends AbstractConsumeAllOperator {
 
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(AggregationOperator.class);
+
   private final ITimeRangeIterator timeRangeIterator;
   // Current interval of aggregation window [curStartTime, curEndTime)
   private TimeRange curTimeRange;
 
-  private final List<Aggregator> aggregators;
+  private final List<TreeAggregator> aggregators;
 
   // Using for building result tsBlock
   private final TsBlockBuilder resultTsBlockBuilder;
@@ -58,7 +63,7 @@ public class AggregationOperator extends AbstractConsumeAllOperator {
 
   public AggregationOperator(
       OperatorContext operatorContext,
-      List<Aggregator> aggregators,
+      List<TreeAggregator> aggregators,
       ITimeRangeIterator timeRangeIterator,
       List<Operator> children,
       boolean outputEndTime,
@@ -70,7 +75,7 @@ public class AggregationOperator extends AbstractConsumeAllOperator {
     if (outputEndTime) {
       dataTypes.add(TSDataType.INT64);
     }
-    for (Aggregator aggregator : aggregators) {
+    for (TreeAggregator aggregator : aggregators) {
       dataTypes.addAll(Arrays.asList(aggregator.getOutputType()));
     }
     this.resultTsBlockBuilder = new TsBlockBuilder(dataTypes);
@@ -123,7 +128,7 @@ public class AggregationOperator extends AbstractConsumeAllOperator {
         curTimeRange = timeRangeIterator.nextTimeRange();
 
         // Clear previous aggregation result
-        for (Aggregator aggregator : aggregators) {
+        for (TreeAggregator aggregator : aggregators) {
           aggregator.reset();
         }
       }
@@ -148,7 +153,7 @@ public class AggregationOperator extends AbstractConsumeAllOperator {
 
   private void calculateNextAggregationResult() {
     // Consume current input tsBlocks
-    for (Aggregator aggregator : aggregators) {
+    for (TreeAggregator aggregator : aggregators) {
       aggregator.processTsBlocks(inputTsBlocks);
     }
 
@@ -175,5 +180,16 @@ public class AggregationOperator extends AbstractConsumeAllOperator {
           curTimeRange.getMax());
     }
     curTimeRange = null;
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE
+        + children.stream()
+            .mapToLong(MemoryEstimationHelper::getEstimatedSizeOfAccountableObject)
+            .sum()
+        + MemoryEstimationHelper.getEstimatedSizeOfAccountableObject(operatorContext)
+        + RamUsageEstimator.sizeOf(canCallNext)
+        + resultTsBlockBuilder.getRetainedSizeInBytes();
   }
 }

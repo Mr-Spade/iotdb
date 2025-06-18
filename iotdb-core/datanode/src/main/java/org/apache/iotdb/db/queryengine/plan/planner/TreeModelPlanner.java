@@ -26,6 +26,7 @@ import org.apache.iotdb.commons.client.async.AsyncDataNodeInternalServiceClient;
 import org.apache.iotdb.commons.client.sync.SyncDataNodeInternalServiceClient;
 import org.apache.iotdb.db.queryengine.common.MPPQueryContext;
 import org.apache.iotdb.db.queryengine.execution.QueryStateMachine;
+import org.apache.iotdb.db.queryengine.metric.QueryPlanCostMetricSet;
 import org.apache.iotdb.db.queryengine.plan.analyze.Analysis;
 import org.apache.iotdb.db.queryengine.plan.analyze.Analyzer;
 import org.apache.iotdb.db.queryengine.plan.analyze.IAnalysis;
@@ -50,6 +51,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
+
+import static org.apache.iotdb.db.queryengine.metric.QueryPlanCostMetricSet.DISTRIBUTION_PLANNER;
 
 public class TreeModelPlanner implements IPlanner {
 
@@ -101,9 +104,20 @@ public class TreeModelPlanner implements IPlanner {
   }
 
   @Override
-  public DistributedQueryPlan doDistributionPlan(IAnalysis analysis, LogicalQueryPlan logicalPlan) {
-    DistributionPlanner planner = new DistributionPlanner((Analysis) analysis, logicalPlan);
-    return planner.planFragments();
+  public DistributedQueryPlan doDistributionPlan(
+      IAnalysis analysis, LogicalQueryPlan logicalPlan, MPPQueryContext context) {
+    long startTime = System.nanoTime();
+    try {
+      DistributionPlanner planner = new DistributionPlanner((Analysis) analysis, logicalPlan);
+      return planner.planFragments();
+    } finally {
+      if (analysis.isQuery()) {
+        long distributionPlanCost = System.nanoTime() - startTime;
+        context.setDistributionPlanCost(distributionPlanCost);
+        QueryPlanCostMetricSet.getInstance()
+            .recordTreePlanCost(DISTRIBUTION_PLANNER, distributionPlanCost);
+      }
+    }
   }
 
   @Override
@@ -156,17 +170,23 @@ public class TreeModelPlanner implements IPlanner {
   }
 
   @Override
-  public void setRedirectInfo(
-      IAnalysis iAnalysis, TEndPoint localEndPoint, TSStatus tsstatus, TSStatusCode statusCode) {
+  public void setRedirectInfo(IAnalysis iAnalysis, TEndPoint localEndPoint, TSStatus tsstatus) {
     Analysis analysis = (Analysis) iAnalysis;
-    if (analysis.getStatement() instanceof InsertBaseStatement
+
+    // Get the inner statement of PipeEnrichedStatement
+    Statement statementToRedirect =
+        analysis.getTreeStatement() instanceof PipeEnrichedStatement
+            ? ((PipeEnrichedStatement) analysis.getTreeStatement()).getInnerStatement()
+            : analysis.getTreeStatement();
+
+    if (statementToRedirect instanceof InsertBaseStatement
         && !analysis.isFinishQueryAfterAnalyze()) {
-      InsertBaseStatement insertStatement = (InsertBaseStatement) analysis.getStatement();
+      InsertBaseStatement insertStatement = (InsertBaseStatement) statementToRedirect;
       List<TEndPoint> redirectNodeList = analysis.getRedirectNodeList();
       if (insertStatement instanceof InsertRowsStatement
           || insertStatement instanceof InsertMultiTabletsStatement) {
         // multiple devices
-        if (statusCode == TSStatusCode.SUCCESS_STATUS) {
+        if (tsstatus.getCode() == TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
           boolean needRedirect = false;
           List<TSStatus> subStatus = new ArrayList<>();
           for (TEndPoint endPoint : redirectNodeList) {

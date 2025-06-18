@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.db.queryengine.plan.planner.plan.node.process.join;
 
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNode;
@@ -140,5 +141,10 @@ public class FullOuterTimeJoinNode extends MultiChildProcessNode {
   @Override
   public int hashCode() {
     return Objects.hash(super.hashCode(), mergeOrder);
+  }
+
+  @Override
+  public PlanNodeType getType() {
+    return PlanNodeType.FULL_OUTER_TIME_JOIN;
   }
 }

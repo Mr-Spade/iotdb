@@ -73,9 +73,16 @@ public class Config {
   /** Key of connection's time zone. */
   public static final String TIME_ZONE = "time_zone";
 
+  /** Key of connection's charset. */
+  public static final String CHARSET = "charset";
+
   public static final String USE_SSL = "use_ssl";
 
   public static final String TRUST_STORE = "trust_store";
 
   public static final String TRUST_STORE_PWD = "trust_store_pwd";
+
+  public static final String SQL_DIALECT = "sql_dialect";
+
+  public static final String DATABASE = "db";
 }

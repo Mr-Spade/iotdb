@@ -19,6 +19,10 @@
 
 package org.apache.iotdb.udf.api.type;
 
+import org.apache.tsfile.utils.Binary;
+
+import java.time.LocalDate;
+
 /** A substitution class for TsDataType in UDF APIs. */
 public enum Type {
   /* BOOLEAN */
@@ -37,8 +41,20 @@ public enum Type {
   DOUBLE((byte) 4),
 
   /* TEXT */
-  TEXT((byte) 5);
+  TEXT((byte) 5),
 
+  /* TsDataType.Vector and TsDataType.UNKNOWN are inner types of TsFile-module, which should not be supported in UDF APIs. To be consistent with TsDataType, the next value starts with 8 */
+  /* TIMESTAMP */
+  TIMESTAMP((byte) 8),
+
+  /* DATE */
+  DATE((byte) 9),
+
+  /* BLOB */
+  BLOB((byte) 10),
+
+  /* STRING */
+  STRING((byte) 11);
   private final byte dataType;
 
   Type(byte type) {
@@ -47,5 +63,39 @@ public enum Type {
 
   public byte getType() {
     return dataType;
+  }
+
+  public static Type valueOf(byte type) {
+    for (Type t : Type.values()) {
+      if (t.dataType == type) {
+        return t;
+      }
+    }
+    throw new IllegalArgumentException("Unsupported type: " + type);
+  }
+
+  public boolean checkObjectType(Object o) {
+    switch (this) {
+      case BOOLEAN:
+        return o instanceof Boolean;
+      case INT32:
+        return o instanceof Integer;
+      case INT64:
+      case TIMESTAMP:
+        return o instanceof Long;
+      case FLOAT:
+        return o instanceof Float;
+      case DOUBLE:
+        return o instanceof Double;
+      case DATE:
+        return o instanceof LocalDate;
+      case BLOB:
+        return o instanceof Binary;
+      case STRING:
+      case TEXT:
+        return o instanceof String;
+      default:
+        return false;
+    }
   }
 }

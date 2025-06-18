@@ -22,6 +22,8 @@ package org.apache.iotdb.db.queryengine.plan.execution.config.sys.pipe;
 import org.apache.iotdb.db.queryengine.plan.execution.config.ConfigTaskResult;
 import org.apache.iotdb.db.queryengine.plan.execution.config.IConfigTask;
 import org.apache.iotdb.db.queryengine.plan.execution.config.executor.IConfigTaskExecutor;
+import org.apache.iotdb.db.queryengine.plan.relational.sql.ast.DropPipe;
+import org.apache.iotdb.db.queryengine.plan.statement.StatementType;
 import org.apache.iotdb.db.queryengine.plan.statement.metadata.pipe.DropPipeStatement;
 
 import com.google.common.util.concurrent.ListenableFuture;
@@ -30,12 +32,19 @@ public class DropPipeTask implements IConfigTask {
 
   private final DropPipeStatement dropPipeStatement;
 
-  public DropPipeTask(DropPipeStatement dropPipeStatement) {
+  public DropPipeTask(final DropPipeStatement dropPipeStatement) {
     this.dropPipeStatement = dropPipeStatement;
   }
 
+  public DropPipeTask(final DropPipe node) {
+    dropPipeStatement = new DropPipeStatement(StatementType.DROP_PIPE);
+    dropPipeStatement.setPipeName(node.getPipeName());
+    dropPipeStatement.setIfExists(node.hasIfExistsCondition());
+    dropPipeStatement.setTableModel(true);
+  }
+
   @Override
-  public ListenableFuture<ConfigTaskResult> execute(IConfigTaskExecutor configTaskExecutor)
+  public ListenableFuture<ConfigTaskResult> execute(final IConfigTaskExecutor configTaskExecutor)
       throws InterruptedException {
     return configTaskExecutor.dropPipe(dropPipeStatement);
   }

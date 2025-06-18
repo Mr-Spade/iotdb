@@ -19,8 +19,11 @@
 
 package org.apache.iotdb.db.queryengine.execution.schedule;
 
+import org.apache.iotdb.commons.exception.IoTDBException;
+import org.apache.iotdb.commons.exception.IoTDBRuntimeException;
 import org.apache.iotdb.db.queryengine.execution.schedule.queue.IndexedBlockingQueue;
 import org.apache.iotdb.db.queryengine.execution.schedule.task.DriverTask;
+import org.apache.iotdb.db.utils.ErrorHandlingUtils;
 import org.apache.iotdb.db.utils.SetThreadName;
 
 import org.slf4j.Logger;
@@ -28,6 +31,9 @@ import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.time.format.DateTimeParseException;
+
+import static org.apache.iotdb.rpc.TSStatusCode.DATE_OUT_OF_RANGE;
 
 /** An abstract executor for {@link DriverTask}. */
 public abstract class AbstractDriverThread extends Thread implements Closeable {
@@ -76,8 +82,22 @@ public abstract class AbstractDriverThread extends Thread implements Closeable {
           // reset the thread name here
           try (SetThreadName driverTaskName =
               new SetThreadName(next.getDriver().getDriverTaskId().getFullId())) {
-            logger.warn("[ExecuteFailed]", e);
-            next.setAbortCause(DriverTaskAbortedException.BY_INTERNAL_ERROR_SCHEDULED);
+            Throwable rootCause = ErrorHandlingUtils.getRootCause(e);
+            if (rootCause instanceof IoTDBRuntimeException) {
+              next.setAbortCause(rootCause);
+            } else if (rootCause instanceof IoTDBException) {
+              next.setAbortCause(rootCause);
+            } else if (rootCause instanceof DateTimeParseException) {
+              next.setAbortCause(
+                  new IoTDBRuntimeException(
+                      rootCause.getMessage(), DATE_OUT_OF_RANGE.getStatusCode(), true));
+            } else {
+              logger.warn("[ExecuteFailed]", rootCause);
+              next.setAbortCause(
+                  new DriverTaskAbortedException(
+                      next.getDriverTaskId().getFullId(),
+                      DriverTaskAbortedException.BY_INTERNAL_ERROR_SCHEDULED));
+            }
             scheduler.toAborted(next);
           }
         } finally {

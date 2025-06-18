@@ -27,7 +27,7 @@ import org.apache.iotdb.db.utils.constant.TestConstant;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.tsfile.enums.TSDataType;
-import org.apache.tsfile.file.metadata.PlainDeviceID;
+import org.apache.tsfile.file.metadata.IDeviceID;
 import org.apache.tsfile.file.metadata.enums.CompressionType;
 import org.apache.tsfile.file.metadata.enums.TSEncoding;
 import org.apache.tsfile.read.common.TimeRange;
@@ -87,8 +87,8 @@ public class TsFileValidationCorrectnessTests {
         TSEncoding.PLAIN,
         CompressionType.SNAPPY,
         path);
-    tsFileResource.updateStartTime(new PlainDeviceID("d1"), 1);
-    tsFileResource.updateEndTime(new PlainDeviceID("d1"), 100);
+    tsFileResource.updateStartTime(IDeviceID.Factory.DEFAULT_FACTORY.create("d1"), 1);
+    tsFileResource.updateEndTime(IDeviceID.Factory.DEFAULT_FACTORY.create("d1"), 100);
     tsFileResource.serialize();
     boolean success = TsFileValidator.getInstance().validateTsFile(tsFileResource);
     Assert.assertTrue(success);
@@ -105,8 +105,8 @@ public class TsFileValidationCorrectnessTests {
         TSEncoding.PLAIN,
         CompressionType.SNAPPY,
         path);
-    tsFileResource.updateStartTime(new PlainDeviceID("d1"), 1);
-    tsFileResource.updateEndTime(new PlainDeviceID("d1"), 110);
+    tsFileResource.updateStartTime(IDeviceID.Factory.DEFAULT_FACTORY.create("d1"), 1);
+    tsFileResource.updateEndTime(IDeviceID.Factory.DEFAULT_FACTORY.create("d1"), 110);
     tsFileResource.serialize();
     boolean success = TsFileValidator.getInstance().validateTsFile(tsFileResource);
     Assert.assertTrue(success);
@@ -165,8 +165,9 @@ public class TsFileValidationCorrectnessTests {
   public void testAlignedTimestampTimeChunkOffsetEqualsMetadata() throws IOException {
     String path = dir + File.separator + "test6.tsfile";
     TsFileResource tsFileResource = new TsFileResource(new File(path));
+    IDeviceID deviceID;
     try (CompactionTestFileWriter writer = new CompactionTestFileWriter(tsFileResource)) {
-      writer.startChunkGroup("d1");
+      deviceID = writer.startChunkGroup("d1");
       VectorMeasurementSchema vectorMeasurementSchema =
           new VectorMeasurementSchema(
               "d1", new String[] {"s1"}, new TSDataType[] {TSDataType.INT32});
@@ -182,8 +183,8 @@ public class TsFileValidationCorrectnessTests {
       writer.endChunkGroup();
       writer.endFile();
     }
-    tsFileResource.updateStartTime(new PlainDeviceID("d1"), 1);
-    tsFileResource.updateEndTime(new PlainDeviceID("d1"), 3);
+    tsFileResource.updateStartTime(deviceID, 1);
+    tsFileResource.updateEndTime(deviceID, 3);
     tsFileResource.serialize();
     boolean success = TsFileValidator.getInstance().validateTsFile(tsFileResource);
     Assert.assertTrue(success);
@@ -200,8 +201,8 @@ public class TsFileValidationCorrectnessTests {
         TSEncoding.PLAIN,
         CompressionType.SNAPPY,
         path);
-    tsFileResource.updateStartTime(new PlainDeviceID("d1"), 1);
-    tsFileResource.updateEndTime(new PlainDeviceID("d1"), 100);
+    tsFileResource.updateStartTime(IDeviceID.Factory.DEFAULT_FACTORY.create("d1"), 1);
+    tsFileResource.updateEndTime(IDeviceID.Factory.DEFAULT_FACTORY.create("d1"), 100);
     tsFileResource.serialize();
     boolean success = TsFileValidator.getInstance().validateTsFile(tsFileResource);
     Assert.assertTrue(success);
@@ -218,8 +219,8 @@ public class TsFileValidationCorrectnessTests {
         TSEncoding.PLAIN,
         CompressionType.SNAPPY,
         path);
-    tsFileResource.updateStartTime(new PlainDeviceID("d1"), 1);
-    tsFileResource.updateEndTime(new PlainDeviceID("d1"), 110);
+    tsFileResource.updateStartTime(IDeviceID.Factory.DEFAULT_FACTORY.create("d1"), 1);
+    tsFileResource.updateEndTime(IDeviceID.Factory.DEFAULT_FACTORY.create("d1"), 110);
     tsFileResource.serialize();
     boolean success = TsFileValidator.getInstance().validateTsFile(tsFileResource);
     Assert.assertTrue(success);
@@ -272,6 +273,35 @@ public class TsFileValidationCorrectnessTests {
   public void testNonAlignedTimestampTimeChunkOffsetEqualsMetadata() throws IOException {
     String path = dir + File.separator + "test11.tsfile";
     TsFileResource tsFileResource = new TsFileResource(new File(path));
+    IDeviceID deviceID;
+    try (CompactionTestFileWriter writer = new CompactionTestFileWriter(tsFileResource)) {
+      deviceID = writer.startChunkGroup("d1");
+      VectorMeasurementSchema vectorMeasurementSchema =
+          new VectorMeasurementSchema(
+              "d1", new String[] {"s1"}, new TSDataType[] {TSDataType.INT32});
+      AlignedChunkWriterImpl chunkWriter = new AlignedChunkWriterImpl(vectorMeasurementSchema);
+      chunkWriter.getTimeChunkWriter().write(1);
+      chunkWriter.getTimeChunkWriter().write(2);
+      chunkWriter.getTimeChunkWriter().write(3);
+      chunkWriter.getValueChunkWriterByIndex(0).getPageWriter().write(1, 1, false);
+      chunkWriter.getValueChunkWriterByIndex(0).getPageWriter().write(2, 1, false);
+      chunkWriter.getValueChunkWriterByIndex(0).getPageWriter().write(3, 1, false);
+      chunkWriter.sealCurrentPage();
+      chunkWriter.writeToFileWriter(writer.getFileWriter());
+      writer.endChunkGroup();
+      writer.endFile();
+    }
+    tsFileResource.updateStartTime(deviceID, 1);
+    tsFileResource.updateEndTime(deviceID, 3);
+    tsFileResource.serialize();
+    boolean success = TsFileValidator.getInstance().validateTsFile(tsFileResource);
+    Assert.assertTrue(success);
+  }
+
+  @Test
+  public void testDeletedFile() throws IOException {
+    String path = dir + File.separator + "test12.tsfile";
+    TsFileResource tsFileResource = new TsFileResource(new File(path));
     try (CompactionTestFileWriter writer = new CompactionTestFileWriter(tsFileResource)) {
       writer.startChunkGroup("d1");
       VectorMeasurementSchema vectorMeasurementSchema =
@@ -289,10 +319,10 @@ public class TsFileValidationCorrectnessTests {
       writer.endChunkGroup();
       writer.endFile();
     }
-    tsFileResource.updateStartTime(new PlainDeviceID("d1"), 1);
-    tsFileResource.updateEndTime(new PlainDeviceID("d1"), 3);
+    tsFileResource.updateStartTime(IDeviceID.Factory.DEFAULT_FACTORY.create("d1"), 1);
+    tsFileResource.updateEndTime(IDeviceID.Factory.DEFAULT_FACTORY.create("d1"), 3);
     tsFileResource.serialize();
-    boolean success = TsFileValidator.getInstance().validateTsFile(tsFileResource);
-    Assert.assertTrue(success);
+    tsFileResource.remove();
+    Assert.assertTrue(TsFileValidator.getInstance().validateTsFile(tsFileResource));
   }
 }

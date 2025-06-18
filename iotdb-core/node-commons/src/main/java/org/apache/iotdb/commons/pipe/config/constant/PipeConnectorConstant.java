@@ -22,6 +22,8 @@ package org.apache.iotdb.commons.pipe.config.constant;
 import org.apache.iotdb.commons.conf.CommonDescriptor;
 import org.apache.iotdb.commons.pipe.config.PipeConfig;
 
+import com.github.luben.zstd.Zstd;
+
 import java.io.File;
 import java.util.Arrays;
 import java.util.Collections;
@@ -53,25 +55,43 @@ public class PipeConnectorConstant {
   public static final int CONNECTOR_IOTDB_PARALLEL_TASKS_DEFAULT_VALUE =
       PipeConfig.getInstance().getPipeSubtaskExecutorMaxThreadNum();
 
+  public static final String CONNECTOR_REALTIME_FIRST_KEY = "connector.realtime-first";
+  public static final String SINK_REALTIME_FIRST_KEY = "sink.realtime-first";
+  public static final boolean CONNECTOR_REALTIME_FIRST_DEFAULT_VALUE = true;
+
   public static final String CONNECTOR_IOTDB_BATCH_MODE_ENABLE_KEY = "connector.batch.enable";
   public static final String SINK_IOTDB_BATCH_MODE_ENABLE_KEY = "sink.batch.enable";
   public static final boolean CONNECTOR_IOTDB_BATCH_MODE_ENABLE_DEFAULT_VALUE = true;
 
   public static final String CONNECTOR_IOTDB_BATCH_DELAY_KEY = "connector.batch.max-delay-seconds";
   public static final String SINK_IOTDB_BATCH_DELAY_KEY = "sink.batch.max-delay-seconds";
-  public static final int CONNECTOR_IOTDB_BATCH_DELAY_DEFAULT_VALUE = 1;
+  public static final int CONNECTOR_IOTDB_PLAIN_BATCH_DELAY_DEFAULT_VALUE = 1;
+  public static final int CONNECTOR_IOTDB_TS_FILE_BATCH_DELAY_DEFAULT_VALUE = 5;
+
+  public static final String CONNECTOR_IOTDB_BATCH_DELAY_MS_KEY = "connector.batch.max-delay-ms";
+  public static final String SINK_IOTDB_BATCH_DELAY_MS_KEY = "sink.batch.max-delay-ms";
 
   public static final String CONNECTOR_IOTDB_BATCH_SIZE_KEY = "connector.batch.size-bytes";
   public static final String SINK_IOTDB_BATCH_SIZE_KEY = "sink.batch.size-bytes";
-  public static final long CONNECTOR_IOTDB_BATCH_SIZE_DEFAULT_VALUE = 16 * MB;
+  public static final long CONNECTOR_IOTDB_PLAIN_BATCH_SIZE_DEFAULT_VALUE = 16 * MB;
+  public static final long CONNECTOR_IOTDB_TS_FILE_BATCH_SIZE_DEFAULT_VALUE = 80 * MB;
 
   public static final String CONNECTOR_IOTDB_USER_KEY = "connector.user";
   public static final String SINK_IOTDB_USER_KEY = "sink.user";
+  public static final String CONNECTOR_IOTDB_USERNAME_KEY = "connector.username";
+  public static final String SINK_IOTDB_USERNAME_KEY = "sink.username";
   public static final String CONNECTOR_IOTDB_USER_DEFAULT_VALUE = "root";
 
   public static final String CONNECTOR_IOTDB_PASSWORD_KEY = "connector.password";
   public static final String SINK_IOTDB_PASSWORD_KEY = "sink.password";
   public static final String CONNECTOR_IOTDB_PASSWORD_DEFAULT_VALUE = "root";
+
+  public static final String CONNECTOR_EXCEPTION_DATA_CONVERT_ON_TYPE_MISMATCH_KEY =
+      "connector.exception.data.convert-on-type-mismatch";
+  public static final String SINK_EXCEPTION_DATA_CONVERT_ON_TYPE_MISMATCH_KEY =
+      "sink.exception.data.convert-on-type-mismatch";
+  public static final boolean CONNECTOR_EXCEPTION_DATA_CONVERT_ON_TYPE_MISMATCH_DEFAULT_VALUE =
+      true;
 
   public static final String CONNECTOR_EXCEPTION_CONFLICT_RESOLVE_STRATEGY_KEY =
       "connector.exception.conflict.resolve-strategy";
@@ -122,6 +142,13 @@ public class PipeConnectorConstant {
   public static final String SINK_WEBSOCKET_PORT_KEY = "sink.websocket.port";
   public static final int CONNECTOR_WEBSOCKET_PORT_DEFAULT_VALUE = 8080;
 
+  public static final String CONNECTOR_OPC_UA_MODEL_KEY = "connector.opcua.model";
+  public static final String SINK_OPC_UA_MODEL_KEY = "sink.opcua.model";
+  public static final String CONNECTOR_OPC_UA_MODEL_CLIENT_SERVER_VALUE = "client-server";
+  public static final String CONNECTOR_OPC_UA_MODEL_PUB_SUB_VALUE = "pub-sub";
+  public static final String CONNECTOR_OPC_UA_MODEL_DEFAULT_VALUE =
+      CONNECTOR_OPC_UA_MODEL_CLIENT_SERVER_VALUE;
+
   public static final String CONNECTOR_OPC_UA_TCP_BIND_PORT_KEY = "connector.opcua.tcp.port";
   public static final String SINK_OPC_UA_TCP_BIND_PORT_KEY = "sink.opcua.tcp.port";
   public static final int CONNECTOR_OPC_UA_TCP_BIND_PORT_DEFAULT_VALUE = 12686;
@@ -136,6 +163,16 @@ public class PipeConnectorConstant {
       CommonDescriptor.getInstance().getConfDir() != null
           ? CommonDescriptor.getInstance().getConfDir() + File.separatorChar + "opc_security"
           : System.getProperty("user.home") + File.separatorChar + "iotdb_opc_security";
+
+  public static final String CONNECTOR_OPC_UA_ENABLE_ANONYMOUS_ACCESS_KEY =
+      "connector.opcua.enable-anonymous-access";
+  public static final String SINK_OPC_UA_ENABLE_ANONYMOUS_ACCESS_KEY =
+      "sink.opcua.enable-anonymous-access";
+  public static final boolean CONNECTOR_OPC_UA_ENABLE_ANONYMOUS_ACCESS_DEFAULT_VALUE = true;
+
+  public static final String CONNECTOR_OPC_UA_PLACEHOLDER_KEY = "connector.opcua.placeholder";
+  public static final String SINK_OPC_UA_PLACEHOLDER_KEY = "sink.opcua.placeholder";
+  public static final String CONNECTOR_OPC_UA_PLACEHOLDER_DEFAULT_VALUE = "null";
 
   public static final String CONNECTOR_LEADER_CACHE_ENABLE_KEY = "connector.leader-cache.enable";
   public static final String SINK_LEADER_CACHE_ENABLE_KEY = "sink.leader-cache.enable";
@@ -155,8 +192,77 @@ public class PipeConnectorConstant {
                   CONNECTOR_LOAD_BALANCE_RANDOM_STRATEGY,
                   CONNECTOR_LOAD_BALANCE_PRIORITY_STRATEGY)));
 
+  public static final String CONNECTOR_COMPRESSOR_KEY = "connector.compressor";
+  public static final String SINK_COMPRESSOR_KEY = "sink.compressor";
+  public static final String CONNECTOR_COMPRESSOR_DEFAULT_VALUE = "";
+  public static final String CONNECTOR_COMPRESSOR_SNAPPY = "snappy";
+  public static final String CONNECTOR_COMPRESSOR_GZIP = "gzip";
+  public static final String CONNECTOR_COMPRESSOR_LZ4 = "lz4";
+  public static final String CONNECTOR_COMPRESSOR_ZSTD = "zstd";
+  public static final String CONNECTOR_COMPRESSOR_LZMA2 = "lzma2";
+  public static final Set<String> CONNECTOR_COMPRESSOR_SET =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList(
+                  CONNECTOR_COMPRESSOR_SNAPPY,
+                  CONNECTOR_COMPRESSOR_GZIP,
+                  CONNECTOR_COMPRESSOR_LZ4,
+                  CONNECTOR_COMPRESSOR_ZSTD,
+                  CONNECTOR_COMPRESSOR_LZMA2)));
+
+  public static final String CONNECTOR_COMPRESSOR_ZSTD_LEVEL_KEY =
+      "connector.compressor.zstd.level";
+  public static final String SINK_COMPRESSOR_ZSTD_LEVEL_KEY = "sink.compressor.zstd.level";
+  public static final int CONNECTOR_COMPRESSOR_ZSTD_LEVEL_DEFAULT_VALUE =
+      Zstd.defaultCompressionLevel();
+  public static final int CONNECTOR_COMPRESSOR_ZSTD_LEVEL_MIN_VALUE = Zstd.minCompressionLevel();
+  public static final int CONNECTOR_COMPRESSOR_ZSTD_LEVEL_MAX_VALUE = Zstd.maxCompressionLevel();
+
+  public static final String CONNECTOR_RATE_LIMIT_KEY = "connector.rate-limit-bytes-per-second";
+  public static final String SINK_RATE_LIMIT_KEY = "sink.rate-limit-bytes-per-second";
+  public static final double CONNECTOR_RATE_LIMIT_DEFAULT_VALUE = -1;
+
+  public static final String CONNECTOR_FORMAT_KEY = "connector.format";
+  public static final String SINK_FORMAT_KEY = "sink.format";
+  public static final String CONNECTOR_FORMAT_TABLET_VALUE = "tablet";
+  public static final String CONNECTOR_FORMAT_TS_FILE_VALUE = "tsfile";
+  public static final String CONNECTOR_FORMAT_HYBRID_VALUE = "hybrid";
+
   public static final String SINK_TOPIC_KEY = "sink.topic";
   public static final String SINK_CONSUMER_GROUP_KEY = "sink.consumer-group";
+
+  public static final String CONNECTOR_CONSENSUS_GROUP_ID_KEY = "connector.consensus.group-id";
+  public static final String CONNECTOR_CONSENSUS_PIPE_NAME = "connector.consensus.pipe-name";
+
+  public static final String CONNECTOR_LOAD_TSFILE_STRATEGY_KEY = "connector.load-tsfile-strategy";
+  public static final String SINK_LOAD_TSFILE_STRATEGY_KEY = "sink.load-tsfile-strategy";
+  public static final String CONNECTOR_LOAD_TSFILE_STRATEGY_ASYNC_VALUE = "async";
+  public static final String CONNECTOR_LOAD_TSFILE_STRATEGY_SYNC_VALUE = "sync";
+  public static final Set<String> CONNECTOR_LOAD_TSFILE_STRATEGY_SET =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList(
+                  CONNECTOR_LOAD_TSFILE_STRATEGY_ASYNC_VALUE,
+                  CONNECTOR_LOAD_TSFILE_STRATEGY_SYNC_VALUE)));
+
+  public static final String CONNECTOR_LOAD_TSFILE_VALIDATION_KEY =
+      "connector.load-tsfile-validation";
+  public static final String SINK_LOAD_TSFILE_VALIDATION_KEY = "sink.load-tsfile-validation";
+  public static final boolean CONNECTOR_LOAD_TSFILE_VALIDATION_DEFAULT_VALUE = true;
+
+  public static final String CONNECTOR_MARK_AS_PIPE_REQUEST_KEY = "connector.mark-as-pipe-request";
+  public static final String SINK_MARK_AS_PIPE_REQUEST_KEY = "sink.mark-as-pipe-request";
+  public static final boolean CONNECTOR_MARK_AS_PIPE_REQUEST_DEFAULT_VALUE = true;
+
+  public static final String CONNECTOR_SKIP_IF_KEY = "connector.skipif";
+  public static final String SINK_SKIP_IF_KEY = "sink.skipif";
+  public static final String CONNECTOR_IOTDB_SKIP_IF_NO_PRIVILEGES = "no-privileges";
+
+  public static final String CONNECTOR_OPC_DA_CLSID_KEY = "connector.opcda.clsid";
+  public static final String SINK_OPC_DA_CLSID_KEY = "sink.opcda.clsid";
+
+  public static final String CONNECTOR_OPC_DA_PROGID_KEY = "connector.opcda.progid";
+  public static final String SINK_OPC_DA_PROGID_KEY = "sink.opcda.progid";
 
   private PipeConnectorConstant() {
     throw new IllegalStateException("Utility class");

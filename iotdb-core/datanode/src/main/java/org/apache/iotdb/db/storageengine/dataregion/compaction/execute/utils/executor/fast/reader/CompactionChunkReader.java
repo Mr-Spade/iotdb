@@ -22,6 +22,8 @@ package org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.ex
 import org.apache.tsfile.common.conf.TSFileDescriptor;
 import org.apache.tsfile.compress.IUnCompressor;
 import org.apache.tsfile.encoding.decoder.Decoder;
+import org.apache.tsfile.encrypt.EncryptParameter;
+import org.apache.tsfile.encrypt.IDecryptor;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.file.MetaMarker;
 import org.apache.tsfile.file.header.ChunkHeader;
@@ -39,14 +41,15 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.apache.tsfile.read.reader.chunk.ChunkReader.readCompressedPageData;
-import static org.apache.tsfile.read.reader.chunk.ChunkReader.uncompressPageData;
+import static org.apache.tsfile.read.reader.chunk.ChunkReader.decryptAndUncompressPageData;
 
 public class CompactionChunkReader {
 
   private final ChunkHeader chunkHeader;
   private ByteBuffer chunkDataBuffer;
   private final IUnCompressor unCompressor;
+
+  private final EncryptParameter encryptParam;
   private final Decoder timeDecoder =
       Decoder.getDecoderByType(
           TSEncoding.valueOf(TSFileDescriptor.getInstance().getConfig().getTimeEncoder()),
@@ -67,6 +70,7 @@ public class CompactionChunkReader {
     this.unCompressor = IUnCompressor.getUnCompressor(chunkHeader.getCompressionType());
     this.deleteIntervalList = chunk.getDeleteIntervalList();
     this.chunkStatistic = chunk.getChunkStatistic();
+    this.encryptParam = chunk.getEncryptParam();
   }
 
   /**
@@ -103,6 +107,22 @@ public class CompactionChunkReader {
     return pages;
   }
 
+  public static ByteBuffer readCompressedPageData(PageHeader pageHeader, ByteBuffer chunkBuffer)
+      throws IOException {
+    int compressedPageBodyLength = pageHeader.getCompressedSize();
+    if (compressedPageBodyLength > chunkBuffer.remaining()) {
+      throw new IOException(
+          "do not have a complete page body. Expected:"
+              + compressedPageBodyLength
+              + ". Actual:"
+              + chunkBuffer.remaining());
+    }
+    ByteBuffer pageBodyBuffer = chunkBuffer.slice();
+    pageBodyBuffer.limit(compressedPageBodyLength);
+    chunkBuffer.position(chunkBuffer.position() + compressedPageBodyLength);
+    return pageBodyBuffer;
+  }
+
   /**
    * Read data from compressed page data. Uncompress the page and decode it to batch data.
    *
@@ -111,9 +131,10 @@ public class CompactionChunkReader {
    */
   public TsBlock readPageData(PageHeader pageHeader, ByteBuffer compressedPageData)
       throws IOException {
-    // uncompress page data
-    ByteBuffer pageData = uncompressPageData(pageHeader, unCompressor, compressedPageData);
-
+    // decrypt and uncompress page data
+    IDecryptor decryptor = IDecryptor.getDecryptor(encryptParam);
+    ByteBuffer pageData =
+        decryptAndUncompressPageData(pageHeader, unCompressor, compressedPageData, decryptor);
     // decode page data
     TSDataType dataType = chunkHeader.getDataType();
     Decoder valueDecoder = Decoder.getDecoderByType(chunkHeader.getEncodingType(), dataType);

@@ -62,7 +62,7 @@ public class SubscriptionConsumerAgent {
   ////////////////////////// ConsumerGroupMeta Management Entry //////////////////////////
 
   public TPushConsumerGroupMetaRespExceptionMessage handleSingleConsumerGroupMetaChanges(
-      ConsumerGroupMeta consumerGroupMetaFromCoordinator) {
+      final ConsumerGroupMeta consumerGroupMetaFromCoordinator) {
     acquireWriteLock();
     try {
       if (consumerGroupMetaFromCoordinator.isEmpty()) {
@@ -71,13 +71,16 @@ public class SubscriptionConsumerAgent {
         handleSingleConsumerGroupMetaChangesInternal(consumerGroupMetaFromCoordinator);
       }
       return null;
-    } catch (Exception e) {
+    } catch (final Exception e) {
       final String consumerGroupId = consumerGroupMetaFromCoordinator.getConsumerGroupId();
+      LOGGER.warn(
+          "Exception occurred when handling single consumer group meta changes for consumer group {}",
+          consumerGroupId,
+          e);
       final String exceptionMessage =
           String.format(
               "Subscription: Failed to handle single consumer group meta changes for consumer group %s, because %s",
-              consumerGroupId, e.getMessage());
-      LOGGER.warn(exceptionMessage);
+              consumerGroupId, e);
       return new TPushConsumerGroupMetaRespExceptionMessage(
           consumerGroupId, exceptionMessage, System.currentTimeMillis());
     } finally {
@@ -91,14 +94,23 @@ public class SubscriptionConsumerAgent {
     final ConsumerGroupMeta metaInAgent =
         consumerGroupMetaKeeper.getConsumerGroupMeta(consumerGroupId);
 
-    // if consumer group meta does not exist on local agent or creation time is inconsistent with
-    // meta from coordinator
-    if (Objects.isNull(metaInAgent)
-        || metaInAgent.getCreationTime() != metaFromCoordinator.getCreationTime()) {
+    // if consumer group meta does not exist on local agent
+    if (Objects.isNull(metaInAgent)) {
+      consumerGroupMetaKeeper.removeConsumerGroupMeta(consumerGroupId);
+      consumerGroupMetaKeeper.addConsumerGroupMeta(consumerGroupId, metaFromCoordinator);
+      SubscriptionAgent.broker().createBrokerIfNotExist(consumerGroupId);
+      return;
+    }
+
+    // if the creation time of consumer group meta on local agent is inconsistent with meta from
+    // coordinator
+    if (metaInAgent.getCreationTime() != metaFromCoordinator.getCreationTime()) {
       if (SubscriptionAgent.broker().isBrokerExist(consumerGroupId)) {
         LOGGER.warn(
-            "Subscription: broker bound to consumer group [{}] has already existed when the corresponding consumer group meta does not exist on local agent, drop it",
-            consumerGroupId);
+            "Subscription: broker bound to consumer group [{}] has already existed when the creation time of consumer group meta on local agent {} is inconsistent with meta from coordinator {}, drop it",
+            consumerGroupId,
+            metaInAgent,
+            metaFromCoordinator);
         if (!SubscriptionAgent.broker().dropBroker(consumerGroupId)) {
           final String exceptionMessage =
               String.format(
@@ -110,31 +122,41 @@ public class SubscriptionConsumerAgent {
 
       consumerGroupMetaKeeper.removeConsumerGroupMeta(consumerGroupId);
       consumerGroupMetaKeeper.addConsumerGroupMeta(consumerGroupId, metaFromCoordinator);
-      SubscriptionAgent.broker().createBroker(consumerGroupId);
+      // no need to create broker manually
       return;
     }
 
+    // remove prefetching queues for topics unsubscribed by the consumer group
+    final Set<String> topicsUnsubByGroup =
+        ConsumerGroupMeta.getTopicsUnsubByGroup(metaInAgent, metaFromCoordinator);
+    for (final String topicName : topicsUnsubByGroup) {
+      SubscriptionAgent.broker().removePrefetchingQueue(consumerGroupId, topicName);
+    }
+
     // TODO: Currently we fully replace the entire ConsumerGroupMeta without carefully checking the
-    // changes in its fields.
+    //       changes in its fields.
     consumerGroupMetaKeeper.removeConsumerGroupMeta(consumerGroupId);
     consumerGroupMetaKeeper.addConsumerGroupMeta(consumerGroupId, metaFromCoordinator);
   }
 
   public TPushConsumerGroupMetaRespExceptionMessage handleConsumerGroupMetaChanges(
-      List<ConsumerGroupMeta> consumerGroupMetasFromCoordinator) {
+      final List<ConsumerGroupMeta> consumerGroupMetasFromCoordinator) {
     acquireWriteLock();
     try {
-      for (ConsumerGroupMeta consumerGroupMetaFromCoordinator : consumerGroupMetasFromCoordinator) {
+      for (final ConsumerGroupMeta consumerGroupMetaFromCoordinator :
+          consumerGroupMetasFromCoordinator) {
         try {
           handleSingleConsumerGroupMetaChangesInternal(consumerGroupMetaFromCoordinator);
-          return null;
-        } catch (Exception e) {
+        } catch (final Exception e) {
           final String consumerGroupId = consumerGroupMetaFromCoordinator.getConsumerGroupId();
+          LOGGER.warn(
+              "Exception occurred when handling single consumer group meta changes for consumer group {}",
+              consumerGroupId,
+              e);
           final String exceptionMessage =
               String.format(
                   "Subscription: Failed to handle single consumer group meta changes for consumer group %s, because %s",
-                  consumerGroupId, e.getMessage());
-          LOGGER.warn(exceptionMessage);
+                  consumerGroupId, e);
           return new TPushConsumerGroupMetaRespExceptionMessage(
               consumerGroupId, exceptionMessage, System.currentTimeMillis());
         }
@@ -146,17 +168,16 @@ public class SubscriptionConsumerAgent {
   }
 
   public TPushConsumerGroupMetaRespExceptionMessage handleDropConsumerGroup(
-      String consumerGroupId) {
+      final String consumerGroupId) {
     acquireWriteLock();
     try {
       handleDropConsumerGroupInternal(consumerGroupId);
       return null;
-    } catch (Exception e) {
+    } catch (final Exception e) {
+      LOGGER.warn("Exception occurred when dropping consumer group {}", consumerGroupId, e);
       final String exceptionMessage =
           String.format(
-              "Subscription: Failed to drop consumer group %s, because %s",
-              consumerGroupId, e.getMessage());
-      LOGGER.warn(exceptionMessage);
+              "Subscription: Failed to drop consumer group %s, because %s", consumerGroupId, e);
       return new TPushConsumerGroupMetaRespExceptionMessage(
           consumerGroupId, exceptionMessage, System.currentTimeMillis());
     } finally {
@@ -164,7 +185,7 @@ public class SubscriptionConsumerAgent {
     }
   }
 
-  private void handleDropConsumerGroupInternal(String consumerGroupId) {
+  private void handleDropConsumerGroupInternal(final String consumerGroupId) {
     if (SubscriptionAgent.broker().isBrokerExist(consumerGroupId)) {
       if (!SubscriptionAgent.broker().dropBroker(consumerGroupId)) {
         final String exceptionMessage =
@@ -181,7 +202,7 @@ public class SubscriptionConsumerAgent {
     consumerGroupMetaKeeper.removeConsumerGroupMeta(consumerGroupId);
   }
 
-  public boolean isConsumerExisted(String consumerGroupId, String consumerId) {
+  public boolean isConsumerExisted(final String consumerGroupId, final String consumerId) {
     acquireReadLock();
     try {
       final ConsumerGroupMeta consumerGroupMeta =
@@ -192,7 +213,8 @@ public class SubscriptionConsumerAgent {
     }
   }
 
-  public Set<String> getTopicsSubscribedByConsumer(String consumerGroupId, String consumerId) {
+  public Set<String> getTopicNamesSubscribedByConsumer(
+      final String consumerGroupId, final String consumerId) {
     acquireReadLock();
     try {
       return consumerGroupMetaKeeper.getTopicsSubscribedByConsumer(consumerGroupId, consumerId);

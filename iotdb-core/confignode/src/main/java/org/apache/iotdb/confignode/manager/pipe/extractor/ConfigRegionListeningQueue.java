@@ -28,8 +28,10 @@ import org.apache.iotdb.commons.pipe.event.PipeSnapshotEvent;
 import org.apache.iotdb.commons.pipe.event.SerializableEvent;
 import org.apache.iotdb.commons.snapshot.SnapshotProcessor;
 import org.apache.iotdb.confignode.consensus.request.ConfigPhysicalPlan;
+import org.apache.iotdb.confignode.consensus.request.write.pipe.payload.PipeCreateTablePlan;
 import org.apache.iotdb.confignode.consensus.request.write.pipe.payload.PipeEnrichedPlan;
 import org.apache.iotdb.confignode.consensus.request.write.pipe.payload.PipeUnsetSchemaTemplatePlan;
+import org.apache.iotdb.confignode.consensus.request.write.table.CommitCreateTablePlan;
 import org.apache.iotdb.confignode.consensus.request.write.template.UnsetSchemaTemplatePlan;
 import org.apache.iotdb.confignode.manager.pipe.event.PipeConfigRegionSnapshotEvent;
 import org.apache.iotdb.confignode.manager.pipe.event.PipeConfigRegionWritePlanEvent;
@@ -61,9 +63,10 @@ public class ConfigRegionListeningQueue extends AbstractPipeListeningQueue
 
   /////////////////////////////// Function ///////////////////////////////
 
-  public synchronized void tryListenToPlan(ConfigPhysicalPlan plan, boolean isGeneratedByPipe) {
+  public synchronized void tryListenToPlan(
+      final ConfigPhysicalPlan plan, final boolean isGeneratedByPipe) {
     if (ConfigRegionListeningFilter.shouldPlanBeListened(plan)) {
-      PipeConfigRegionWritePlanEvent event;
+      final PipeConfigRegionWritePlanEvent event;
       switch (plan.getType()) {
         case PipeEnriched:
           tryListenToPlan(((PipeEnrichedPlan) plan).getInnerPlan(), true);
@@ -83,8 +86,27 @@ public class ConfigRegionListeningQueue extends AbstractPipeListeningQueue
                             .getName(),
                         ((UnsetSchemaTemplatePlan) plan).getPath().getFullPath()),
                     isGeneratedByPipe);
-          } catch (MetadataException e) {
+          } catch (final MetadataException e) {
             LOGGER.warn("Failed to collect UnsetTemplatePlan", e);
+            return;
+          }
+          break;
+        case CommitCreateTable:
+          try {
+            event =
+                new PipeConfigRegionWritePlanEvent(
+                    new PipeCreateTablePlan(
+                        ((CommitCreateTablePlan) plan).getDatabase(),
+                        ConfigNode.getInstance()
+                            .getConfigManager()
+                            .getClusterSchemaManager()
+                            .getTableIfExists(
+                                ((CommitCreateTablePlan) plan).getDatabase(),
+                                ((CommitCreateTablePlan) plan).getTableName())
+                            .orElse(null)),
+                    isGeneratedByPipe);
+          } catch (final MetadataException e) {
+            LOGGER.warn("Failed to collect CommitCreateTablePlan", e);
             return;
           }
           break;
@@ -96,9 +118,9 @@ public class ConfigRegionListeningQueue extends AbstractPipeListeningQueue
   }
 
   public synchronized void tryListenToSnapshots(
-      List<Pair<Pair<Path, Path>, CNSnapshotFileType>> snapshotPathInfoList) {
-    List<PipeSnapshotEvent> events = new ArrayList<>();
-    for (Pair<Pair<Path, Path>, CNSnapshotFileType> snapshotPathInfo : snapshotPathInfoList) {
+      final List<Pair<Pair<Path, Path>, CNSnapshotFileType>> snapshotPathInfoList) {
+    final List<PipeSnapshotEvent> events = new ArrayList<>();
+    for (final Pair<Pair<Path, Path>, CNSnapshotFileType> snapshotPathInfo : snapshotPathInfoList) {
       final Path snapshotPath = snapshotPathInfo.getLeft().getLeft();
       final CNSnapshotFileType type = snapshotPathInfo.getRight();
       // Filter empty and superuser snapshots
@@ -133,19 +155,19 @@ public class ConfigRegionListeningQueue extends AbstractPipeListeningQueue
   /////////////////////////////// Element Ser / De Method ////////////////////////////////
 
   @Override
-  protected ByteBuffer serializeToByteBuffer(Event event) {
+  protected ByteBuffer serializeToByteBuffer(final Event event) {
     return ((SerializableEvent) event).serializeToByteBuffer();
   }
 
   @Override
-  protected Event deserializeFromByteBuffer(ByteBuffer byteBuffer) {
+  protected Event deserializeFromByteBuffer(final ByteBuffer byteBuffer) {
     try {
-      SerializableEvent result = PipeConfigSerializableEventType.deserialize(byteBuffer);
+      final SerializableEvent result = PipeConfigSerializableEventType.deserialize(byteBuffer);
       // We assume the caller of this method will put the deserialize result into a queue,
       // so we increase the reference count here.
       ((EnrichedEvent) result).increaseReferenceCount(ConfigRegionListeningQueue.class.getName());
       return result;
-    } catch (IOException e) {
+    } catch (final IOException e) {
       LOGGER.error("Failed to load snapshot from byteBuffer {}.", byteBuffer);
     }
     return null;
@@ -154,12 +176,25 @@ public class ConfigRegionListeningQueue extends AbstractPipeListeningQueue
   /////////////////////////////// Snapshot ///////////////////////////////
 
   @Override
-  public synchronized boolean processTakeSnapshot(File snapshotDir) throws TException, IOException {
-    return super.serializeToFile(new File(snapshotDir, SNAPSHOT_FILE_NAME));
+  public synchronized boolean processTakeSnapshot(final File snapshotDir) throws IOException {
+    try {
+      return super.serializeToFile(new File(snapshotDir, SNAPSHOT_FILE_NAME));
+    } catch (final IOException e) {
+      throw e;
+    } catch (final Exception e) {
+      throw new IOException(e);
+    }
   }
 
   @Override
-  public synchronized void processLoadSnapshot(File snapshotDir) throws TException, IOException {
-    super.deserializeFromFile(new File(snapshotDir, SNAPSHOT_FILE_NAME));
+  public synchronized void processLoadSnapshot(final File snapshotDir)
+      throws TException, IOException {
+    try {
+      super.deserializeFromFile(new File(snapshotDir, SNAPSHOT_FILE_NAME));
+    } catch (final IOException e) {
+      throw e;
+    } catch (final Exception e) {
+      throw new IOException(e);
+    }
   }
 }

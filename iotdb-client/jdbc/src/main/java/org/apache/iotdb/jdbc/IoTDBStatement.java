@@ -30,8 +30,11 @@ import org.apache.iotdb.service.rpc.thrift.TSExecuteBatchStatementReq;
 import org.apache.iotdb.service.rpc.thrift.TSExecuteStatementReq;
 import org.apache.iotdb.service.rpc.thrift.TSExecuteStatementResp;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.thrift.TException;
+import org.apache.tsfile.common.conf.TSFileConfig;
 
+import java.nio.charset.Charset;
 import java.sql.BatchUpdateException;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -43,13 +46,19 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
 
+import static org.apache.iotdb.jdbc.Constant.TABLE;
+import static org.apache.iotdb.jdbc.Constant.TREE;
+
 public class IoTDBStatement implements Statement {
 
-  ZoneId zoneId;
+  private final IoTDBConnection connection;
+
   private ResultSet resultSet = null;
-  private IoTDBConnection connection;
   private int fetchSize;
   private int maxRows = 0;
+
+  protected final ZoneId zoneId;
+  protected final Charset charset;
 
   /**
    * Timeout of query can be set by users. Unit: s. A negative number means using the default
@@ -82,6 +91,7 @@ public class IoTDBStatement implements Statement {
       long sessionId,
       int fetchSize,
       ZoneId zoneId,
+      Charset charset,
       int seconds)
       throws SQLException {
     this.connection = connection;
@@ -90,11 +100,51 @@ public class IoTDBStatement implements Statement {
     this.fetchSize = fetchSize;
     this.batchSQLList = new ArrayList<>();
     this.zoneId = zoneId;
+    this.charset = charset;
     this.queryTimeout = seconds;
     requestStmtId();
   }
 
-  // only for test
+  IoTDBStatement(
+      IoTDBConnection connection,
+      IClientRPCService.Iface client,
+      long sessionId,
+      ZoneId zoneId,
+      Charset charset,
+      int seconds)
+      throws SQLException {
+    this(connection, client, sessionId, Config.DEFAULT_FETCH_SIZE, zoneId, charset, seconds);
+  }
+
+  IoTDBStatement(
+      IoTDBConnection connection,
+      IClientRPCService.Iface client,
+      long sessionId,
+      ZoneId zoneId,
+      Charset charset)
+      throws SQLException {
+    this(connection, client, sessionId, Config.DEFAULT_FETCH_SIZE, zoneId, charset, 0);
+  }
+
+  // Only for tests
+  IoTDBStatement(
+      IoTDBConnection connection,
+      IClientRPCService.Iface client,
+      long sessionId,
+      ZoneId zoneId,
+      int seconds)
+      throws SQLException {
+    this(
+        connection,
+        client,
+        sessionId,
+        Config.DEFAULT_FETCH_SIZE,
+        zoneId,
+        TSFileConfig.STRING_CHARSET,
+        seconds);
+  }
+
+  // Only for tests
   IoTDBStatement(
       IoTDBConnection connection,
       IClientRPCService.Iface client,
@@ -108,24 +158,23 @@ public class IoTDBStatement implements Statement {
     this.fetchSize = Config.DEFAULT_FETCH_SIZE;
     this.batchSQLList = new ArrayList<>();
     this.zoneId = zoneId;
+    this.charset = TSFileConfig.STRING_CHARSET;
     this.queryTimeout = seconds;
     this.stmtId = statementId;
   }
 
+  // Only for tests
   IoTDBStatement(
       IoTDBConnection connection, IClientRPCService.Iface client, long sessionId, ZoneId zoneId)
       throws SQLException {
-    this(connection, client, sessionId, Config.DEFAULT_FETCH_SIZE, zoneId, 0);
-  }
-
-  IoTDBStatement(
-      IoTDBConnection connection,
-      IClientRPCService.Iface client,
-      long sessionId,
-      ZoneId zoneId,
-      int seconds)
-      throws SQLException {
-    this(connection, client, sessionId, Config.DEFAULT_FETCH_SIZE, zoneId, seconds);
+    this(
+        connection,
+        client,
+        sessionId,
+        Config.DEFAULT_FETCH_SIZE,
+        zoneId,
+        TSFileConfig.STRING_CHARSET,
+        0);
   }
 
   @Override
@@ -206,6 +255,18 @@ public class IoTDBStatement implements Statement {
     throw new SQLException("Not support closeOnCompletion");
   }
 
+  /**
+   * Execute a SQL encoded in bytes with {@link IoTDBStatement#charset}.
+   *
+   * @param sql raw sql in bytes encoded with {@link IoTDBStatement#charset}
+   * @return true if the first result is a {@link ResultSet} object; false if the first result is an
+   *     update count or there is no result
+   * @throws SQLException if a database access error occurs
+   */
+  public boolean execute(byte[] sql) throws SQLException {
+    return execute(new String(sql, charset));
+  }
+
   @Override
   public boolean execute(String sql) throws SQLException {
     checkConnection("execute");
@@ -264,27 +325,18 @@ public class IoTDBStatement implements Statement {
       throw new IoTDBSQLException(e.getMessage(), execResp.getStatus());
     }
 
+    if (execResp.isSetDatabase()) {
+      connection.changeDefaultDatabase(execResp.getDatabase());
+    }
+
+    if (execResp.isSetTableModel()) {
+      connection.mayChangeDefaultSqlDialect(execResp.tableModel ? TABLE : TREE);
+    }
+
     if (execResp.isSetColumns()) {
       queryId = execResp.getQueryId();
       if (execResp.queryResult == null) {
-        BitSet aliasColumn = listToBitSet(execResp.getAliasColumns());
-        this.resultSet =
-            new IoTDBNonAlignJDBCResultSet(
-                this,
-                execResp.getColumns(),
-                execResp.getDataTypeList(),
-                execResp.columnNameIndexMap,
-                execResp.ignoreTimeStamp,
-                client,
-                sql,
-                queryId,
-                sessionId,
-                execResp.nonAlignQueryDataSet,
-                execResp.tracingInfo,
-                execReq.timeout,
-                execResp.operationType,
-                execResp.getSgColumns(),
-                aliasColumn);
+        throw new SQLException("execResp.queryResult should never be null.");
       } else {
         this.resultSet =
             new IoTDBJDBCResultSet(
@@ -292,7 +344,7 @@ public class IoTDBStatement implements Statement {
                 execResp.getColumns(),
                 execResp.getDataTypeList(),
                 execResp.columnNameIndexMap,
-                execResp.ignoreTimeStamp,
+                execResp.isIgnoreTimeStamp(),
                 client,
                 sql,
                 queryId,
@@ -300,7 +352,11 @@ public class IoTDBStatement implements Statement {
                 execResp.queryResult,
                 execResp.tracingInfo,
                 execReq.timeout,
-                execResp.moreData);
+                execResp.moreData,
+                zoneId,
+                charset,
+                execResp.isSetTableModel() && execResp.isTableModel(),
+                execResp.getColumnIndex2TsBlockColumnIndexList());
       }
       return true;
     }
@@ -360,6 +416,17 @@ public class IoTDBStatement implements Statement {
         message.append(execResp.getMessage());
       }
     }
+    if (execResp.isSetSubStatus() && execResp.getSubStatus() != null) {
+      for (TSStatus status : execResp.getSubStatus()) {
+        if (status.getCode() == TSStatusCode.USE_DB.getStatusCode()
+            && status.isSetMessage()
+            && status.getMessage() != null
+            && !status.getMessage().isEmpty()) {
+          connection.changeDefaultDatabase(status.getMessage());
+          break;
+        }
+      }
+    }
     if (!allSuccess) {
       throw new BatchUpdateException(message.toString(), result);
     }
@@ -412,28 +479,8 @@ public class IoTDBStatement implements Statement {
       throw new IoTDBSQLException(e.getMessage(), execResp.getStatus());
     }
 
-    BitSet aliasColumn = null;
-    if (execResp.getAliasColumns() != null && !execResp.getAliasColumns().isEmpty()) {
-      aliasColumn = listToBitSet(execResp.getAliasColumns());
-    }
-    if (execResp.queryResult == null) {
-      this.resultSet =
-          new IoTDBNonAlignJDBCResultSet(
-              this,
-              execResp.getColumns(),
-              execResp.getDataTypeList(),
-              execResp.columnNameIndexMap,
-              execResp.ignoreTimeStamp,
-              client,
-              sql,
-              queryId,
-              sessionId,
-              execResp.nonAlignQueryDataSet,
-              execResp.tracingInfo,
-              execReq.timeout,
-              execResp.operationType,
-              execResp.sgColumns,
-              aliasColumn);
+    if (!execResp.isSetQueryResult()) {
+      throw new SQLException("execResp.queryResult should never be null.");
     } else {
       this.resultSet =
           new IoTDBJDBCResultSet(
@@ -441,19 +488,19 @@ public class IoTDBStatement implements Statement {
               execResp.getColumns(),
               execResp.getDataTypeList(),
               execResp.columnNameIndexMap,
-              execResp.ignoreTimeStamp,
+              execResp.isIgnoreTimeStamp(),
               client,
               sql,
               queryId,
               sessionId,
-              execResp.queryResult,
+              execResp.getQueryResult(),
               execResp.tracingInfo,
               execReq.timeout,
-              execResp.operationType,
-              execResp.columns,
-              execResp.sgColumns,
-              aliasColumn,
-              execResp.moreData);
+              execResp.moreData,
+              zoneId,
+              charset,
+              execResp.isSetTableModel() && execResp.isTableModel(),
+              execResp.getColumnIndex2TsBlockColumnIndexList());
     }
     return resultSet;
   }
@@ -506,15 +553,15 @@ public class IoTDBStatement implements Statement {
     throw new SQLException(NOT_SUPPORT_EXECUTE_UPDATE);
   }
 
-  private int executeUpdateSQL(String sql) throws TException, IoTDBSQLException {
-    TSExecuteStatementReq execReq = new TSExecuteStatementReq(sessionId, sql, stmtId);
-    TSExecuteStatementResp execResp = client.executeUpdateStatement(execReq);
+  private int executeUpdateSQL(final String sql) throws TException, IoTDBSQLException {
+    final TSExecuteStatementReq execReq = new TSExecuteStatementReq(sessionId, sql, stmtId);
+    final TSExecuteStatementResp execResp = client.executeUpdateStatement(execReq);
     if (execResp.isSetQueryId()) {
       queryId = execResp.getQueryId();
     }
     try {
       RpcUtils.verifySuccess(execResp.getStatus());
-    } catch (StatementExecutionException e) {
+    } catch (final StatementExecutionException e) {
       throw new IoTDBSQLException(e.getMessage(), execResp.getStatus());
     }
     return 0;
@@ -577,8 +624,8 @@ public class IoTDBStatement implements Statement {
   @Override
   public void setMaxRows(int num) throws SQLException {
     checkConnection("setMaxRows");
-    if (num <= 0) {
-      throw new SQLException(String.format("maxRows %d must be > 0!", num));
+    if (num < 0) {
+      throw new SQLException(String.format("maxRows %d must be >= 0!", num));
     }
     this.maxRows = num;
   }
@@ -714,5 +761,25 @@ public class IoTDBStatement implements Statement {
 
   public long getStmtId() {
     return stmtId;
+  }
+
+  public long getMilliSecond(long time) {
+    return RpcUtils.getMilliSecond(time, connection.getTimeFactor());
+  }
+
+  public int getNanoSecond(long time) {
+    return RpcUtils.getNanoSecond(time, connection.getTimeFactor());
+  }
+
+  public int getTimeFactor() {
+    return connection.getTimeFactor();
+  }
+
+  public String getSqlDialect() {
+    if (connection != null && StringUtils.isNotBlank(connection.getSqlDialect())) {
+      return connection.getSqlDialect().toLowerCase();
+    } else {
+      return "tree";
+    }
   }
 }

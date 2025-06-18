@@ -21,16 +21,16 @@ package org.apache.iotdb.db.pipe.agent.runtime;
 
 import org.apache.iotdb.commons.client.exception.ClientManagerException;
 import org.apache.iotdb.commons.exception.StartupException;
-import org.apache.iotdb.commons.pipe.plugin.meta.PipePluginMeta;
-import org.apache.iotdb.commons.pipe.plugin.service.PipePluginClassLoaderManager;
-import org.apache.iotdb.commons.pipe.plugin.service.PipePluginExecutableManager;
-import org.apache.iotdb.commons.pipe.task.meta.PipeMeta;
+import org.apache.iotdb.commons.pipe.agent.plugin.meta.PipePluginMeta;
+import org.apache.iotdb.commons.pipe.agent.plugin.service.PipePluginClassLoaderManager;
+import org.apache.iotdb.commons.pipe.agent.plugin.service.PipePluginExecutableManager;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeMeta;
 import org.apache.iotdb.confignode.rpc.thrift.TGetAllPipeInfoResp;
 import org.apache.iotdb.confignode.rpc.thrift.TGetJarInListReq;
 import org.apache.iotdb.confignode.rpc.thrift.TGetJarInListResp;
 import org.apache.iotdb.db.conf.IoTDBConfig;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
-import org.apache.iotdb.db.pipe.agent.PipeAgent;
+import org.apache.iotdb.db.pipe.agent.PipeDataNodeAgent;
 import org.apache.iotdb.db.protocol.client.ConfigNodeClient;
 import org.apache.iotdb.db.protocol.client.ConfigNodeClientManager;
 import org.apache.iotdb.db.protocol.client.ConfigNodeInfo;
@@ -88,7 +88,7 @@ class PipeAgentLauncher {
         if (meta.isBuiltin()) {
           continue;
         }
-        PipeAgent.plugin().doRegister(meta);
+        PipeDataNodeAgent.plugin().doRegister(meta);
       }
     } catch (Exception e) {
       throw new StartupException(e);
@@ -114,7 +114,8 @@ class PipeAgentLauncher {
       }
       // If jar does not exist, add current pipePluginMeta to list
       if (!PipePluginExecutableManager.getInstance()
-          .hasFileUnderInstallDir(pipePluginMeta.getJarName())) {
+          .hasPluginFileUnderInstallDir(
+              pipePluginMeta.getPluginName(), pipePluginMeta.getJarName())) {
         pipePluginMetaList.add(pipePluginMeta);
       } else {
         try {
@@ -144,7 +145,10 @@ class PipeAgentLauncher {
       final List<ByteBuffer> jarList = resp.getJarList();
       for (int i = 0; i < pipePluginMetaList.size(); i++) {
         PipePluginExecutableManager.getInstance()
-            .saveToInstallDir(jarList.get(i), pipePluginMetaList.get(i).getJarName());
+            .savePluginToInstallDir(
+                jarList.get(i),
+                pipePluginMetaList.get(i).getPluginName(),
+                pipePluginMetaList.get(i).getJarName());
       }
     } catch (IOException | TException | ClientManagerException e) {
       throw new StartupException(e);
@@ -159,18 +163,19 @@ class PipeAgentLauncher {
         throw new StartupException("Failed to get pipe task meta from config node.");
       }
 
-      PipeAgent.task()
+      PipeDataNodeAgent.task()
           .handlePipeMetaChanges(
               getAllPipeInfoResp.getAllPipeInfo().stream()
                   .map(
                       byteBuffer -> {
-                        final PipeMeta pipeMeta = PipeMeta.deserialize(byteBuffer);
+                        final PipeMeta pipeMeta = PipeMeta.deserialize4TaskAgent(byteBuffer);
                         LOGGER.info(
                             "Pulled pipe meta from config node: {}, recovering ...", pipeMeta);
                         return pipeMeta;
                       })
                   .collect(Collectors.toList()));
-    } catch (Exception e) {
+    } catch (Exception | Error e) {
+      // Ignore unexpected exceptions to ensure that DataNode can start normally
       LOGGER.info(
           "Failed to get pipe task meta from config node. Ignore the exception, "
               + "because config node may not be ready yet, and "

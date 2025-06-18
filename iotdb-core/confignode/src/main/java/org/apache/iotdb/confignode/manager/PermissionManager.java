@@ -22,9 +22,10 @@ package org.apache.iotdb.confignode.manager;
 import org.apache.iotdb.common.rpc.thrift.TDataNodeConfiguration;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.auth.AuthException;
-import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.commons.auth.entity.PrivilegeUnion;
 import org.apache.iotdb.confignode.consensus.request.ConfigPhysicalPlanType;
-import org.apache.iotdb.confignode.consensus.request.auth.AuthorPlan;
+import org.apache.iotdb.confignode.consensus.request.write.auth.AuthorPlan;
+import org.apache.iotdb.confignode.consensus.request.write.pipe.payload.PipeEnrichedPlan;
 import org.apache.iotdb.confignode.consensus.response.auth.PermissionInfoResp;
 import org.apache.iotdb.confignode.manager.consensus.ConsensusManager;
 import org.apache.iotdb.confignode.persistence.AuthorInfo;
@@ -64,9 +65,13 @@ public class PermissionManager {
     LOGGER.info("Auth: run auth plan: {}", authorPlan.toString());
     try {
       if (authorPlan.getAuthorType() == ConfigPhysicalPlanType.CreateUser
+          || authorPlan.getAuthorType() == ConfigPhysicalPlanType.RCreateUser
           || authorPlan.getAuthorType() == ConfigPhysicalPlanType.CreateRole
+          || authorPlan.getAuthorType() == ConfigPhysicalPlanType.RCreateRole
           || authorPlan.getAuthorType() == ConfigPhysicalPlanType.CreateUserWithRawPassword) {
-        tsStatus = getConsensusManager().write(authorPlan);
+        tsStatus =
+            getConsensusManager()
+                .write(isGeneratedByPipe ? new PipeEnrichedPlan(authorPlan) : authorPlan);
       } else {
         List<TDataNodeConfiguration> allDataNodes =
             configManager.getNodeManager().getRegisteredDataNodes();
@@ -76,7 +81,7 @@ public class PermissionManager {
                 .operateAuthPlan(authorPlan, allDataNodes, isGeneratedByPipe);
       }
       return tsStatus;
-    } catch (ConsensusException e) {
+    } catch (final ConsensusException e) {
       LOGGER.warn("Failed in the write API executing the consensus layer due to: ", e);
       TSStatus res = new TSStatus(TSStatusCode.EXECUTE_STATEMENT_ERROR.getStatusCode());
       res.setMessage(e.getMessage());
@@ -90,12 +95,12 @@ public class PermissionManager {
    * @param authorPlan AuthorReq
    * @return PermissionInfoResp
    */
-  public PermissionInfoResp queryPermission(AuthorPlan authorPlan) {
+  public PermissionInfoResp queryPermission(final AuthorPlan authorPlan) {
     try {
       return (PermissionInfoResp) getConsensusManager().read(authorPlan);
-    } catch (ConsensusException e) {
+    } catch (final ConsensusException e) {
       LOGGER.warn("Failed in the read API executing the consensus layer due to: ", e);
-      TSStatus res = new TSStatus(TSStatusCode.EXECUTE_STATEMENT_ERROR.getStatusCode());
+      final TSStatus res = new TSStatus(TSStatusCode.EXECUTE_STATEMENT_ERROR.getStatusCode());
       res.setMessage(e.getMessage());
       return new PermissionInfoResp(res);
     }
@@ -109,27 +114,27 @@ public class PermissionManager {
     return authorInfo.login(username, password);
   }
 
-  public TPermissionInfoResp checkUserPrivileges(
-      String username, List<PartialPath> paths, int permission) {
-    return authorInfo.checkUserPrivileges(username, paths, permission);
+  public String login4Pipe(final String userName, final String password) {
+    return authorInfo.login4Pipe(userName, password);
+  }
+
+  public TPermissionInfoResp checkUserPrivileges(String username, PrivilegeUnion union) {
+    return authorInfo.checkUserPrivileges(username, union);
   }
 
   public TAuthizedPatternTreeResp fetchAuthizedPTree(String username, int permission)
       throws AuthException {
-    return authorInfo.generateAuthizedPTree(username, permission);
+    return authorInfo.generateAuthorizedPTree(username, permission);
   }
 
-  public TPermissionInfoResp checkUserPrivilegeGrantOpt(
-      String username, List<PartialPath> paths, int permission) throws AuthException {
-    return authorInfo.checkUserPrivilegeGrantOpt(username, paths, permission);
+  public TPermissionInfoResp checkUserPrivilegeGrantOpt(String username, PrivilegeUnion union)
+      throws AuthException {
+    union.setGrantOption(true);
+    return authorInfo.checkUserPrivileges(username, union);
   }
 
   public TPermissionInfoResp checkRoleOfUser(String username, String rolename)
       throws AuthException {
     return authorInfo.checkRoleOfUser(username, rolename);
-  }
-
-  public void checkUserPathPrivilege() {
-    authorInfo.checkUserPathPrivilege();
   }
 }

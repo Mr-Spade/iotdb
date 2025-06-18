@@ -22,11 +22,9 @@ package org.apache.iotdb.db.pipe.extractor.dataregion.realtime.assigner;
 import org.apache.iotdb.commons.concurrent.IoTDBDaemonThreadFactory;
 import org.apache.iotdb.commons.pipe.config.PipeConfig;
 import org.apache.iotdb.commons.pipe.event.EnrichedEvent;
-import org.apache.iotdb.commons.pipe.metric.PipeEventCounter;
 import org.apache.iotdb.db.pipe.event.common.heartbeat.PipeHeartbeatEvent;
 import org.apache.iotdb.db.pipe.event.realtime.PipeRealtimeEvent;
-import org.apache.iotdb.db.pipe.metric.PipeDataRegionEventCounter;
-import org.apache.iotdb.db.pipe.resource.PipeResourceManager;
+import org.apache.iotdb.db.pipe.resource.PipeDataNodeResourceManager;
 import org.apache.iotdb.db.pipe.resource.memory.PipeMemoryBlock;
 
 import com.lmax.disruptor.BlockingWaitStrategy;
@@ -34,6 +32,8 @@ import com.lmax.disruptor.EventHandler;
 import com.lmax.disruptor.RingBuffer;
 import com.lmax.disruptor.dsl.Disruptor;
 import com.lmax.disruptor.dsl.ProducerType;
+
+import java.util.function.Consumer;
 
 import static org.apache.iotdb.commons.concurrent.ThreadName.PIPE_EXTRACTOR_DISRUPTOR;
 
@@ -46,16 +46,18 @@ public class DisruptorQueue {
   private final Disruptor<EventContainer> disruptor;
   private final RingBuffer<EventContainer> ringBuffer;
 
-  private final PipeEventCounter eventCounter = new PipeDataRegionEventCounter();
+  private volatile boolean isClosed = false;
 
-  public DisruptorQueue(EventHandler<PipeRealtimeEvent> eventHandler) {
+  public DisruptorQueue(
+      final EventHandler<PipeRealtimeEvent> eventHandler,
+      final Consumer<PipeRealtimeEvent> onAssignedHook) {
     final PipeConfig config = PipeConfig.getInstance();
     final int ringBufferSize = config.getPipeExtractorAssignerDisruptorRingBufferSize();
     final long ringBufferEntrySizeInBytes =
         config.getPipeExtractorAssignerDisruptorRingBufferEntrySizeInBytes();
 
     allocatedMemoryBlock =
-        PipeResourceManager.memory()
+        PipeDataNodeResourceManager.memory()
             .tryAllocate(
                 ringBufferSize * ringBufferEntrySizeInBytes, currentSize -> currentSize / 2);
 
@@ -71,27 +73,32 @@ public class DisruptorQueue {
             new BlockingWaitStrategy());
     disruptor.handleEventsWith(
         (container, sequence, endOfBatch) -> {
-          eventHandler.onEvent(container.getEvent(), sequence, endOfBatch);
-          EnrichedEvent innerEvent = container.getEvent().getEvent();
-          eventCounter.decreaseEventCount(innerEvent);
+          final PipeRealtimeEvent realtimeEvent = container.getEvent();
+          eventHandler.onEvent(realtimeEvent, sequence, endOfBatch);
+          onAssignedHook.accept(realtimeEvent);
         });
     disruptor.setDefaultExceptionHandler(new DisruptorQueueExceptionHandler());
 
     ringBuffer = disruptor.start();
   }
 
-  public void publish(PipeRealtimeEvent event) {
-    EnrichedEvent internalEvent = event.getEvent();
-    if (internalEvent instanceof PipeHeartbeatEvent) {
-      ((PipeHeartbeatEvent) internalEvent).recordDisruptorSize(ringBuffer);
+  public void publish(final PipeRealtimeEvent event) {
+    final EnrichedEvent innerEvent = event.getEvent();
+    if (innerEvent instanceof PipeHeartbeatEvent) {
+      ((PipeHeartbeatEvent) innerEvent).recordDisruptorSize(ringBuffer);
     }
     ringBuffer.publishEvent((container, sequence, o) -> container.setEvent(event), event);
-    eventCounter.increaseEventCount(internalEvent);
   }
 
-  public void clear() {
-    disruptor.halt();
+  public void shutdown() {
+    isClosed = true;
+    // use shutdown instead of halt to ensure all published events have been handled
+    disruptor.shutdown();
     allocatedMemoryBlock.close();
+  }
+
+  public boolean isClosed() {
+    return isClosed;
   }
 
   private static class EventContainer {
@@ -104,20 +111,8 @@ public class DisruptorQueue {
       return event;
     }
 
-    public void setEvent(PipeRealtimeEvent event) {
+    public void setEvent(final PipeRealtimeEvent event) {
       this.event = event;
     }
-  }
-
-  public int getTabletInsertionEventCount() {
-    return eventCounter.getTabletInsertionEventCount();
-  }
-
-  public int getTsFileInsertionEventCount() {
-    return eventCounter.getTsFileInsertionEventCount();
-  }
-
-  public int getPipeHeartbeatEventCount() {
-    return eventCounter.getPipeHeartbeatEventCount();
   }
 }

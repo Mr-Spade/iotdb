@@ -24,13 +24,13 @@ import org.apache.iotdb.commons.exception.IllegalPathException;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.commons.utils.TestOnly;
 import org.apache.iotdb.commons.utils.TimePartitionUtils;
-import org.apache.iotdb.db.queryengine.plan.analyze.Analysis;
-import org.apache.iotdb.db.queryengine.plan.analyze.cache.schema.DataNodeDevicePathCache;
+import org.apache.iotdb.db.queryengine.plan.analyze.IAnalysis;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNodeId;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNodeType;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanVisitor;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.WritePlanNode;
+import org.apache.iotdb.db.queryengine.plan.relational.metadata.fetcher.cache.TreeDeviceSchemaCacheManager;
 import org.apache.iotdb.db.storageengine.dataregion.wal.buffer.IWALByteBufferView;
 import org.apache.iotdb.db.storageengine.dataregion.wal.buffer.WALEntryValue;
 import org.apache.iotdb.db.storageengine.dataregion.wal.utils.WALWriteUtils;
@@ -49,6 +49,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -58,11 +59,12 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
 
   private static final byte TYPE_RAW_STRING = -1;
 
-  private static final byte TYPE_NULL = -2;
+  private static final byte TYPE_NULL_WITHOUT_TYPE = -2;
+  private static final byte TYPE_NULL_WITH_TYPE = -3;
 
   private static final String UNSUPPORTED_DATA_TYPE = "Unsupported data type: ";
 
-  private static final String DESERIALIZE_ERROR = "Cannot deserialize InsertRowNode";
+  protected static final String DESERIALIZE_ERROR = "Cannot deserialize InsertRowNode";
 
   private long time;
   private Object[] values;
@@ -71,6 +73,17 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
 
   public InsertRowNode(PlanNodeId id) {
     super(id);
+  }
+
+  @Override
+  public InsertNode mergeInsertNode(List<InsertNode> insertNodes) {
+    List<Integer> index = new ArrayList<>();
+    List<InsertRowNode> insertRowNodes = new ArrayList<>();
+    for (int i = 0; i < insertNodes.size(); i++) {
+      insertRowNodes.add((InsertRowNode) insertNodes.get(i));
+      index.add(i);
+    }
+    return new InsertRowsNode(this.getPlanNodeId(), index, insertRowNodes);
   }
 
   @TestOnly
@@ -107,22 +120,18 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
   }
 
   @Override
-  public List<WritePlanNode> splitByPartition(Analysis analysis) {
+  public List<WritePlanNode> splitByPartition(IAnalysis analysis) {
     TTimePartitionSlot timePartitionSlot = TimePartitionUtils.getTimePartitionSlot(time);
     this.dataRegionReplicaSet =
         analysis
             .getDataPartitionInfo()
-            .getDataRegionReplicaSetForWriting(devicePath.getFullPath(), timePartitionSlot);
+            .getDataRegionReplicaSetForWriting(
+                getDeviceID(), timePartitionSlot, analysis.getDatabaseName());
     // collect redirectInfo
     analysis.setRedirectNodeList(
         Collections.singletonList(
             dataRegionReplicaSet.getDataNodeLocations().get(0).getClientRpcEndPoint()));
     return Collections.singletonList(this);
-  }
-
-  @Override
-  public List<PlanNode> getChildren() {
-    return Collections.emptyList();
   }
 
   @Override
@@ -138,6 +147,11 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
   @Override
   public PlanNode clone() {
     throw new NotImplementedException("clone of Insert is not implemented");
+  }
+
+  @Override
+  public String toString() {
+    return "InsertRowNode{" + "time=" + time + ", values=" + Arrays.toString(values) + '}';
   }
 
   @Override
@@ -213,25 +227,25 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
 
   @Override
   protected void serializeAttributes(ByteBuffer byteBuffer) {
-    PlanNodeType.INSERT_ROW.serialize(byteBuffer);
+    getType().serialize(byteBuffer);
     subSerialize(byteBuffer);
   }
 
   @Override
   protected void serializeAttributes(DataOutputStream stream) throws IOException {
-    PlanNodeType.INSERT_ROW.serialize(stream);
+    getType().serialize(stream);
     subSerialize(stream);
   }
 
   void subSerialize(ByteBuffer buffer) {
     ReadWriteIOUtils.write(time, buffer);
-    ReadWriteIOUtils.write(devicePath.getFullPath(), buffer);
+    ReadWriteIOUtils.write(targetPath.getFullPath(), buffer);
     serializeMeasurementsAndValues(buffer);
   }
 
   void subSerialize(DataOutputStream stream) throws IOException {
     ReadWriteIOUtils.write(time, stream);
-    ReadWriteIOUtils.write(devicePath.getFullPath(), stream);
+    ReadWriteIOUtils.write(targetPath.getFullPath(), stream);
     serializeMeasurementsAndValues(stream);
   }
 
@@ -311,7 +325,11 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
       }
       // serialize null value
       if (values[i] == null) {
-        ReadWriteIOUtils.write(TYPE_NULL, buffer);
+        ReadWriteIOUtils.write(
+            dataTypes[i] == null ? TYPE_NULL_WITHOUT_TYPE : TYPE_NULL_WITH_TYPE, buffer);
+        if (dataTypes[i] != null) {
+          ReadWriteIOUtils.write(dataTypes[i], buffer);
+        }
         continue;
       }
       // types are not determined, the situation mainly occurs when the plan uses string values
@@ -326,9 +344,11 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
             ReadWriteIOUtils.write((Boolean) values[i], buffer);
             break;
           case INT32:
+          case DATE:
             ReadWriteIOUtils.write((Integer) values[i], buffer);
             break;
           case INT64:
+          case TIMESTAMP:
             ReadWriteIOUtils.write((Long) values[i], buffer);
             break;
           case FLOAT:
@@ -338,6 +358,8 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
             ReadWriteIOUtils.write((Double) values[i], buffer);
             break;
           case TEXT:
+          case STRING:
+          case BLOB:
             ReadWriteIOUtils.write((Binary) values[i], buffer);
             break;
           default:
@@ -362,7 +384,11 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
       }
       // serialize null value
       if (values[i] == null) {
-        ReadWriteIOUtils.write(TYPE_NULL, stream);
+        ReadWriteIOUtils.write(
+            dataTypes[i] == null ? TYPE_NULL_WITHOUT_TYPE : TYPE_NULL_WITH_TYPE, stream);
+        if (dataTypes[i] != null) {
+          ReadWriteIOUtils.write(dataTypes[i], stream);
+        }
         continue;
       }
       // types are not determined, the situation mainly occurs when the plan uses string values
@@ -377,9 +403,11 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
             ReadWriteIOUtils.write((Boolean) values[i], stream);
             break;
           case INT32:
+          case DATE:
             ReadWriteIOUtils.write((Integer) values[i], stream);
             break;
           case INT64:
+          case TIMESTAMP:
             ReadWriteIOUtils.write((Long) values[i], stream);
             break;
           case FLOAT:
@@ -389,6 +417,8 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
             ReadWriteIOUtils.write((Double) values[i], stream);
             break;
           case TEXT:
+          case STRING:
+          case BLOB:
             ReadWriteIOUtils.write((Binary) values[i], stream);
             break;
           default:
@@ -409,7 +439,7 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
   void subDeserialize(ByteBuffer byteBuffer) {
     time = byteBuffer.getLong();
     try {
-      devicePath = new PartialPath(ReadWriteIOUtils.readString(byteBuffer));
+      targetPath = readTargetPath(byteBuffer);
     } catch (IllegalPathException e) {
       throw new IllegalArgumentException(DESERIALIZE_ERROR, e);
     }
@@ -425,7 +455,7 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
       measurementSchemas = new MeasurementSchema[measurementSize];
       for (int i = 0; i < measurementSize; i++) {
         measurementSchemas[i] = MeasurementSchema.deserializeFrom(buffer);
-        measurements[i] = measurementSchemas[i].getMeasurementId();
+        measurements[i] = measurementSchemas[i].getMeasurementName();
       }
     } else {
       for (int i = 0; i < measurementSize; i++) {
@@ -452,8 +482,13 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
       // types are not determined, the situation mainly occurs when the node uses string values
       // and is forwarded to other nodes
       byte typeNum = (byte) ReadWriteIOUtils.read(buffer);
-      if (typeNum == TYPE_RAW_STRING || typeNum == TYPE_NULL) {
+      if (typeNum == TYPE_RAW_STRING
+          || typeNum == TYPE_NULL_WITHOUT_TYPE
+          || typeNum == TYPE_NULL_WITH_TYPE) {
         values[i] = typeNum == TYPE_RAW_STRING ? ReadWriteIOUtils.readString(buffer) : null;
+        if (typeNum == TYPE_NULL_WITH_TYPE) {
+          dataTypes[i] = ReadWriteIOUtils.readDataType(buffer);
+        }
         continue;
       }
       dataTypes[i] = TSDataType.values()[typeNum];
@@ -462,9 +497,11 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
           values[i] = ReadWriteIOUtils.readBool(buffer);
           break;
         case INT32:
+        case DATE:
           values[i] = ReadWriteIOUtils.readInt(buffer);
           break;
         case INT64:
+        case TIMESTAMP:
           values[i] = ReadWriteIOUtils.readLong(buffer);
           break;
         case FLOAT:
@@ -474,6 +511,8 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
           values[i] = ReadWriteIOUtils.readDouble(buffer);
           break;
         case TEXT:
+        case STRING:
+        case BLOB:
           values[i] = ReadWriteIOUtils.readBinary(buffer);
           break;
         default:
@@ -497,7 +536,7 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
   protected int subSerializeSize() {
     int size = 0;
     size += Long.BYTES;
-    size += ReadWriteIOUtils.sizeToWrite(devicePath.getFullPath());
+    size += ReadWriteIOUtils.sizeToWrite(targetPath.getFullPath());
     return size + serializeMeasurementsAndValuesSize();
   }
 
@@ -516,6 +555,9 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
       // serialize null value
       if (values[i] == null) {
         size += Byte.BYTES;
+        if (dataTypes[i] != null) {
+          size += Byte.BYTES;
+        }
         continue;
       }
       size += Byte.BYTES;
@@ -524,9 +566,11 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
           size += Byte.BYTES;
           break;
         case INT32:
+        case DATE:
           size += Integer.BYTES;
           break;
         case INT64:
+        case TIMESTAMP:
           size += Long.BYTES;
           break;
         case FLOAT:
@@ -536,6 +580,8 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
           size += Double.BYTES;
           break;
         case TEXT:
+        case STRING:
+        case BLOB:
           size += ReadWriteIOUtils.sizeToWrite((Binary) values[i]);
           break;
         default:
@@ -553,14 +599,14 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
    */
   @Override
   public void serializeToWAL(IWALByteBufferView buffer) {
-    buffer.putShort(PlanNodeType.INSERT_ROW.getNodeType());
+    buffer.putShort(getType().getNodeType());
     buffer.putLong(searchIndex);
     subSerialize(buffer);
   }
 
   protected void subSerialize(IWALByteBufferView buffer) {
     buffer.putLong(time);
-    WALWriteUtils.write(devicePath.getFullPath(), buffer);
+    WALWriteUtils.write(targetPath.getFullPath(), buffer);
     serializeMeasurementsAndValues(buffer);
   }
 
@@ -586,7 +632,11 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
       }
       // serialize null value
       if (values[i] == null) {
-        WALWriteUtils.write(TYPE_NULL, buffer);
+        WALWriteUtils.write(
+            dataTypes[i] == null ? TYPE_NULL_WITHOUT_TYPE : TYPE_NULL_WITH_TYPE, buffer);
+        if (dataTypes[i] != null) {
+          WALWriteUtils.write(dataTypes[i], buffer);
+        }
         continue;
       }
       WALWriteUtils.write(dataTypes[i], buffer);
@@ -595,9 +645,11 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
           WALWriteUtils.write((Boolean) values[i], buffer);
           break;
         case INT32:
+        case DATE:
           WALWriteUtils.write((Integer) values[i], buffer);
           break;
         case INT64:
+        case TIMESTAMP:
           WALWriteUtils.write((Long) values[i], buffer);
           break;
         case FLOAT:
@@ -607,6 +659,8 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
           WALWriteUtils.write((Double) values[i], buffer);
           break;
         case TEXT:
+        case BLOB:
+        case STRING:
           WALWriteUtils.write((Binary) values[i], buffer);
           break;
         default:
@@ -635,9 +689,7 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
     InsertRowNode insertNode = new InsertRowNode(new PlanNodeId(""));
     insertNode.setTime(stream.readLong());
     try {
-      insertNode.setDevicePath(
-          DataNodeDevicePathCache.getInstance()
-              .getPartialPath(ReadWriteIOUtils.readString(stream)));
+      insertNode.setTargetPath(insertNode.readTargetPath(stream));
     } catch (IllegalPathException e) {
       throw new IllegalArgumentException(DESERIALIZE_ERROR, e);
     }
@@ -669,7 +721,13 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
   public void fillDataTypesAndValuesFromWAL(DataInputStream stream) throws IOException {
     for (int i = 0; i < dataTypes.length; i++) {
       byte typeNum = stream.readByte();
-      if (typeNum == TYPE_NULL) {
+      if (typeNum == TYPE_RAW_STRING
+          || typeNum == TYPE_NULL_WITHOUT_TYPE
+          || typeNum == TYPE_NULL_WITH_TYPE) {
+        values[i] = typeNum == TYPE_RAW_STRING ? ReadWriteIOUtils.readString(stream) : null;
+        if (typeNum == TYPE_NULL_WITH_TYPE) {
+          dataTypes[i] = ReadWriteIOUtils.readDataType(stream);
+        }
         continue;
       }
       dataTypes[i] = TSDataType.values()[typeNum];
@@ -678,9 +736,11 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
           values[i] = ReadWriteIOUtils.readBool(stream);
           break;
         case INT32:
+        case DATE:
           values[i] = ReadWriteIOUtils.readInt(stream);
           break;
         case INT64:
+        case TIMESTAMP:
           values[i] = ReadWriteIOUtils.readLong(stream);
           break;
         case FLOAT:
@@ -690,6 +750,8 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
           values[i] = ReadWriteIOUtils.readDouble(stream);
           break;
         case TEXT:
+        case STRING:
+        case BLOB:
           values[i] = ReadWriteIOUtils.readBinary(stream);
           break;
         default:
@@ -717,7 +779,7 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
     InsertRowNode insertNode = new InsertRowNode(new PlanNodeId(""));
     insertNode.setTime(buffer.getLong());
     try {
-      insertNode.setDevicePath(new PartialPath(ReadWriteIOUtils.readString(buffer)));
+      insertNode.setTargetPath(insertNode.readTargetPath(buffer));
     } catch (IllegalPathException e) {
       throw new IllegalArgumentException(DESERIALIZE_ERROR, e);
     }
@@ -749,7 +811,13 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
   public void fillDataTypesAndValuesFromWAL(ByteBuffer buffer) {
     for (int i = 0; i < dataTypes.length; i++) {
       byte typeNum = buffer.get();
-      if (typeNum == TYPE_NULL) {
+      if (typeNum == TYPE_RAW_STRING
+          || typeNum == TYPE_NULL_WITHOUT_TYPE
+          || typeNum == TYPE_NULL_WITH_TYPE) {
+        values[i] = typeNum == TYPE_RAW_STRING ? ReadWriteIOUtils.readString(buffer) : null;
+        if (typeNum == TYPE_NULL_WITH_TYPE) {
+          dataTypes[i] = ReadWriteIOUtils.readDataType(buffer);
+        }
         continue;
       }
       dataTypes[i] = TSDataType.values()[typeNum];
@@ -758,9 +826,11 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
           values[i] = ReadWriteIOUtils.readBool(buffer);
           break;
         case INT32:
+        case DATE:
           values[i] = ReadWriteIOUtils.readInt(buffer);
           break;
         case INT64:
+        case TIMESTAMP:
           values[i] = ReadWriteIOUtils.readLong(buffer);
           break;
         case FLOAT:
@@ -770,6 +840,8 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
           values[i] = ReadWriteIOUtils.readDouble(buffer);
           break;
         case TEXT:
+        case STRING:
+        case BLOB:
           values[i] = ReadWriteIOUtils.readBinary(buffer);
           break;
         default:
@@ -810,10 +882,28 @@ public class InsertRowNode extends InsertNode implements WALEntryValue {
   }
 
   public TimeValuePair composeTimeValuePair(int columnIndex) {
-    if (columnIndex >= values.length) {
+    if (columnIndex >= values.length || Objects.isNull(dataTypes[columnIndex])) {
       return null;
     }
     Object value = values[columnIndex];
-    return new TimeValuePair(time, TsPrimitiveType.getByType(dataTypes[columnIndex], value));
+    return Objects.nonNull(value)
+        ? new TimeValuePair(time, TsPrimitiveType.getByType(dataTypes[columnIndex], value))
+        : null;
+  }
+
+  public void updateLastCache(String databaseName) {
+    String[] rawMeasurements = getRawMeasurements();
+    TimeValuePair[] timeValuePairs = new TimeValuePair[rawMeasurements.length];
+    for (int i = 0; i < rawMeasurements.length; i++) {
+      timeValuePairs[i] = composeTimeValuePair(i);
+    }
+    TreeDeviceSchemaCacheManager.getInstance()
+        .updateLastCacheIfExists(
+            databaseName,
+            getDeviceID(),
+            rawMeasurements,
+            timeValuePairs,
+            isAligned,
+            measurementSchemas);
   }
 }

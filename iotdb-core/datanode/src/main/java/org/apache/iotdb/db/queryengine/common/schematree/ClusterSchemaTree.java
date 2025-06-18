@@ -21,7 +21,6 @@ package org.apache.iotdb.db.queryengine.common.schematree;
 
 import org.apache.iotdb.commons.path.MeasurementPath;
 import org.apache.iotdb.commons.path.PartialPath;
-import org.apache.iotdb.commons.path.PathPatternTree;
 import org.apache.iotdb.commons.schema.view.LogicalViewSchema;
 import org.apache.iotdb.commons.utils.PathUtils;
 import org.apache.iotdb.commons.utils.TestOnly;
@@ -39,6 +38,7 @@ import org.apache.iotdb.db.queryengine.plan.analyze.schema.ISchemaComputation;
 import org.apache.iotdb.db.schemaengine.template.ClusterTemplateManager;
 import org.apache.iotdb.db.schemaengine.template.Template;
 
+import org.apache.tsfile.file.metadata.IDeviceID;
 import org.apache.tsfile.utils.Pair;
 import org.apache.tsfile.utils.ReadWriteIOUtils;
 import org.apache.tsfile.write.schema.IMeasurementSchema;
@@ -76,8 +76,6 @@ public class ClusterSchemaTree implements ISchemaTree {
 
   private Map<Integer, Template> templateMap = new HashMap<>();
 
-  private PathPatternTree authorityScope;
-
   public ClusterSchemaTree() {
     root = new SchemaInternalNode(PATH_ROOT);
   }
@@ -102,7 +100,7 @@ public class ClusterSchemaTree implements ISchemaTree {
       PartialPath pathPattern, int slimit, int soffset, boolean isPrefixMatch) {
     try (SchemaTreeVisitorWithLimitOffsetWrapper<MeasurementPath> visitor =
         SchemaTreeVisitorFactory.createSchemaTreeMeasurementVisitor(
-            root, pathPattern, isPrefixMatch, slimit, soffset, authorityScope)) {
+            root, pathPattern, isPrefixMatch, slimit, soffset)) {
       visitor.setTemplateMap(templateMap);
       return new Pair<>(visitor.getAllResult(), visitor.getNextOffset());
     }
@@ -150,7 +148,8 @@ public class ClusterSchemaTree implements ISchemaTree {
     } else {
       Template template = templateMap.get(entityNode.getTemplateId());
       if (template != null && template.getSchemaMap().containsKey(measurement)) {
-        return new MeasurementSchemaInfo(measurement, template.getSchema(measurement), null, null);
+        return new MeasurementSchemaInfo(
+            measurement, template.getSchema(measurement), null, null, null);
       }
     }
     return null;
@@ -243,7 +242,7 @@ public class ClusterSchemaTree implements ISchemaTree {
                 fullPath.getFullPath(),
                 schemaComputation
                     .getDevicePath()
-                    .concatNode(logicalViewSchema.getMeasurementId())
+                    .concatAsMeasurementPath(logicalViewSchema.getMeasurementName())
                     .getFullPath()));
       } else if (measurementPathList.size() > 1) {
         throw new SemanticException(
@@ -252,7 +251,7 @@ public class ClusterSchemaTree implements ISchemaTree {
                 fullPath.getFullPath(),
                 schemaComputation
                     .getDevicePath()
-                    .concatNode(logicalViewSchema.getMeasurementId())));
+                    .concatAsMeasurementPath(logicalViewSchema.getMeasurementName())));
       } else {
         Integer realIndex = schemaComputation.getIndexListOfLogicalViewPaths().get(index);
         MeasurementPath measurementPath = measurementPathList.get(0);
@@ -262,7 +261,8 @@ public class ClusterSchemaTree implements ISchemaTree {
                 measurementPath.getMeasurement(),
                 measurementPath.getMeasurementSchema(),
                 null,
-                measurementPath.getTagMap()),
+                measurementPath.getTagMap(),
+                null),
             measurementPath.isUnderAlignedEntity());
       }
     }
@@ -306,7 +306,9 @@ public class ClusterSchemaTree implements ISchemaTree {
       entityNode.setTemplateId(templateId);
       cur.replaceChild(deviceName, entityNode);
     }
-    templateMap.putIfAbsent(templateId, template);
+    if (template != null) {
+      templateMap.putIfAbsent(templateId, template);
+    }
   }
 
   public void appendMeasurementPaths(List<MeasurementPath> measurementPathList) {
@@ -320,6 +322,7 @@ public class ClusterSchemaTree implements ISchemaTree {
         measurementPath,
         measurementPath.getMeasurementSchema(),
         measurementPath.getTagMap(),
+        null,
         measurementPath.isMeasurementAliasExists() ? measurementPath.getMeasurementAlias() : null,
         measurementPath.isUnderAlignedEntity());
   }
@@ -328,6 +331,7 @@ public class ClusterSchemaTree implements ISchemaTree {
       PartialPath path,
       IMeasurementSchema schema,
       Map<String, String> tagMap,
+      Map<String, String> attributeMap,
       String alias,
       boolean isAligned) {
     String[] nodes = path.getNodes();
@@ -343,6 +347,7 @@ public class ClusterSchemaTree implements ISchemaTree {
             cur.getAsEntityNode().addAliasChild(alias, measurementNode);
           }
           measurementNode.setTagMap(tagMap);
+          measurementNode.setAttributeMap(attributeMap);
           child = measurementNode;
           if (schema.isLogicalView()) {
             this.hasLogicalMeasurementPath = true;
@@ -400,6 +405,32 @@ public class ClusterSchemaTree implements ISchemaTree {
     traverseAndMerge(this.root, null, schemaTree.root);
     this.templateMap.putAll(schemaTree.templateMap);
     this.hasNormalTimeSeries |= schemaTree.hasNormalTimeSeries;
+  }
+
+  @Override
+  public void removeLogicalView() {
+    removeLogicViewMeasurement(root);
+  }
+
+  private void removeLogicViewMeasurement(SchemaNode parent) {
+    if (parent.isMeasurement()) {
+      return;
+    }
+
+    Map<String, SchemaNode> children = parent.getChildren();
+    List<String> childrenToBeRemoved = new ArrayList<>();
+    for (Map.Entry<String, SchemaNode> entry : children.entrySet()) {
+      SchemaNode child = entry.getValue();
+      if (child.isMeasurement() && child.getAsMeasurementNode().isLogicalView()) {
+        childrenToBeRemoved.add(entry.getKey());
+      } else {
+        removeLogicViewMeasurement(child);
+      }
+    }
+
+    for (String key : childrenToBeRemoved) {
+      parent.removeChild(key);
+    }
   }
 
   private void traverseAndMerge(SchemaNode thisNode, SchemaNode thisParent, SchemaNode thatNode) {
@@ -510,27 +541,27 @@ public class ClusterSchemaTree implements ISchemaTree {
   }
 
   /**
-   * Get database name by path
+   * Get database name by device path
    *
-   * <p>e.g., root.sg1 is a database and path = root.sg1.d1, return root.sg1
+   * <p>e.g., root.sg1 is a database and device path = root.sg1.d1, return root.sg1
    *
-   * @param pathName only full path, cannot be path pattern
+   * @param deviceID only full device path, cannot be path pattern
    * @return database in the given path
    * @throws SemanticException no matched database
    */
   @Override
-  public String getBelongedDatabase(String pathName) {
+  public String getBelongedDatabase(IDeviceID deviceID) {
     for (String database : databases) {
-      if (PathUtils.isStartWith(pathName, database)) {
+      if (PathUtils.isStartWith(deviceID, database)) {
         return database;
       }
     }
-    throw new SemanticException("No matched database. Please check the path " + pathName);
+    throw new SemanticException("No matched database. Please check the path " + deviceID);
   }
 
   @Override
-  public String getBelongedDatabase(PartialPath path) {
-    return getBelongedDatabase(path.getFullPath());
+  public String getBelongedDatabase(PartialPath devicePath) {
+    return getBelongedDatabase(devicePath.getIDeviceIDAsFullDevice());
   }
 
   @Override

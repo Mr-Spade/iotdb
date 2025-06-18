@@ -25,6 +25,7 @@ import org.apache.iotdb.commons.pipe.config.constant.PipeExtractorConstant;
 import org.apache.iotdb.commons.pipe.config.plugin.configuraion.PipeTaskRuntimeConfiguration;
 import org.apache.iotdb.commons.pipe.config.plugin.env.PipeTaskExtractorRuntimeEnvironment;
 import org.apache.iotdb.commons.utils.FileUtils;
+import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.pipe.extractor.dataregion.realtime.PipeRealtimeDataRegionExtractor;
 import org.apache.iotdb.db.pipe.extractor.dataregion.realtime.PipeRealtimeDataRegionHybridExtractor;
 import org.apache.iotdb.db.pipe.extractor.dataregion.realtime.PipeRealtimeDataRegionLogExtractor;
@@ -40,7 +41,7 @@ import org.apache.iotdb.pipe.api.event.Event;
 import org.apache.iotdb.pipe.api.event.dml.insertion.TabletInsertionEvent;
 
 import org.apache.tsfile.common.constant.TsFileConstant;
-import org.apache.tsfile.file.metadata.PlainDeviceID;
+import org.apache.tsfile.file.metadata.IDeviceID;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -80,9 +81,12 @@ public class PipeRealtimeExtractTest {
 
   private ExecutorService writeService;
   private ExecutorService listenerService;
+  private int dataNodeId;
 
   @Before
   public void setUp() throws IOException {
+    dataNodeId = IoTDBDescriptor.getInstance().getConfig().getDataNodeId();
+    IoTDBDescriptor.getInstance().getConfig().setDataNodeId(0);
     writeService = Executors.newFixedThreadPool(2);
     listenerService = Executors.newFixedThreadPool(4);
     tmpDir = new File(Files.createTempDirectory("pipeRealtimeExtractor").toString());
@@ -97,6 +101,7 @@ public class PipeRealtimeExtractTest {
 
   @After
   public void tearDown() {
+    IoTDBDescriptor.getInstance().getConfig().setDataNodeId(dataNodeId);
     writeService.shutdownNow();
     listenerService.shutdownNow();
     FileUtils.deleteFileOrDirectory(tmpDir);
@@ -270,10 +275,20 @@ public class PipeRealtimeExtractTest {
 
             TsFileResource resource = new TsFileResource(tsFile);
             resource.updateStartTime(
-                new PlainDeviceID(String.join(TsFileConstant.PATH_SEPARATOR, device)), 0);
+                IDeviceID.Factory.DEFAULT_FACTORY.create(
+                    String.join(TsFileConstant.PATH_SEPARATOR, device)),
+                0);
+
+            try {
+              resource.close();
+            } catch (IOException e) {
+              e.printStackTrace();
+              throw new RuntimeException(e);
+            }
 
             PipeInsertionDataNodeListener.getInstance()
                 .listenToInsertNode(
+                    dataRegionId,
                     dataRegionId,
                     mock(WALEntryHandler.class),
                     new InsertRowNode(
@@ -289,6 +304,7 @@ public class PipeRealtimeExtractTest {
             PipeInsertionDataNodeListener.getInstance()
                 .listenToInsertNode(
                     dataRegionId,
+                    dataRegionId,
                     mock(WALEntryHandler.class),
                     new InsertRowNode(
                         new PlanNodeId(String.valueOf(i)),
@@ -301,7 +317,7 @@ public class PipeRealtimeExtractTest {
                         false),
                     resource);
             PipeInsertionDataNodeListener.getInstance()
-                .listenToTsFile(dataRegionId, resource, false, false);
+                .listenToTsFile(dataRegionId, dataRegionId, resource, false, false);
           }
         });
   }

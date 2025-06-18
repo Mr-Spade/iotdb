@@ -19,18 +19,17 @@
 
 package org.apache.iotdb.db.it.schema;
 
-import org.apache.iotdb.db.mpp.common.header.ColumnHeaderConstant;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.it.env.EnvFactory;
-import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
+import org.apache.iotdb.util.AbstractSchemaIT;
 
-import org.junit.AfterClass;
+import org.junit.After;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -39,24 +38,35 @@ import java.sql.Statement;
 import java.util.HashSet;
 import java.util.Set;
 
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.fail;
 
 /**
  * Notice that, all test begins with "IoTDB" is integration test. All test which will start the
  * IoTDB server should be defined as integration test.
  */
-@RunWith(IoTDBTestRunner.class)
 @Category({LocalStandaloneIT.class, ClusterIT.class})
-public class IoTDBCreateTimeseriesIT {
+public class IoTDBCreateTimeseriesIT extends AbstractSchemaIT {
 
-  @BeforeClass
-  public static void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeClass();
+  public IoTDBCreateTimeseriesIT(SchemaTestMode schemaTestMode) {
+    super(schemaTestMode);
   }
 
-  @AfterClass
-  public static void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterClass();
+  @Parameterized.BeforeParam
+  public static void before() throws Exception {
+    setUpEnvironment();
+    EnvFactory.getEnv().initClusterEnvironment();
+  }
+
+  @Parameterized.AfterParam
+  public static void after() throws Exception {
+    EnvFactory.getEnv().cleanClusterEnvironment();
+    tearDownEnvironment();
+  }
+
+  @After
+  public void tearDown() throws Exception {
+    clearSchema();
   }
 
   /** Test if creating a time series will cause the database with same name to disappear */
@@ -132,10 +142,10 @@ public class IoTDBCreateTimeseriesIT {
     }
 
     String[] timeSeriesArray = {
-      "root.sg.d.`a.b`", "root.sg.d.`a“（Φ）”b`", "root.sg.d.`a>b`",
+      "root.sg.d.`a.b`", "root.sg.d.`a“（Φ）”b`", "root.sg.d.`a>b`", "root.sg.d.`0e38`"
     };
     String[] timeSeriesResArray = {
-      "root.sg.d.`a.b`", "root.sg.d.`a“（Φ）”b`", "root.sg.d.`a>b`",
+      "root.sg.d.`a.b`", "root.sg.d.`a“（Φ）”b`", "root.sg.d.`a>b`", "root.sg.d.`0e38`",
     };
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
@@ -254,5 +264,35 @@ public class IoTDBCreateTimeseriesIT {
       fail();
     }
     Assert.assertEquals(0, cnt);
+  }
+
+  @Test
+  public void testIllegalInput() {
+    try (Connection connection = EnvFactory.getEnv().getConnection();
+        Statement statement = connection.createStatement()) {
+      statement.execute("create timeseries root.sg2.d.s1 with datatype=INT64");
+      assertThrows(
+          "Unsupported datatype: UNKNOWN",
+          SQLException.class,
+          () -> statement.execute("create timeseries root.sg2.d.s1 with datatype=UNKNOWN"));
+      assertThrows(
+          "Unsupported datatype: VECTOR",
+          SQLException.class,
+          () -> statement.execute("create timeseries root.sg2.d.s1 with datatype=VECTOR"));
+      assertThrows(
+          "Unsupported datatype: YES",
+          SQLException.class,
+          () -> statement.execute("create timeseries root.sg2.d.s1 with datatype=YES"));
+      assertThrows(
+          "Unsupported datatype: UNKNOWN",
+          SQLException.class,
+          () -> statement.execute("create device template t1 (s1 UNKNOWN, s2 boolean)"));
+      assertThrows(
+          "Unsupported datatype: VECTOR",
+          SQLException.class,
+          () -> statement.execute("create device template t1 (s1 VECTOR, s2 boolean)"));
+    } catch (SQLException ignored) {
+      fail();
+    }
   }
 }

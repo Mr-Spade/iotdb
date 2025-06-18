@@ -87,7 +87,7 @@ set "preip="
 set "iplist="
 set "allpreip="
 
-PATH %PATH%;%JAVA_HOME%\bin\
+set PATH="%JAVA_HOME%\bin\";%PATH%
 set "FULL_VERSION="
 set "MAJOR_VERSION="
 set "MINOR_VERSION="
@@ -198,22 +198,18 @@ set confignode_mem=%confignode_mem%
 for /f %%i in ('powershell.exe -Command "[math]::Round(%datanode_mem% / 1024, 2)"') do set datanode_mem=%%i
 for /f %%i in ('powershell.exe -Command "[math]::Round(%confignode_mem% / 1024, 2)"') do set confignode_mem=%%i
 
-echo datanode_mem=%datanode_mem%
-echo confignode_mem=%confignode_mem%
 echo Check: Installation Environment(Memory)
 echo Requirement: Allocate sufficient memory for IoTDB
 
 set "totalMemory="
 
-for /F "skip=1" %%i in ('wmic os get TotalVisibleMemorySize') do (
-  if not defined totalMemory (
-    set "totalMemory=%%i"
-  )
-
+REM Replace wmic with PowerShell for total visible memory size
+for /f %%i in ('powershell -NoProfile -Command "$v=$host.Version.Major; $mem=if($v -lt 3){(Get-WmiObject Win32_OperatingSystem).TotalVisibleMemorySize} else{(Get-CimInstance -ClassName Win32_OperatingSystem).TotalVisibleMemorySize}; [math]::Round($mem/1024)"') do (
+    set totalMemory=%%i
 )
 
 set /A totalMemory=!totalMemory!
-set /A totalMemory=totalMemory / 1024 / 1024
+
 if "%confignode_mem%" == "" (
     if "%datanode_mem%" == "" (
         echo Result: Total Memory %totalMemory% GB
@@ -234,7 +230,11 @@ exit /b
 :local_dirs_check
 
 setlocal enabledelayedexpansion
-set "properties_file=%IOTDB_HOME%\conf\iotdb-datanode.properties"
+if exist "%IOTDB_HOME%\conf\iotdb-system.properties" (
+  set "properties_file=%IOTDB_HOME%\conf\iotdb-system.properties"
+) ELSE (
+  set "properties_file=%IOTDB_HOME%\conf\iotdb-datanode.properties"
+)
 for /f "usebackq tokens=1,* delims==" %%a in ("%properties_file%") do (
     if "%%a"=="dn_data_dirs" (
         set "dn_data_dirs=%%b"
@@ -352,46 +352,36 @@ if defined operation_dirs (
 exit /b
 
 :local_ports_check
-IF EXIST "%IOTDB_CONF%\iotdb-datanode.properties" (
+IF EXIST "%IOTDB_CONF%\iotdb-system.properties" (
+  set DATANODE_CONFIG_FILE_PATH="%IOTDB_CONF%\iotdb-system.properties"
+) ELSE IF EXIST "%IOTDB_HOME%\conf\iotdb-system.properties" (
+  set DATANODE_CONFIG_FILE_PATH="%IOTDB_HOME%\conf\iotdb-system.properties"
+) ELSE IF EXIST "%IOTDB_CONF%\iotdb-system.properties" (
+  set DATANODE_CONFIG_FILE_PATH="%IOTDB_CONF%\iotdb-datanode.properties"
+) ELSE IF EXIST "%IOTDB_HOME%\conf\iotdb-datanode.properties" (
+  set DATANODE_CONFIG_FILE_PATH="%IOTDB_HOME%\conf\iotdb-datanode.properties"
+) ELSE (
+  set DATANODE_CONFIG_FILE_PATH=
+)
+IF DEFINED DATANODE_CONFIG_FILE_PATH (
   for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^dn_rpc_port"
-    %IOTDB_CONF%\iotdb-datanode.properties') do (
+    %DATANODE_CONFIG_FILE_PATH%') do (
       set dn_rpc_port=%%i
   )
   for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^dn_internal_port"
-    %IOTDB_CONF%\iotdb-datanode.properties') do (
+    %DATANODE_CONFIG_FILE_PATH%') do (
       set dn_internal_port=%%i
   )
   for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^dn_mpp_data_exchange_port"
-    %IOTDB_CONF%\iotdb-datanode.properties') do (
+    %DATANODE_CONFIG_FILE_PATH%') do (
       set dn_mpp_data_exchange_port=%%i
   )
   for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^dn_schema_region_consensus_port"
-    %IOTDB_CONF%\iotdb-datanode.properties') do (
+    %DATANODE_CONFIG_FILE_PATH%') do (
       set dn_schema_region_consensus_port=%%i
   )
   for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^dn_data_region_consensus_port"
-    %IOTDB_CONF%\iotdb-datanode.properties') do (
-      set dn_data_region_consensus_port=%%i
-  )
-) ELSE IF EXIST "%IOTDB_HOME%\conf\iotdb-datanode.properties" (
-  for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^dn_rpc_port"
-      %IOTDB_HOME%\conf\iotdb-datanode.properties') do (
-        set dn_rpc_port=%%i
-  )
-  for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^dn_internal_port"
-      %IOTDB_HOME%\conf\iotdb-datanode.properties') do (
-        set dn_internal_port=%%i
-  )
-  for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^dn_mpp_data_exchange_port"
-    %IOTDB_HOME%\conf\iotdb-datanode.properties') do (
-      set dn_mpp_data_exchange_port=%%i
-  )
-  for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^dn_schema_region_consensus_port"
-    %IOTDB_HOME%\conf\iotdb-datanode.properties') do (
-      set dn_schema_region_consensus_port=%%i
-  )
-  for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^dn_data_region_consensus_port"
-    %IOTDB_HOME%\conf\iotdb-datanode.properties') do (
+    %DATANODE_CONFIG_FILE_PATH%') do (
       set dn_data_region_consensus_port=%%i
   )
 ) ELSE (
@@ -402,23 +392,25 @@ IF EXIST "%IOTDB_CONF%\iotdb-datanode.properties" (
   set dn_data_region_consensus_port=10760
 )
 
-IF EXIST "%IOTDB_CONF%\iotdb-confignode.properties" (
+IF EXIST "%IOTDB_CONF%\iotdb-system.properties" (
+  set CONFIGNODE_CONFIG_FILE_PATH="%IOTDB_CONF%\iotdb-system.properties"
+) ELSE IF EXIST "%IOTDB_HOME%\conf\iotdb-system.properties" (
+  set CONFIGNODE_CONFIG_FILE_PATH="%IOTDB_HOME%\conf\iotdb-system.properties"
+) ELSE IF EXIST "%IOTDB_CONF%\iotdb-system.properties" (
+  set CONFIGNODE_CONFIG_FILE_PATH="%IOTDB_CONF%\iotdb-confignode.properties"
+) ELSE IF EXIST "%IOTDB_HOME%\conf\iotdb-confignode.properties" (
+  set CONFIGNODE_CONFIG_FILE_PATH="%IOTDB_HOME%\conf\iotdb-confignode.properties"
+) ELSE (
+  set CONFIGNODE_CONFIG_FILE_PATH=
+)
+IF DEFINED CONFIGNODE_CONFIG_FILE_PATH (
   for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^cn_internal_port"
-    %IOTDB_CONF%\iotdb-confignode.properties') do (
+    %CONFIGNODE_CONFIG_FILE_PATH%') do (
       set cn_internal_port=%%i
   )
   for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^cn_consensus_port"
-    %IOTDB_CONF%\iotdb-confignode.properties') do (
+    %CONFIGNODE_CONFIG_FILE_PATH%') do (
       set cn_consensus_port=%%i
-  )
-) ELSE IF EXIST "%IOTDB_HOME%\conf\iotdb-confignode.properties" (
-  for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^cn_internal_port"
-      %IOTDB_HOME%\conf\iotdb-confignode.properties') do (
-        set cn_internal_port=%%i
-  )
-  for /f  "eol=# tokens=2 delims==" %%i in ('findstr /i "^cn_consensus_port"
-      %IOTDB_HOME%\conf\iotdb-confignode.properties') do (
-        set cn_consensus_port=%%i
   )
 ) ELSE (
   set cn_internal_port=10710
@@ -622,19 +614,15 @@ endlocal
 exit /b
 
 :system_settings_check
+setlocal enabledelayedexpansion
 echo Check: System Settings(Swap)
 echo Requirement: disabled
-for /f "skip=1" %%s in ('wmic pagefile list /format:list') do (
-    for /f "tokens=1,2 delims==" %%a in ("%%s") do (
-        if /i "%%a"=="AllocatedBaseSize" (
-            if "%%b"=="0" (
-                echo Result: disabled
-            ) else (
-                echo Result: enabled
-            )
-        )
-    )
-)
+
+set "check_swap_ps_cmd=$v=$host.Version.Major; if($v -lt 3) { $sys=Get-WmiObject Win32_ComputerSystem; if($sys.AutomaticManagedPagefile) { 'Enabled' } else { $page=Get-WmiObject Win32_PageFileSetting -EA 0; if(!$page) { 'Disabled' } else { $page | %% { if($_.InitialSize -ne 0 -or $_.MaximumSize -ne 0) { 'Enabled'; exit } } 'Disabled' } } } else { $sys=Get-CimInstance Win32_ComputerSystem; if($sys.AutomaticManagedPagefile) { 'Enabled' } else { $page=Get-CimInstance Win32_PageFileSetting -EA 0; if(!$page) { 'Disabled' } else { $page | %% { if($_.InitialSize -ne 0 -or $_.MaximumSize -ne 0) { 'Enabled'; exit } } 'Disabled' } } }"
+for /f "delims=" %%a in ('powershell -NoProfile -Command "%check_swap_ps_cmd%"') do set "result=%%a"
+
+echo Result: !result!
+endlocal
 exit /b
 
 :checkIfIOTDBProcess
@@ -643,9 +631,8 @@ setlocal
 set "pid_to_check=%~1"
 set "is_iotdb=0"
 
-for /f "usebackq tokens=*" %%i in (`wmic process where "ProcessId=%pid_to_check%" get CommandLine /format:list ^| findstr /c:"CommandLine="`) do (
-    set command_line=%%i
-)
+for /f "delims=" %%i in ('powershell -NoProfile -Command "$v=$host.Version.Major; if($v -lt 3) { (Get-WmiObject Win32_Process -Filter \"ProcessId='%pid_to_check%'\").CommandLine } else { (Get-CimInstance Win32_Process -Filter \"ProcessId='%pid_to_check%'\").CommandLine }"') do set "command_line=%%i"
+
 echo %command_line% | findstr /i /c:"iotdb" >nul && set is_iotdb=1
 endlocal & set "is_iotdb=%is_iotdb%"
 exit /b

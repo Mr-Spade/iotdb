@@ -42,6 +42,7 @@ import org.apache.commons.lang3.Validate;
 import org.apache.tsfile.read.common.block.TsBlock;
 import org.apache.tsfile.read.common.block.column.TsBlockSerde;
 import org.apache.tsfile.utils.Pair;
+import org.apache.tsfile.utils.RamUsageEstimator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,6 +51,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 
 import static com.google.common.util.concurrent.Futures.nonCancellationPropagating;
@@ -106,7 +108,7 @@ public class SourceHandle implements ISourceHandle {
 
   /** max bytes this SourceHandle can reserve. */
   private long maxBytesCanReserve =
-      IoTDBDescriptor.getInstance().getConfig().getMaxBytesPerFragmentInstance();
+      IoTDBDescriptor.getInstance().getMemoryConfig().getMaxBytesPerFragmentInstance();
 
   /**
    * this is set to true after calling isBlocked() at least once which indicates that this
@@ -118,6 +120,10 @@ public class SourceHandle implements ISourceHandle {
       DataExchangeCostMetricSet.getInstance();
   private static final DataExchangeCountMetricSet DATA_EXCHANGE_COUNT_METRIC_SET =
       DataExchangeCountMetricSet.getInstance();
+
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(SourceHandle.class)
+          + RamUsageEstimator.shallowSizeOfInstance(TFragmentInstanceId.class) * 2;
 
   @SuppressWarnings("squid:S107")
   public SourceHandle(
@@ -461,6 +467,17 @@ public class SourceHandle implements ISourceHandle {
 
   private void checkState() {
     if (aborted) {
+      if (blocked.isDone()) {
+        // try throw underlying exception instead of "Source handle is aborted."
+        try {
+          blocked.get();
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          throw new IllegalStateException(e);
+        } catch (ExecutionException e) {
+          throw new IllegalStateException(e.getCause() == null ? e : e.getCause());
+        }
+      }
       throw new IllegalStateException("Source handle is aborted.");
     } else if (closed) {
       throw new IllegalStateException("SourceHandle is closed.");
@@ -475,6 +492,14 @@ public class SourceHandle implements ISourceHandle {
         localFragmentInstanceId.getFragmentId(),
         fullFragmentInstanceId,
         localPlanNodeId);
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE
+        + RamUsageEstimator.sizeOf(threadName)
+        + RamUsageEstimator.sizeOf(localPlanNodeId)
+        + RamUsageEstimator.sizeOf(fullFragmentInstanceId);
   }
 
   @TestOnly

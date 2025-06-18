@@ -19,7 +19,7 @@
 
 package org.apache.iotdb.db.it.query;
 
-import org.apache.iotdb.db.mpp.common.header.ColumnHeaderConstant;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
@@ -67,13 +67,13 @@ public class IoTDBResultSetIT {
 
   @BeforeClass
   public static void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeClass();
+    EnvFactory.getEnv().initClusterEnvironment();
     prepareData(SQLs);
   }
 
   @AfterClass
   public static void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterClass();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   @Test
@@ -125,7 +125,7 @@ public class IoTDBResultSetIT {
         assertEquals(2, metaData.getColumnCount());
         assertEquals("Time", metaData.getColumnName(1));
         assertEquals(Types.TIMESTAMP, metaData.getColumnType(1));
-        assertEquals("TIME", metaData.getColumnTypeName(1));
+        assertEquals("TIMESTAMP", metaData.getColumnTypeName(1));
         assertEquals("root.sg.dev.status", metaData.getColumnName(2));
         assertEquals(Types.VARCHAR, metaData.getColumnType(2));
         assertEquals("TEXT", metaData.getColumnTypeName(2));
@@ -177,6 +177,8 @@ public class IoTDBResultSetIT {
             + ColumnHeaderConstant.DEADBAND
             + ","
             + ColumnHeaderConstant.DEADBAND_PARAMETERS
+            + ","
+            + ColumnHeaderConstant.VIEW_TYPE
             + ",";
     resultSetEqualTest("show timeseries root.sg1.**", expectedHeader, emptyResultSet);
   }
@@ -184,7 +186,14 @@ public class IoTDBResultSetIT {
   @Test
   public void emptyShowDeviceTest() {
     String expectedHeader =
-        ColumnHeaderConstant.DEVICE + "," + ColumnHeaderConstant.IS_ALIGNED + ",";
+        ColumnHeaderConstant.DEVICE
+            + ","
+            + ColumnHeaderConstant.IS_ALIGNED
+            + ","
+            + ColumnHeaderConstant.TEMPLATE
+            + ","
+            + ColumnHeaderConstant.COLUMN_TTL
+            + ",";
     resultSetEqualTest("show devices root.sg1.**", expectedHeader, emptyResultSet);
   }
 

@@ -19,8 +19,11 @@
 
 package org.apache.iotdb.db.storageengine.dataregion.compaction.selector.estimator;
 
-import org.apache.iotdb.db.conf.IoTDBDescriptor;
-import org.apache.iotdb.db.storageengine.rescon.memory.SystemInfo;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.constant.CompactionType;
+import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
+
+import java.io.IOException;
+import java.util.List;
 
 public class ReadChunkInnerCompactionEstimator extends AbstractInnerSpaceEstimator {
 
@@ -36,12 +39,7 @@ public class ReadChunkInnerCompactionEstimator extends AbstractInnerSpaceEstimat
                 * taskInfo.getMaxChunkMetadataSize());
 
     // add ChunkMetadata size of targetFileWriter
-    long sizeForFileWriter =
-        (long)
-            ((double) SystemInfo.getInstance().getMemorySizeForCompaction()
-                / IoTDBDescriptor.getInstance().getConfig().getCompactionThreadCount()
-                * IoTDBDescriptor.getInstance().getConfig().getChunkMetadataSizeProportion());
-    cost += sizeForFileWriter;
+    cost += fixedMemoryBudget;
 
     return cost;
   }
@@ -51,23 +49,44 @@ public class ReadChunkInnerCompactionEstimator extends AbstractInnerSpaceEstimat
     if (taskInfo.getTotalChunkNum() == 0) {
       return taskInfo.getModificationFileSize();
     }
-    long averageUncompressedChunkSize =
-        taskInfo.getTotalFileSize() * compressionRatio / taskInfo.getTotalChunkNum();
+    long averageChunkSize = taskInfo.getTotalFileSize() / taskInfo.getTotalChunkNum();
+
+    int batchSize = config.getCompactionMaxAlignedSeriesNumInOneBatch();
+    int maxConcurrentSeriesNum =
+        Math.min(
+            batchSize <= 0 ? Integer.MAX_VALUE : batchSize, taskInfo.getMaxConcurrentSeriesNum());
 
     long maxConcurrentSeriesSizeOfTotalFiles =
-        averageUncompressedChunkSize
-            * taskInfo.getFileInfoList().size()
-            * taskInfo.getMaxConcurrentSeriesNum()
-            * taskInfo.getMaxChunkMetadataNumInSeries()
-            / compressionRatio;
-    long maxTargetChunkWriterSize =
-        config.getTargetChunkSize() * taskInfo.getMaxConcurrentSeriesNum();
+        averageChunkSize
+                * taskInfo.getFileInfoList().size()
+                * maxConcurrentSeriesNum
+                * taskInfo.getMaxChunkMetadataNumInSeries()
+            + maxConcurrentSeriesNum * tsFileConfig.getPageSizeInByte();
+    long maxTargetChunkWriterSize = config.getTargetChunkSize() * maxConcurrentSeriesNum;
     long targetChunkWriterSize =
         Math.min(maxConcurrentSeriesSizeOfTotalFiles, maxTargetChunkWriterSize);
 
     long chunkSizeFromSourceFile =
-        averageUncompressedChunkSize * taskInfo.getMaxConcurrentSeriesNum();
+        (averageChunkSize + tsFileConfig.getPageSizeInByte()) * maxConcurrentSeriesNum;
 
     return targetChunkWriterSize + chunkSizeFromSourceFile + taskInfo.getModificationFileSize();
+  }
+
+  @Override
+  public long roughEstimateInnerCompactionMemory(List<TsFileResource> resources)
+      throws IOException {
+    if (config.getCompactionMaxAlignedSeriesNumInOneBatch() <= 0) {
+      return -1L;
+    }
+    MetadataInfo metadataInfo =
+        CompactionEstimateUtils.collectMetadataInfo(resources, CompactionType.INNER_SEQ_COMPACTION);
+    int maxConcurrentSeriesNum = metadataInfo.getMaxConcurrentSeriesNum();
+    long maxChunkSize = config.getTargetChunkSize();
+    long maxPageSize = tsFileConfig.getPageSizeInByte();
+    // source files (chunk + uncompressed page)
+    // target file (chunk + unsealed page writer)
+    return 2 * maxConcurrentSeriesNum * (maxChunkSize + maxPageSize)
+        + fixedMemoryBudget
+        + metadataInfo.metadataMemCost;
   }
 }

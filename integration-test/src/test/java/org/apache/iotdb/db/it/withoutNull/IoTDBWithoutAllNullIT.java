@@ -34,14 +34,13 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
 
-import static org.apache.iotdb.db.constant.TestConstant.TIMESTAMP_STR;
+import static org.apache.iotdb.db.utils.constant.TestConstant.TIMESTAMP_STR;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 @RunWith(IoTDBTestRunner.class)
 @Category({LocalStandaloneIT.class, ClusterIT.class})
 public class IoTDBWithoutAllNullIT {
-
   private static final String[] dataSet =
       new String[] {
         "CREATE DATABASE root.testWithoutAllNull",
@@ -64,7 +63,7 @@ public class IoTDBWithoutAllNullIT {
 
   @BeforeClass
   public static void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeClass();
+    EnvFactory.getEnv().initClusterEnvironment();
     prepareData();
   }
 
@@ -83,7 +82,7 @@ public class IoTDBWithoutAllNullIT {
 
   @AfterClass
   public static void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterClass();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   @Test
@@ -221,7 +220,8 @@ public class IoTDBWithoutAllNullIT {
       int cnt;
       try (ResultSet resultSet =
           statement.executeQuery(
-              "select last_value(*) from root.testWithoutAllNull.d1 GROUP BY([1, 21), 5ms) having last_value(s1) is not null || last_value(s2) is not null || last_value(s3) is not null "
+              "select last_value(*) from root.testWithoutAllNull.d1 GROUP BY([1, 21), 5ms) "
+                  + "having last_value(s1) is not null || last_value(s2) is not null || last_value(s3) is not null "
                   + "ORDER BY TIME DESC LIMIT 1 OFFSET 1 ALIGN BY DEVICE")) {
         cnt = 0;
         while (resultSet.next()) {

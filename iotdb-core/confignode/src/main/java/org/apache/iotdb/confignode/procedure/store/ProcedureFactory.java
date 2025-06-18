@@ -19,11 +19,15 @@
 
 package org.apache.iotdb.confignode.procedure.store;
 
+import org.apache.iotdb.commons.exception.runtime.ThriftSerDeException;
 import org.apache.iotdb.confignode.procedure.Procedure;
 import org.apache.iotdb.confignode.procedure.impl.cq.CreateCQProcedure;
+import org.apache.iotdb.confignode.procedure.impl.model.CreateModelProcedure;
+import org.apache.iotdb.confignode.procedure.impl.model.DropModelProcedure;
 import org.apache.iotdb.confignode.procedure.impl.node.AddConfigNodeProcedure;
+import org.apache.iotdb.confignode.procedure.impl.node.RemoveAINodeProcedure;
 import org.apache.iotdb.confignode.procedure.impl.node.RemoveConfigNodeProcedure;
-import org.apache.iotdb.confignode.procedure.impl.node.RemoveDataNodeProcedure;
+import org.apache.iotdb.confignode.procedure.impl.node.RemoveDataNodesProcedure;
 import org.apache.iotdb.confignode.procedure.impl.pipe.plugin.CreatePipePluginProcedure;
 import org.apache.iotdb.confignode.procedure.impl.pipe.plugin.DropPipePluginProcedure;
 import org.apache.iotdb.confignode.procedure.impl.pipe.runtime.PipeHandleLeaderChangeProcedure;
@@ -36,6 +40,8 @@ import org.apache.iotdb.confignode.procedure.impl.pipe.task.StartPipeProcedureV2
 import org.apache.iotdb.confignode.procedure.impl.pipe.task.StopPipeProcedureV2;
 import org.apache.iotdb.confignode.procedure.impl.region.AddRegionPeerProcedure;
 import org.apache.iotdb.confignode.procedure.impl.region.CreateRegionGroupsProcedure;
+import org.apache.iotdb.confignode.procedure.impl.region.NotifyRegionMigrationProcedure;
+import org.apache.iotdb.confignode.procedure.impl.region.ReconstructRegionProcedure;
 import org.apache.iotdb.confignode.procedure.impl.region.RegionMigrateProcedure;
 import org.apache.iotdb.confignode.procedure.impl.region.RemoveRegionPeerProcedure;
 import org.apache.iotdb.confignode.procedure.impl.schema.AlterLogicalViewProcedure;
@@ -43,8 +49,16 @@ import org.apache.iotdb.confignode.procedure.impl.schema.DeactivateTemplateProce
 import org.apache.iotdb.confignode.procedure.impl.schema.DeleteDatabaseProcedure;
 import org.apache.iotdb.confignode.procedure.impl.schema.DeleteLogicalViewProcedure;
 import org.apache.iotdb.confignode.procedure.impl.schema.DeleteTimeSeriesProcedure;
+import org.apache.iotdb.confignode.procedure.impl.schema.SetTTLProcedure;
 import org.apache.iotdb.confignode.procedure.impl.schema.SetTemplateProcedure;
 import org.apache.iotdb.confignode.procedure.impl.schema.UnsetTemplateProcedure;
+import org.apache.iotdb.confignode.procedure.impl.schema.table.AddTableColumnProcedure;
+import org.apache.iotdb.confignode.procedure.impl.schema.table.CreateTableProcedure;
+import org.apache.iotdb.confignode.procedure.impl.schema.table.DeleteDevicesProcedure;
+import org.apache.iotdb.confignode.procedure.impl.schema.table.DropTableColumnProcedure;
+import org.apache.iotdb.confignode.procedure.impl.schema.table.DropTableProcedure;
+import org.apache.iotdb.confignode.procedure.impl.schema.table.RenameTableColumnProcedure;
+import org.apache.iotdb.confignode.procedure.impl.schema.table.SetTablePropertiesProcedure;
 import org.apache.iotdb.confignode.procedure.impl.subscription.consumer.AlterConsumerGroupProcedure;
 import org.apache.iotdb.confignode.procedure.impl.subscription.consumer.CreateConsumerProcedure;
 import org.apache.iotdb.confignode.procedure.impl.subscription.consumer.DropConsumerProcedure;
@@ -98,7 +112,7 @@ public class ProcedureFactory implements IProcedureFactory {
         procedure = new RemoveConfigNodeProcedure();
         break;
       case REMOVE_DATA_NODE_PROCEDURE:
-        procedure = new RemoveDataNodeProcedure();
+        procedure = new RemoveDataNodesProcedure();
         break;
       case REGION_MIGRATE_PROCEDURE:
         procedure = new RegionMigrateProcedure();
@@ -111,6 +125,12 @@ public class ProcedureFactory implements IProcedureFactory {
         break;
       case CREATE_REGION_GROUPS:
         procedure = new CreateRegionGroupsProcedure();
+        break;
+      case RECONSTRUCT_REGION_PROCEDURE:
+        procedure = new ReconstructRegionProcedure();
+        break;
+      case NOTIFY_REGION_MIGRATION_PROCEDURE:
+        procedure = new NotifyRegionMigrationProcedure();
         break;
       case DELETE_TIMESERIES_PROCEDURE:
         procedure = new DeleteTimeSeriesProcedure(false);
@@ -152,7 +172,10 @@ public class ProcedureFactory implements IProcedureFactory {
         procedure = new DropPipeProcedureV2();
         break;
       case ALTER_PIPE_PROCEDURE_V2:
-        procedure = new AlterPipeProcedureV2();
+        procedure = new AlterPipeProcedureV2(ProcedureType.ALTER_PIPE_PROCEDURE_V2);
+        break;
+      case ALTER_PIPE_PROCEDURE_V3:
+        procedure = new AlterPipeProcedureV2(ProcedureType.ALTER_PIPE_PROCEDURE_V3);
         break;
       case PIPE_HANDLE_LEADER_CHANGE_PROCEDURE:
         procedure = new PipeHandleLeaderChangeProcedure();
@@ -177,11 +200,38 @@ public class ProcedureFactory implements IProcedureFactory {
       case UNSET_TEMPLATE_PROCEDURE:
         procedure = new UnsetTemplateProcedure(false);
         break;
+      case CREATE_TABLE_PROCEDURE:
+        procedure = new CreateTableProcedure(false);
+        break;
+      case ADD_TABLE_COLUMN_PROCEDURE:
+        procedure = new AddTableColumnProcedure(false);
+        break;
+      case SET_TABLE_PROPERTIES_PROCEDURE:
+        procedure = new SetTablePropertiesProcedure(false);
+        break;
+      case RENAME_TABLE_COLUMN_PROCEDURE:
+        procedure = new RenameTableColumnProcedure(false);
+        break;
+      case DROP_TABLE_COLUMN_PROCEDURE:
+        procedure = new DropTableColumnProcedure(false);
+        break;
+      case DROP_TABLE_PROCEDURE:
+        procedure = new DropTableProcedure(false);
+        break;
+      case DELETE_DEVICES_PROCEDURE:
+        procedure = new DeleteDevicesProcedure(false);
+        break;
       case CREATE_PIPE_PLUGIN_PROCEDURE:
         procedure = new CreatePipePluginProcedure();
         break;
       case DROP_PIPE_PLUGIN_PROCEDURE:
         procedure = new DropPipePluginProcedure();
+        break;
+      case CREATE_MODEL_PROCEDURE:
+        procedure = new CreateModelProcedure();
+        break;
+      case DROP_MODEL_PROCEDURE:
+        procedure = new DropModelProcedure();
         break;
       case AUTH_OPERATE_PROCEDURE:
         procedure = new AuthOperationProcedure(false);
@@ -215,6 +265,36 @@ public class ProcedureFactory implements IProcedureFactory {
         break;
       case PIPE_ENRICHED_AUTH_OPERATE_PROCEDURE:
         procedure = new AuthOperationProcedure(true);
+        break;
+      case PIPE_ENRICHED_CREATE_TABLE_PROCEDURE:
+        procedure = new CreateTableProcedure(true);
+        break;
+      case PIPE_ENRICHED_DROP_TABLE_PROCEDURE:
+        procedure = new DropTableProcedure(true);
+        break;
+      case PIPE_ENRICHED_ADD_TABLE_COLUMN_PROCEDURE:
+        procedure = new AddTableColumnProcedure(true);
+        break;
+      case PIPE_ENRICHED_SET_TABLE_PROPERTIES_PROCEDURE:
+        procedure = new SetTablePropertiesProcedure(true);
+        break;
+      case PIPE_ENRICHED_RENAME_TABLE_COLUMN_PROCEDURE:
+        procedure = new RenameTableColumnProcedure(true);
+        break;
+      case PIPE_ENRICHED_DROP_TABLE_COLUMN_PROCEDURE:
+        procedure = new DropTableColumnProcedure(true);
+        break;
+      case PIPE_ENRICHED_DELETE_DEVICES_PROCEDURE:
+        procedure = new DeleteDevicesProcedure(true);
+        break;
+      case REMOVE_AI_NODE_PROCEDURE:
+        procedure = new RemoveAINodeProcedure();
+        break;
+      case PIPE_ENRICHED_SET_TTL_PROCEDURE:
+        procedure = new SetTTLProcedure(true);
+        break;
+      case SET_TTL_PROCEDURE:
+        procedure = new SetTTLProcedure(false);
         break;
       case CREATE_TOPIC_PROCEDURE:
         procedure = new CreateTopicProcedure();
@@ -259,19 +339,27 @@ public class ProcedureFactory implements IProcedureFactory {
         LOGGER.error("Unknown Procedure type: {}", typeCode);
         throw new IOException("Unknown Procedure type: " + typeCode);
     }
-    procedure.deserialize(buffer);
+    try {
+      procedure.deserialize(buffer);
+    } catch (ThriftSerDeException e) {
+      LOGGER.warn(
+          "Catch exception while deserializing procedure, this procedure will be ignored.", e);
+      procedure = null;
+    }
     return procedure;
   }
 
-  public static ProcedureType getProcedureType(Procedure<?> procedure) {
+  public static ProcedureType getProcedureType(final Procedure<?> procedure) {
     if (procedure instanceof DeleteDatabaseProcedure) {
       return ProcedureType.DELETE_DATABASE_PROCEDURE;
     } else if (procedure instanceof AddConfigNodeProcedure) {
       return ProcedureType.ADD_CONFIG_NODE_PROCEDURE;
     } else if (procedure instanceof RemoveConfigNodeProcedure) {
       return ProcedureType.REMOVE_CONFIG_NODE_PROCEDURE;
-    } else if (procedure instanceof RemoveDataNodeProcedure) {
+    } else if (procedure instanceof RemoveDataNodesProcedure) {
       return ProcedureType.REMOVE_DATA_NODE_PROCEDURE;
+    } else if (procedure instanceof RemoveAINodeProcedure) {
+      return ProcedureType.REMOVE_AI_NODE_PROCEDURE;
     } else if (procedure instanceof RegionMigrateProcedure) {
       return ProcedureType.REGION_MIGRATE_PROCEDURE;
     } else if (procedure instanceof AddRegionPeerProcedure) {
@@ -282,6 +370,10 @@ public class ProcedureFactory implements IProcedureFactory {
       return ProcedureType.CREATE_REGION_GROUPS;
     } else if (procedure instanceof DeleteTimeSeriesProcedure) {
       return ProcedureType.DELETE_TIMESERIES_PROCEDURE;
+    } else if (procedure instanceof ReconstructRegionProcedure) {
+      return ProcedureType.RECONSTRUCT_REGION_PROCEDURE;
+    } else if (procedure instanceof NotifyRegionMigrationProcedure) {
+      return ProcedureType.NOTIFY_REGION_MIGRATION_PROCEDURE;
     } else if (procedure instanceof CreateTriggerProcedure) {
       return ProcedureType.CREATE_TRIGGER_PROCEDURE;
     } else if (procedure instanceof DropTriggerProcedure) {
@@ -302,10 +394,28 @@ public class ProcedureFactory implements IProcedureFactory {
       return ProcedureType.DEACTIVATE_TEMPLATE_PROCEDURE;
     } else if (procedure instanceof UnsetTemplateProcedure) {
       return ProcedureType.UNSET_TEMPLATE_PROCEDURE;
+    } else if (procedure instanceof CreateTableProcedure) {
+      return ProcedureType.CREATE_TABLE_PROCEDURE;
+    } else if (procedure instanceof AddTableColumnProcedure) {
+      return ProcedureType.ADD_TABLE_COLUMN_PROCEDURE;
+    } else if (procedure instanceof SetTablePropertiesProcedure) {
+      return ProcedureType.SET_TABLE_PROPERTIES_PROCEDURE;
+    } else if (procedure instanceof RenameTableColumnProcedure) {
+      return ProcedureType.RENAME_TABLE_COLUMN_PROCEDURE;
+    } else if (procedure instanceof DropTableColumnProcedure) {
+      return ProcedureType.DROP_TABLE_COLUMN_PROCEDURE;
+    } else if (procedure instanceof DropTableProcedure) {
+      return ProcedureType.DROP_TABLE_PROCEDURE;
+    } else if (procedure instanceof DeleteDevicesProcedure) {
+      return ProcedureType.DELETE_DEVICES_PROCEDURE;
     } else if (procedure instanceof CreatePipePluginProcedure) {
       return ProcedureType.CREATE_PIPE_PLUGIN_PROCEDURE;
     } else if (procedure instanceof DropPipePluginProcedure) {
       return ProcedureType.DROP_PIPE_PLUGIN_PROCEDURE;
+    } else if (procedure instanceof CreateModelProcedure) {
+      return ProcedureType.CREATE_MODEL_PROCEDURE;
+    } else if (procedure instanceof DropModelProcedure) {
+      return ProcedureType.DROP_MODEL_PROCEDURE;
     } else if (procedure instanceof CreatePipeProcedureV2) {
       return ProcedureType.CREATE_PIPE_PROCEDURE_V2;
     } else if (procedure instanceof StartPipeProcedureV2) {
@@ -348,6 +458,8 @@ public class ProcedureFactory implements IProcedureFactory {
       return ProcedureType.ALTER_LOGICAL_VIEW_PROCEDURE;
     } else if (procedure instanceof AuthOperationProcedure) {
       return ProcedureType.AUTH_OPERATE_PROCEDURE;
+    } else if (procedure instanceof SetTTLProcedure) {
+      return ProcedureType.SET_TTL_PROCEDURE;
     } else if (procedure instanceof CreateManyDatabasesProcedure) {
       return ProcedureType.CREATE_MANY_DATABASES_PROCEDURE;
     } else if (procedure instanceof NeverFinishProcedure) {

@@ -23,17 +23,24 @@ import org.apache.iotdb.common.rpc.thrift.TConfigNodeLocation;
 import org.apache.iotdb.common.rpc.thrift.TDataNodeLocation;
 import org.apache.iotdb.common.rpc.thrift.TFlushReq;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
+import org.apache.iotdb.common.rpc.thrift.TSeriesPartitionSlot;
+import org.apache.iotdb.common.rpc.thrift.TSetConfigurationReq;
 import org.apache.iotdb.common.rpc.thrift.TSetSpaceQuotaReq;
+import org.apache.iotdb.common.rpc.thrift.TShowConfigurationResp;
+import org.apache.iotdb.commons.auth.entity.PrivilegeUnion;
 import org.apache.iotdb.commons.cluster.NodeStatus;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.commons.path.PathPatternTree;
-import org.apache.iotdb.confignode.consensus.request.auth.AuthorPlan;
+import org.apache.iotdb.confignode.consensus.request.read.ainode.GetAINodeConfigurationPlan;
 import org.apache.iotdb.confignode.consensus.request.read.database.CountDatabasePlan;
 import org.apache.iotdb.confignode.consensus.request.read.database.GetDatabasePlan;
 import org.apache.iotdb.confignode.consensus.request.read.datanode.GetDataNodeConfigurationPlan;
 import org.apache.iotdb.confignode.consensus.request.read.partition.GetDataPartitionPlan;
 import org.apache.iotdb.confignode.consensus.request.read.partition.GetOrCreateDataPartitionPlan;
 import org.apache.iotdb.confignode.consensus.request.read.region.GetRegionInfoListPlan;
+import org.apache.iotdb.confignode.consensus.request.read.ttl.ShowTTLPlan;
+import org.apache.iotdb.confignode.consensus.request.write.ainode.RemoveAINodePlan;
+import org.apache.iotdb.confignode.consensus.request.write.auth.AuthorPlan;
 import org.apache.iotdb.confignode.consensus.request.write.confignode.RemoveConfigNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.database.DatabaseSchemaPlan;
 import org.apache.iotdb.confignode.consensus.request.write.database.SetDataReplicationFactorPlan;
@@ -49,7 +56,11 @@ import org.apache.iotdb.confignode.manager.partition.PartitionManager;
 import org.apache.iotdb.confignode.manager.pipe.coordinator.PipeManager;
 import org.apache.iotdb.confignode.manager.schema.ClusterSchemaManager;
 import org.apache.iotdb.confignode.manager.subscription.SubscriptionManager;
+import org.apache.iotdb.confignode.rpc.thrift.TAINodeRegisterReq;
+import org.apache.iotdb.confignode.rpc.thrift.TAINodeRestartReq;
+import org.apache.iotdb.confignode.rpc.thrift.TAINodeRestartResp;
 import org.apache.iotdb.confignode.rpc.thrift.TAlterLogicalViewReq;
+import org.apache.iotdb.confignode.rpc.thrift.TAlterOrDropTableReq;
 import org.apache.iotdb.confignode.rpc.thrift.TAlterPipeReq;
 import org.apache.iotdb.confignode.rpc.thrift.TAlterSchemaTemplateReq;
 import org.apache.iotdb.confignode.rpc.thrift.TCloseConsumerReq;
@@ -60,6 +71,7 @@ import org.apache.iotdb.confignode.rpc.thrift.TCountTimeSlotListResp;
 import org.apache.iotdb.confignode.rpc.thrift.TCreateCQReq;
 import org.apache.iotdb.confignode.rpc.thrift.TCreateConsumerReq;
 import org.apache.iotdb.confignode.rpc.thrift.TCreateFunctionReq;
+import org.apache.iotdb.confignode.rpc.thrift.TCreateModelReq;
 import org.apache.iotdb.confignode.rpc.thrift.TCreatePipePluginReq;
 import org.apache.iotdb.confignode.rpc.thrift.TCreatePipeReq;
 import org.apache.iotdb.confignode.rpc.thrift.TCreateSchemaTemplateReq;
@@ -72,9 +84,20 @@ import org.apache.iotdb.confignode.rpc.thrift.TDataPartitionTableResp;
 import org.apache.iotdb.confignode.rpc.thrift.TDeactivateSchemaTemplateReq;
 import org.apache.iotdb.confignode.rpc.thrift.TDeleteDatabasesReq;
 import org.apache.iotdb.confignode.rpc.thrift.TDeleteLogicalViewReq;
+import org.apache.iotdb.confignode.rpc.thrift.TDeleteTableDeviceReq;
+import org.apache.iotdb.confignode.rpc.thrift.TDeleteTableDeviceResp;
 import org.apache.iotdb.confignode.rpc.thrift.TDeleteTimeSeriesReq;
+import org.apache.iotdb.confignode.rpc.thrift.TDescTable4InformationSchemaResp;
+import org.apache.iotdb.confignode.rpc.thrift.TDescTableResp;
 import org.apache.iotdb.confignode.rpc.thrift.TDropCQReq;
+import org.apache.iotdb.confignode.rpc.thrift.TDropFunctionReq;
+import org.apache.iotdb.confignode.rpc.thrift.TDropModelReq;
+import org.apache.iotdb.confignode.rpc.thrift.TDropPipePluginReq;
+import org.apache.iotdb.confignode.rpc.thrift.TDropPipeReq;
+import org.apache.iotdb.confignode.rpc.thrift.TDropTopicReq;
 import org.apache.iotdb.confignode.rpc.thrift.TDropTriggerReq;
+import org.apache.iotdb.confignode.rpc.thrift.TExtendRegionReq;
+import org.apache.iotdb.confignode.rpc.thrift.TFetchTableResp;
 import org.apache.iotdb.confignode.rpc.thrift.TGetAllPipeInfoResp;
 import org.apache.iotdb.confignode.rpc.thrift.TGetAllSubscriptionInfoResp;
 import org.apache.iotdb.confignode.rpc.thrift.TGetAllTemplatesResp;
@@ -84,6 +107,8 @@ import org.apache.iotdb.confignode.rpc.thrift.TGetDatabaseReq;
 import org.apache.iotdb.confignode.rpc.thrift.TGetJarInListReq;
 import org.apache.iotdb.confignode.rpc.thrift.TGetJarInListResp;
 import org.apache.iotdb.confignode.rpc.thrift.TGetLocationForTriggerResp;
+import org.apache.iotdb.confignode.rpc.thrift.TGetModelInfoReq;
+import org.apache.iotdb.confignode.rpc.thrift.TGetModelInfoResp;
 import org.apache.iotdb.confignode.rpc.thrift.TGetPathsSetTemplatesReq;
 import org.apache.iotdb.confignode.rpc.thrift.TGetPathsSetTemplatesResp;
 import org.apache.iotdb.confignode.rpc.thrift.TGetPipePluginTableResp;
@@ -96,34 +121,48 @@ import org.apache.iotdb.confignode.rpc.thrift.TGetTimeSlotListReq;
 import org.apache.iotdb.confignode.rpc.thrift.TGetTimeSlotListResp;
 import org.apache.iotdb.confignode.rpc.thrift.TGetTriggerTableResp;
 import org.apache.iotdb.confignode.rpc.thrift.TGetUDFTableResp;
+import org.apache.iotdb.confignode.rpc.thrift.TGetUdfTableReq;
 import org.apache.iotdb.confignode.rpc.thrift.TMigrateRegionReq;
 import org.apache.iotdb.confignode.rpc.thrift.TPermissionInfoResp;
 import org.apache.iotdb.confignode.rpc.thrift.TPipeConfigTransferReq;
 import org.apache.iotdb.confignode.rpc.thrift.TPipeConfigTransferResp;
+import org.apache.iotdb.confignode.rpc.thrift.TReconstructRegionReq;
 import org.apache.iotdb.confignode.rpc.thrift.TRegionRouteMapResp;
+import org.apache.iotdb.confignode.rpc.thrift.TRemoveRegionReq;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaNodeManagementResp;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaPartitionTableResp;
 import org.apache.iotdb.confignode.rpc.thrift.TSetDataNodeStatusReq;
 import org.apache.iotdb.confignode.rpc.thrift.TSetSchemaTemplateReq;
+import org.apache.iotdb.confignode.rpc.thrift.TShowAINodesResp;
 import org.apache.iotdb.confignode.rpc.thrift.TShowCQResp;
 import org.apache.iotdb.confignode.rpc.thrift.TShowClusterResp;
 import org.apache.iotdb.confignode.rpc.thrift.TShowConfigNodesResp;
 import org.apache.iotdb.confignode.rpc.thrift.TShowDataNodesResp;
 import org.apache.iotdb.confignode.rpc.thrift.TShowDatabaseResp;
+import org.apache.iotdb.confignode.rpc.thrift.TShowModelReq;
+import org.apache.iotdb.confignode.rpc.thrift.TShowModelResp;
+import org.apache.iotdb.confignode.rpc.thrift.TShowPipePluginReq;
 import org.apache.iotdb.confignode.rpc.thrift.TShowPipeReq;
 import org.apache.iotdb.confignode.rpc.thrift.TShowPipeResp;
 import org.apache.iotdb.confignode.rpc.thrift.TShowSubscriptionReq;
 import org.apache.iotdb.confignode.rpc.thrift.TShowSubscriptionResp;
+import org.apache.iotdb.confignode.rpc.thrift.TShowTable4InformationSchemaResp;
+import org.apache.iotdb.confignode.rpc.thrift.TShowTableResp;
 import org.apache.iotdb.confignode.rpc.thrift.TShowTopicReq;
 import org.apache.iotdb.confignode.rpc.thrift.TShowTopicResp;
 import org.apache.iotdb.confignode.rpc.thrift.TShowVariablesResp;
+import org.apache.iotdb.confignode.rpc.thrift.TStartPipeReq;
+import org.apache.iotdb.confignode.rpc.thrift.TStopPipeReq;
 import org.apache.iotdb.confignode.rpc.thrift.TSubscribeReq;
 import org.apache.iotdb.confignode.rpc.thrift.TUnsetSchemaTemplateReq;
 import org.apache.iotdb.confignode.rpc.thrift.TUnsubscribeReq;
 import org.apache.iotdb.consensus.common.DataSet;
 import org.apache.iotdb.rpc.TSStatusCode;
 
+import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * A subset of services provided by {@link ConfigManager}. For use internally only, passed to
@@ -204,11 +243,25 @@ public interface IManager {
   CQManager getCQManager();
 
   /**
+   * Get {@link ModelManager}.
+   *
+   * @return {@link ModelManager} instance
+   */
+  ModelManager getModelManager();
+
+  /**
    * Get {@link PipeManager}.
    *
    * @return {@link PipeManager} instance
    */
   PipeManager getPipeManager();
+
+  /**
+   * Get TTLManager.
+   *
+   * @return TTLManager instance
+   */
+  TTLManager getTTLManager();
 
   /**
    * Get {@link ClusterQuotaManager}.
@@ -263,6 +316,30 @@ public interface IManager {
   DataSet removeDataNode(RemoveDataNodePlan removeDataNodePlan);
 
   /**
+   * Register AINode
+   *
+   * @param req TAINodeRegisterReq
+   * @return AINodeConfigurationDataSet
+   */
+  DataSet registerAINode(TAINodeRegisterReq req);
+
+  /**
+   * Restart AINode.
+   *
+   * @param req TAINodeRestartReq
+   * @return SUCCESS_STATUS if allow AINode to restart, REJECT_START otherwise
+   */
+  TAINodeRestartResp restartAINode(TAINodeRestartReq req);
+
+  /**
+   * Remove AINode.
+   *
+   * @param removeAINodePlan RemoveAINodePlan
+   * @return AINodeToStatusResp
+   */
+  TSStatus removeAINode(RemoveAINodePlan removeAINodePlan);
+
+  /**
    * Report that the specified DataNode will be shutdown.
    *
    * <p>The ConfigNode-leader will mark it as {@link NodeStatus#Unknown}
@@ -279,6 +356,15 @@ public interface IManager {
   DataSet getDataNodeConfiguration(GetDataNodeConfigurationPlan getDataNodeConfigurationPlan);
 
   /**
+   * Get AINode info.
+   *
+   * @param getAINodeConfigurationPlan which contains specific AINode id or -1 to get all AINodes'
+   *     configuration.
+   * @return AINodeConfigurationDataSet
+   */
+  DataSet getAINodeConfiguration(GetAINodeConfigurationPlan getAINodeConfigurationPlan);
+
+  /**
    * Get Cluster Nodes' information.
    *
    * @return TShowClusterResp
@@ -293,6 +379,8 @@ public interface IManager {
   TShowVariablesResp showVariables();
 
   TSStatus setTTL(SetTTLPlan configRequest);
+
+  DataSet showTTL(ShowTTLPlan showTTLPlan);
 
   TSStatus setSchemaReplicationFactor(SetSchemaReplicationFactorPlan configPhysicalPlan);
 
@@ -341,14 +429,29 @@ public interface IManager {
    *
    * @return TSchemaPartitionResp
    */
-  TSchemaPartitionTableResp getSchemaPartition(PathPatternTree patternTree);
+  TSchemaPartitionTableResp getSchemaPartition(final PathPatternTree patternTree);
+
+  /**
+   * Get SchemaPartition with <databaseName, seriesSlot>.
+   *
+   * @return TSchemaPartitionResp
+   */
+  TSchemaPartitionTableResp getSchemaPartition(Map<String, List<TSeriesPartitionSlot>> dbSlotMap);
 
   /**
    * Get or create SchemaPartition.
    *
    * @return TSchemaPartitionResp
    */
-  TSchemaPartitionTableResp getOrCreateSchemaPartition(PathPatternTree patternTree);
+  TSchemaPartitionTableResp getOrCreateSchemaPartition(final PathPatternTree patternTree);
+
+  /**
+   * Get or create SchemaPartition with <databaseName, seriesSlot>.
+   *
+   * @return TSchemaPartitionResp
+   */
+  TSchemaPartitionTableResp getOrCreateSchemaPartition(
+      Map<String, List<TSeriesPartitionSlot>> dbSlotMap);
 
   /**
    * Create SchemaNodeManagementPartition for child paths node management.
@@ -378,20 +481,20 @@ public interface IManager {
    *
    * @return status
    */
-  TSStatus operatePermission(AuthorPlan authorPlan);
+  TSStatus operatePermission(final AuthorPlan authorPlan);
 
   /**
    * Query Permission.
    *
    * @return PermissionInfoDataSet
    */
-  DataSet queryPermission(AuthorPlan authorPlan);
+  DataSet queryPermission(final AuthorPlan authorPlan);
 
   /** login. */
   TPermissionInfoResp login(String username, String password);
 
   /** Check User Privileges. */
-  TPermissionInfoResp checkUserPrivileges(String username, List<PartialPath> paths, int permission);
+  TPermissionInfoResp checkUserPrivileges(String username, PrivilegeUnion union);
 
   /**
    * Register ConfigNode when it is first startup.
@@ -424,9 +527,9 @@ public interface IManager {
 
   TSStatus createFunction(TCreateFunctionReq req);
 
-  TSStatus dropFunction(String udfName);
+  TSStatus dropFunction(TDropFunctionReq req);
 
-  TGetUDFTableResp getUDFTable();
+  TGetUDFTableResp getUDFTable(TGetUdfTableReq req);
 
   TGetJarInListResp getUDFJar(TGetJarInListReq req);
 
@@ -452,10 +555,13 @@ public interface IManager {
   TSStatus createPipePlugin(TCreatePipePluginReq req);
 
   /** Drop pipe plugin. */
-  TSStatus dropPipePlugin(String pluginName);
+  TSStatus dropPipePlugin(TDropPipePluginReq req);
 
   /** Show pipe plugins. */
   TGetPipePluginTableResp getPipePluginTable();
+
+  /** Show pipe plugins. */
+  TGetPipePluginTableResp getPipePluginTableExtended(TShowPipePluginReq req);
 
   /** Get pipe plugin jar. */
   TGetJarInListResp getPipePluginJar(TGetJarInListReq req);
@@ -466,8 +572,14 @@ public interface IManager {
   /** Flush on all DataNodes. */
   TSStatus flush(TFlushReq req);
 
+  /** Flush on specific Datanode. */
+  TSStatus flushOnSpecificDN(TFlushReq req, Map<Integer, TDataNodeLocation> dataNodeLocationMap);
+
   /** Clear cache on all DataNodes. */
-  TSStatus clearCache();
+  TSStatus clearCache(final Set<Integer> clearCacheOptions);
+
+  /** Set Configuration. */
+  TSStatus setConfiguration(TSetConfigurationReq req);
 
   /** Check and repair unsorted tsfile by compaction. */
   TSStatus startRepairData();
@@ -475,8 +587,13 @@ public interface IManager {
   /** Stop repair data task */
   TSStatus stopRepairData();
 
+  TSStatus submitLoadConfigurationTask();
+
   /** Load configuration on all DataNodes. */
   TSStatus loadConfiguration();
+
+  /** Show content of configuration file on specified node */
+  TShowConfigurationResp showConfiguration(int nodeId);
 
   /** Set system status on all DataNodes. */
   TSStatus setSystemStatus(String status);
@@ -486,7 +603,7 @@ public interface IManager {
 
   TSStatus killQuery(String queryId, int dataNodeId);
 
-  TGetDataNodeLocationsResp getRunningDataNodeLocations();
+  TGetDataNodeLocationsResp getReadableDataNodeLocations();
 
   /**
    * Get the latest RegionRouteMap.
@@ -501,6 +618,9 @@ public interface IManager {
 
   /** Show (data/schemaengine) regions. */
   DataSet showRegion(GetRegionInfoListPlan getRegionInfoListPlan);
+
+  /** Show AINodes. */
+  TShowAINodesResp showAINodes();
 
   /** Show DataNodes. */
   TShowDataNodesResp showDataNodes();
@@ -586,36 +706,41 @@ public interface IManager {
    * Alter Pipe.
    *
    * @param req Info about Pipe
-   * @return TSStatus
+   * @return {@link TSStatusCode#SUCCESS_STATUS} if altered the pipe successfully, {@link
+   *     TSStatusCode#PIPE_ERROR} if encountered failure, {@link TSStatusCode#PIPE_NOT_EXIST_ERROR}
+   *     if the pipe does not exist.
    */
   TSStatus alterPipe(TAlterPipeReq req);
 
   /**
    * Start Pipe.
    *
-   * @param pipeName name of Pipe
+   * @param req Info about Pipe
    * @return {@link TSStatusCode#SUCCESS_STATUS} if started the pipe successfully, {@link
-   *     TSStatusCode#PIPE_ERROR} if encountered failure.
+   *     TSStatusCode#PIPE_ERROR} if encountered failure, {@link TSStatusCode#PIPE_NOT_EXIST_ERROR}
+   *     if the pipe does not exist.
    */
-  TSStatus startPipe(String pipeName);
+  TSStatus startPipe(TStartPipeReq req);
 
   /**
    * Stop Pipe.
    *
-   * @param pipeName name of Pipe
+   * @param req Info about Pipe
    * @return {@link TSStatusCode#SUCCESS_STATUS} if stopped the pipe successfully, {@link
-   *     TSStatusCode#PIPE_ERROR} if encountered failure.
+   *     TSStatusCode#PIPE_ERROR} if encountered failure, {@link TSStatusCode#PIPE_NOT_EXIST_ERROR}
+   *     if the pipe does not exist.
    */
-  TSStatus stopPipe(String pipeName);
+  TSStatus stopPipe(TStopPipeReq req);
 
   /**
    * Drop Pipe.
    *
-   * @param pipeName name of Pipe
+   * @param req Info about Pipe
    * @return {@link TSStatusCode#SUCCESS_STATUS} if dropped the pipe successfully, {@link
-   *     TSStatusCode#PIPE_ERROR} if encountered failure.
+   *     TSStatusCode#PIPE_ERROR} if encountered failure, {@link TSStatusCode#PIPE_NOT_EXIST_ERROR}
+   *     if the pipe does not exist.
    */
-  TSStatus dropPipe(String pipeName);
+  TSStatus dropPipe(TDropPipeReq req);
 
   /**
    * Get Pipe by name. If pipeName is empty, get all Pipe.
@@ -650,7 +775,7 @@ public interface IManager {
   TSStatus createTopic(TCreateTopicReq topic);
 
   /** Drop Topic. */
-  TSStatus dropTopic(String topicName);
+  TSStatus dropTopic(TDropTopicReq req);
 
   /** Show Topic. */
   TShowTopicResp showTopic(TShowTopicReq req);
@@ -704,6 +829,12 @@ public interface IManager {
 
   TSStatus migrateRegion(TMigrateRegionReq req);
 
+  TSStatus reconstructRegion(TReconstructRegionReq req);
+
+  TSStatus extendRegion(TExtendRegionReq req);
+
+  TSStatus removeRegion(TRemoveRegionReq req);
+
   TSStatus createCQ(TCreateCQReq req);
 
   TSStatus dropCQ(TDropCQReq req);
@@ -714,6 +845,35 @@ public interface IManager {
 
   TSStatus transfer(List<TDataNodeLocation> newUnknownDataList);
 
+  /** Create a model. */
+  TSStatus createModel(TCreateModelReq req);
+
+  /** Drop a model. */
+  TSStatus dropModel(TDropModelReq req);
+
+  /** Return the model table. */
+  TShowModelResp showModel(TShowModelReq req);
+
+  /** Update the model state */
+  TGetModelInfoResp getModelInfo(TGetModelInfoReq req);
+
   /** Set space quota. */
   TSStatus setSpaceQuota(TSetSpaceQuotaReq req);
+
+  TSStatus createTable(final ByteBuffer tableInfo);
+
+  TSStatus alterOrDropTable(final TAlterOrDropTableReq req);
+
+  TDeleteTableDeviceResp deleteDevice(final TDeleteTableDeviceReq req);
+
+  TShowTableResp showTables(final String database, final boolean isDetails);
+
+  TShowTable4InformationSchemaResp showTables4InformationSchema();
+
+  TDescTableResp describeTable(
+      final String database, final String tableName, final boolean isDetails);
+
+  TDescTable4InformationSchemaResp describeTable4InformationSchema();
+
+  TFetchTableResp fetchTables(final Map<String, Set<String>> fetchTableMap);
 }

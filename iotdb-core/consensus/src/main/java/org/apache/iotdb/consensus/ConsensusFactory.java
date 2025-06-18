@@ -19,7 +19,9 @@
 
 package org.apache.iotdb.consensus;
 
+import org.apache.iotdb.commons.client.container.PipeConsensusClientMgrContainer;
 import org.apache.iotdb.consensus.config.ConsensusConfig;
+import org.apache.iotdb.consensus.pipe.metric.PipeConsensusSyncLagManager;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +37,10 @@ public class ConsensusFactory {
   public static final String SIMPLE_CONSENSUS = "org.apache.iotdb.consensus.simple.SimpleConsensus";
   public static final String RATIS_CONSENSUS = "org.apache.iotdb.consensus.ratis.RatisConsensus";
   public static final String IOT_CONSENSUS = "org.apache.iotdb.consensus.iot.IoTConsensus";
+  public static final String REAL_PIPE_CONSENSUS = "org.apache.iotdb.consensus.pipe.PipeConsensus";
+  public static final String IOT_CONSENSUS_V2 = "org.apache.iotdb.consensus.iot.IoTConsensusV2";
+  public static final String IOT_CONSENSUS_V2_BATCH_MODE = "batch";
+  public static final String IOT_CONSENSUS_V2_STREAM_MODE = "stream";
 
   private static final Logger logger = LoggerFactory.getLogger(ConsensusFactory.class);
 
@@ -45,6 +51,14 @@ public class ConsensusFactory {
   public static Optional<IConsensus> getConsensusImpl(
       String className, ConsensusConfig config, IStateMachine.Registry registry) {
     try {
+      // special judge for IoTConsensusV2
+      if (className.equals(IOT_CONSENSUS_V2)) {
+        className = REAL_PIPE_CONSENSUS;
+        // initialize iotConsensusV2's thrift component
+        PipeConsensusClientMgrContainer.build();
+        // initialize iotConsensusV2's metric component
+        PipeConsensusSyncLagManager.build();
+      }
       Class<?> executor = Class.forName(className);
       Constructor<?> executorConstructor =
           executor.getDeclaredConstructor(ConsensusConfig.class, IStateMachine.Registry.class);

@@ -20,6 +20,7 @@ package org.apache.iotdb.db.protocol.rest.v2.handler;
 import org.apache.iotdb.commons.exception.MetadataException;
 import org.apache.iotdb.commons.utils.PathUtils;
 import org.apache.iotdb.db.exception.WriteProcessRejectException;
+import org.apache.iotdb.db.exception.metadata.DataTypeMismatchException;
 import org.apache.iotdb.db.protocol.rest.utils.InsertRowDataUtils;
 import org.apache.iotdb.db.protocol.rest.v2.model.InsertRecordsRequest;
 import org.apache.iotdb.db.protocol.rest.v2.model.InsertTabletRequest;
@@ -36,8 +37,10 @@ import org.apache.tsfile.utils.BitMap;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class StatementConstructionHandler {
   private StatementConstructionHandler() {}
@@ -52,6 +55,7 @@ public class StatementConstructionHandler {
     insertStatement.setDevicePath(
         DataNodeDevicePathCache.getInstance().getPartialPath(insertTabletRequest.getDevice()));
     // check whether measurement is legal according to syntax convention
+    // TODO: remove the check for table model
     insertStatement.setMeasurements(
         PathUtils.checkIsLegalSingleMeasurementsAndUpdate(insertTabletRequest.getMeasurements())
             .toArray(new String[0]));
@@ -91,6 +95,7 @@ public class StatementConstructionHandler {
           columns[columnIndex] = booleanValues;
           break;
         case INT32:
+        case DATE:
           int[] intValues = new int[rowSize];
           for (int rowIndex = 0; rowIndex < rowSize; rowIndex++) {
             Object object = rawData.get(columnIndex).get(rowIndex);
@@ -106,6 +111,7 @@ public class StatementConstructionHandler {
           columns[columnIndex] = intValues;
           break;
         case INT64:
+        case TIMESTAMP:
           long[] longValues = new long[rowSize];
           for (int rowIndex = 0; rowIndex < rowSize; rowIndex++) {
             Object object = rawData.get(columnIndex).get(rowIndex);
@@ -147,6 +153,8 @@ public class StatementConstructionHandler {
           columns[columnIndex] = doubleValues;
           break;
         case TEXT:
+        case BLOB:
+        case STRING:
           Binary[] binaryValues = new Binary[rowSize];
           for (int rowIndex = 0; rowIndex < rowSize; rowIndex++) {
             if (rawData.get(columnIndex).get(rowIndex) == null) {
@@ -210,6 +218,7 @@ public class StatementConstructionHandler {
       statement.setDevicePath(
           DataNodeDevicePathCache.getInstance()
               .getPartialPath(insertRecordsRequest.getDevices().get(i)));
+      // TODO: remove the check for table model
       statement.setMeasurements(
           PathUtils.checkIsLegalSingleMeasurementsAndUpdate(
                   insertRecordsRequest.getMeasurementsList().get(i))
@@ -217,14 +226,36 @@ public class StatementConstructionHandler {
       TimestampPrecisionUtils.checkTimestampPrecision(insertRecordsRequest.getTimestamps().get(i));
       statement.setTime(insertRecordsRequest.getTimestamps().get(i));
       statement.setDataTypes(dataTypesList.get(i).toArray(new TSDataType[0]));
+      Map<Integer, Object> dataTypeMismatchInfo = new HashMap<>();
       List<Object> values =
           InsertRowDataUtils.reGenValues(
-              dataTypesList.get(i), insertRecordsRequest.getValuesList().get(i));
+              dataTypesList.get(i),
+              insertRecordsRequest.getValuesList().get(i),
+              dataTypeMismatchInfo);
       statement.setValues(values.toArray());
       statement.setAligned(insertRecordsRequest.getIsAligned());
       // skip empty statement
       if (statement.isEmpty()) {
         continue;
+      }
+      if (!dataTypeMismatchInfo.isEmpty()) {
+        for (Map.Entry<Integer, Object> entry : dataTypeMismatchInfo.entrySet()) {
+          int index = entry.getKey();
+          String measurement = statement.getMeasurements()[index];
+          TSDataType dataType = statement.getDataTypes()[index];
+          statement.markFailedMeasurement(
+              index,
+              new DataTypeMismatchException(
+                  insertRecordsRequest.getDevices().get(i),
+                  statement.getMeasurements()[index],
+                  statement.getDataTypes()[index],
+                  statement.getTime(),
+                  entry.getValue()));
+          // markFailedMeasurement will set datatype and measurements null
+          // setting them back in order to pass the schema validation
+          statement.getDataTypes()[index] = dataType;
+          statement.getMeasurements()[index] = measurement;
+        }
       }
       insertRowStatementList.add(statement);
     }

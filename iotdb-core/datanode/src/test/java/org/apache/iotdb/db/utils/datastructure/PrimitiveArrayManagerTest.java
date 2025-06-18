@@ -19,7 +19,7 @@
 
 package org.apache.iotdb.db.utils.datastructure;
 
-import org.apache.iotdb.db.conf.IoTDBConfig;
+import org.apache.iotdb.db.conf.DataNodeMemoryConfig;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.storageengine.rescon.memory.PrimitiveArrayManager;
 
@@ -31,7 +31,8 @@ import org.junit.Test;
 import static org.apache.iotdb.db.storageengine.rescon.memory.PrimitiveArrayManager.ARRAY_SIZE;
 
 public class PrimitiveArrayManagerTest {
-  private IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
+  private DataNodeMemoryConfig dataNodeMemoryConfig =
+      IoTDBDescriptor.getInstance().getMemoryConfig();
 
   @Test
   public void testGetArrayRowCount() {
@@ -53,8 +54,7 @@ public class PrimitiveArrayManagerTest {
 
     /** threshold total size of arrays for all data types */
     double POOLED_ARRAYS_MEMORY_THRESHOLD =
-        config.getAllocateMemoryForStorageEngine()
-            * config.getBufferedArraysMemoryProportion()
+        dataNodeMemoryConfig.getBufferedArraysMemoryManager().getTotalMemorySizeInBytes()
             / AMPLIFICATION_FACTOR;
     // LIMITS should be updated if (TOTAL_ALLOCATION_REQUEST_COUNT.get() > limitUpdateThreshold)
     int totalDataTypeSize = 0;
@@ -79,10 +79,12 @@ public class PrimitiveArrayManagerTest {
             Assert.assertEquals(ARRAY_SIZE, ((boolean[]) o).length);
             break;
           case INT32:
+          case DATE:
             Assert.assertTrue(o instanceof int[]);
             Assert.assertEquals(ARRAY_SIZE, ((int[]) o).length);
             break;
           case INT64:
+          case TIMESTAMP:
             Assert.assertTrue(o instanceof long[]);
             Assert.assertEquals(ARRAY_SIZE, ((long[]) o).length);
             break;
@@ -95,6 +97,8 @@ public class PrimitiveArrayManagerTest {
             Assert.assertEquals(ARRAY_SIZE, ((double[]) o).length);
             break;
           case TEXT:
+          case BLOB:
+          case STRING:
             Assert.assertTrue(o instanceof Binary[]);
             Assert.assertEquals(ARRAY_SIZE, ((Binary[]) o).length);
             break;

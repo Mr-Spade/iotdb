@@ -20,13 +20,17 @@
 package org.apache.iotdb.db.queryengine.plan.planner.plan.node.write;
 
 import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
-import org.apache.iotdb.commons.consensus.index.ComparableConsensusRequest;
 import org.apache.iotdb.commons.consensus.index.ProgressIndex;
+import org.apache.iotdb.commons.exception.IllegalPathException;
 import org.apache.iotdb.commons.path.PartialPath;
-import org.apache.iotdb.commons.utils.TestOnly;
-import org.apache.iotdb.consensus.iot.log.ConsensusReqReader;
+import org.apache.iotdb.commons.schema.table.column.TsTableColumnCategory;
+import org.apache.iotdb.consensus.ConsensusFactory;
+import org.apache.iotdb.db.conf.IoTDBConfig;
+import org.apache.iotdb.db.conf.IoTDBDescriptor;
+import org.apache.iotdb.db.pipe.resource.memory.InsertNodeMemoryEstimator;
+import org.apache.iotdb.db.queryengine.plan.analyze.cache.schema.DataNodeDevicePathCache;
+import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNodeId;
-import org.apache.iotdb.db.queryengine.plan.planner.plan.node.WritePlanNode;
 import org.apache.iotdb.db.storageengine.dataregion.memtable.DeviceIDFactory;
 import org.apache.iotdb.db.storageengine.dataregion.wal.buffer.IWALByteBufferView;
 import org.apache.iotdb.db.storageengine.dataregion.wal.utils.WALWriteUtils;
@@ -34,30 +38,39 @@ import org.apache.iotdb.db.storageengine.dataregion.wal.utils.WALWriteUtils;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.exception.NotImplementedException;
 import org.apache.tsfile.file.metadata.IDeviceID;
+import org.apache.tsfile.utils.ReadWriteIOUtils;
 import org.apache.tsfile.write.schema.MeasurementSchema;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
-public abstract class InsertNode extends WritePlanNode implements ComparableConsensusRequest {
+public abstract class InsertNode extends SearchNode {
 
-  /** this insert node doesn't need to participate in iot consensus */
-  public static final long NO_CONSENSUS_INDEX = ConsensusReqReader.DEFAULT_SEARCH_INDEX;
+  private static final IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
 
   /**
    * if use id table, this filed is id form of device path <br>
    * if not, this filed is device path<br>
+   * or table name for table-model insertions.
    */
-  protected PartialPath devicePath;
+  protected PartialPath targetPath;
 
   protected boolean isAligned;
   protected MeasurementSchema[] measurementSchemas;
   protected String[] measurements;
   protected TSDataType[] dataTypes;
+
+  protected TsTableColumnCategory[] columnCategories;
+  protected List<Integer> idColumnIndices;
+  protected int measurementColumnCnt = -1;
 
   protected int failedMeasurementNumber = 0;
 
@@ -67,16 +80,14 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
    */
   protected IDeviceID deviceID;
 
-  /**
-   * this index is used by wal search, its order should be protected by the upper layer, and the
-   * value should start from 1
-   */
-  protected long searchIndex = NO_CONSENSUS_INDEX;
+  protected boolean isGeneratedByRemoteConsensusLeader = false;
 
   /** Physical address of data region after splitting */
   protected TRegionReplicaSet dataRegionReplicaSet;
 
   protected ProgressIndex progressIndex;
+
+  protected long memorySize;
 
   private static final DeviceIDFactory deviceIDFactory = DeviceIDFactory.getInstance();
 
@@ -84,17 +95,48 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
     super(id);
   }
 
+  @Override
+  public final SearchNode merge(List<SearchNode> searchNodes) {
+    if (searchNodes.isEmpty()) {
+      throw new IllegalArgumentException("insertNodes should never be empty");
+    }
+    if (searchNodes.size() == 1) {
+      return searchNodes.get(0);
+    }
+    List<InsertNode> insertNodes =
+        searchNodes.stream()
+            .map(searchNode -> (InsertNode) searchNode)
+            .collect(Collectors.toList());
+    InsertNode result = mergeInsertNode(insertNodes);
+    result.setSearchIndex(insertNodes.get(0).getSearchIndex());
+    result.setTargetPath(insertNodes.get(0).getTargetPath());
+    return result;
+  }
+
+  public abstract InsertNode mergeInsertNode(List<InsertNode> insertNodes);
+
   protected InsertNode(
       PlanNodeId id,
       PartialPath devicePath,
       boolean isAligned,
       String[] measurements,
       TSDataType[] dataTypes) {
+    this(id, devicePath, isAligned, measurements, dataTypes, null);
+  }
+
+  protected InsertNode(
+      PlanNodeId id,
+      PartialPath devicePath,
+      boolean isAligned,
+      String[] measurements,
+      TSDataType[] dataTypes,
+      TsTableColumnCategory[] columnCategories) {
     super(id);
-    this.devicePath = devicePath;
+    this.targetPath = devicePath;
     this.isAligned = isAligned;
     this.measurements = measurements;
     this.dataTypes = dataTypes;
+    setColumnCategories(columnCategories);
   }
 
   public TRegionReplicaSet getDataRegionReplicaSet() {
@@ -105,12 +147,12 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
     this.dataRegionReplicaSet = dataRegionReplicaSet;
   }
 
-  public PartialPath getDevicePath() {
-    return devicePath;
+  public PartialPath getTargetPath() {
+    return targetPath;
   }
 
-  public void setDevicePath(PartialPath devicePath) {
-    this.devicePath = devicePath;
+  public void setTargetPath(PartialPath targetPath) {
+    this.targetPath = targetPath;
   }
 
   public boolean isAligned() {
@@ -133,12 +175,40 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
     return measurements;
   }
 
+  public int measureColumnCnt() {
+    if (columnCategories == null) {
+      return measurements.length;
+    }
+    return (int)
+        Arrays.stream(columnCategories).filter(col -> col == TsTableColumnCategory.FIELD).count();
+  }
+
+  public boolean isValidMeasurement(int i) {
+    return measurementSchemas != null
+        && measurementSchemas[i] != null
+        && (columnCategories == null || columnCategories[i] == TsTableColumnCategory.FIELD);
+  }
+
   public void setMeasurements(String[] measurements) {
     this.measurements = measurements;
   }
 
   public TSDataType[] getDataTypes() {
     return dataTypes;
+  }
+
+  public int getMeasurementColumnCnt() {
+    if (measurementColumnCnt == -1) {
+      measurementColumnCnt = 0;
+      if (measurementSchemas != null) {
+        for (int i = 0; i < measurementSchemas.length; i++) {
+          if (isValidMeasurement(i)) {
+            measurementColumnCnt++;
+          }
+        }
+      }
+    }
+    return measurementColumnCnt;
   }
 
   public TSDataType getDataType(int index) {
@@ -151,7 +221,7 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
 
   public IDeviceID getDeviceID() {
     if (deviceID == null) {
-      deviceID = deviceIDFactory.getDeviceID(devicePath);
+      deviceID = deviceIDFactory.getDeviceID(targetPath);
     }
     return deviceID;
   }
@@ -160,13 +230,25 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
     this.deviceID = deviceID;
   }
 
-  public long getSearchIndex() {
-    return searchIndex;
+  public boolean isDeviceIDExists() {
+    return deviceID != null;
   }
 
-  /** Search index should start from 1 */
-  public void setSearchIndex(long searchIndex) {
-    this.searchIndex = searchIndex;
+  public boolean isGeneratedByRemoteConsensusLeader() {
+    switch (config.getDataRegionConsensusProtocolClass()) {
+      case ConsensusFactory.IOT_CONSENSUS:
+      case ConsensusFactory.IOT_CONSENSUS_V2:
+      case ConsensusFactory.RATIS_CONSENSUS:
+        return isGeneratedByRemoteConsensusLeader;
+      case ConsensusFactory.SIMPLE_CONSENSUS:
+        return false;
+    }
+    return false;
+  }
+
+  @Override
+  public void markAsGeneratedByRemoteConsensusLeader() {
+    isGeneratedByRemoteConsensusLeader = true;
   }
 
   @Override
@@ -180,6 +262,7 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
   }
 
   // region Serialization methods for WAL
+
   /** Serialized size of measurement schemas, ignoring failed time series */
   protected int serializeMeasurementSchemasSize() {
     int byteLen = 0;
@@ -211,7 +294,7 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
   protected void deserializeMeasurementSchemas(DataInputStream stream) throws IOException {
     for (int i = 0; i < measurements.length; i++) {
       measurementSchemas[i] = MeasurementSchema.deserializeFrom(stream);
-      measurements[i] = measurementSchemas[i].getMeasurementId();
+      measurements[i] = measurementSchemas[i].getMeasurementName();
       dataTypes[i] = measurementSchemas[i].getType();
     }
   }
@@ -219,7 +302,7 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
   protected void deserializeMeasurementSchemas(ByteBuffer buffer) {
     for (int i = 0; i < measurements.length; i++) {
       measurementSchemas[i] = MeasurementSchema.deserializeFrom(buffer);
-      measurements[i] = measurementSchemas[i].getMeasurementId();
+      measurements[i] = measurementSchemas[i].getMeasurementName();
     }
   }
 
@@ -231,17 +314,7 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
 
   public abstract long getMinTime();
 
-  /**
-   * Notice: Call this method ONLY when using IOT_CONSENSUS, other consensus protocol cannot
-   * distinguish whether the insertNode sync from leader by this method.
-   * isSyncFromLeaderWhenUsingIoTConsensus == true means this node is a follower
-   */
-  public boolean isSyncFromLeaderWhenUsingIoTConsensus() {
-    return searchIndex == ConsensusReqReader.DEFAULT_SEARCH_INDEX;
-  }
-
   // region partial insert
-  @TestOnly
   public void markFailedMeasurement(int index) {
     throw new UnsupportedOperationException();
   }
@@ -265,7 +338,8 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
 
   public boolean allMeasurementFailed() {
     if (measurements != null) {
-      return failedMeasurementNumber >= measurements.length;
+      return failedMeasurementNumber
+          >= measurements.length - (idColumnIndices == null ? 0 : idColumnIndices.size());
     }
     return true;
   }
@@ -288,12 +362,18 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
 
   @Override
   public boolean equals(Object o) {
-    if (this == o) return true;
-    if (o == null || getClass() != o.getClass()) return false;
-    if (!super.equals(o)) return false;
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    if (!super.equals(o)) {
+      return false;
+    }
     InsertNode that = (InsertNode) o;
     return isAligned == that.isAligned
-        && Objects.equals(devicePath, that.devicePath)
+        && Objects.equals(targetPath, that.targetPath)
         && Arrays.equals(measurementSchemas, that.measurementSchemas)
         && Arrays.equals(measurements, that.measurements)
         && Arrays.equals(dataTypes, that.dataTypes)
@@ -304,10 +384,69 @@ public abstract class InsertNode extends WritePlanNode implements ComparableCons
   @Override
   public int hashCode() {
     int result =
-        Objects.hash(super.hashCode(), devicePath, isAligned, deviceID, dataRegionReplicaSet);
+        Objects.hash(super.hashCode(), targetPath, isAligned, deviceID, dataRegionReplicaSet);
     result = 31 * result + Arrays.hashCode(measurementSchemas);
     result = 31 * result + Arrays.hashCode(measurements);
     result = 31 * result + Arrays.hashCode(dataTypes);
     return result;
+  }
+
+  public TsTableColumnCategory[] getColumnCategories() {
+    return columnCategories;
+  }
+
+  public void setColumnCategories(TsTableColumnCategory[] columnCategories) {
+    this.columnCategories = columnCategories;
+    if (columnCategories != null) {
+      idColumnIndices = new ArrayList<>();
+      for (int i = 0; i < columnCategories.length; i++) {
+        if (columnCategories[i].equals(TsTableColumnCategory.TAG)) {
+          idColumnIndices.add(i);
+        }
+      }
+    }
+  }
+
+  public String getTableName() {
+    return null;
+  }
+
+  @Override
+  public List<PlanNode> getChildren() {
+    return Collections.emptyList();
+  }
+
+  public String[] getRawMeasurements() {
+    String[] measurements = getMeasurements();
+    MeasurementSchema[] measurementSchemas = getMeasurementSchemas();
+    String[] rawMeasurements = new String[measurements.length];
+    for (int i = 0; i < measurements.length; i++) {
+      if (measurementSchemas[i] != null) {
+        // get raw measurement rather than alias
+        rawMeasurements[i] = measurementSchemas[i].getMeasurementName();
+      } else {
+        rawMeasurements[i] = measurements[i];
+      }
+    }
+    return rawMeasurements;
+  }
+
+  protected PartialPath readTargetPath(ByteBuffer buffer) throws IllegalPathException {
+    return DataNodeDevicePathCache.getInstance()
+        .getPartialPath(ReadWriteIOUtils.readString(buffer));
+  }
+
+  protected PartialPath readTargetPath(DataInputStream stream)
+      throws IllegalPathException, IOException {
+    return DataNodeDevicePathCache.getInstance()
+        .getPartialPath(ReadWriteIOUtils.readString(stream));
+  }
+
+  @Override
+  public long getMemorySize() {
+    if (memorySize == 0) {
+      memorySize = InsertNodeMemoryEstimator.sizeOf(this);
+    }
+    return memorySize;
   }
 }

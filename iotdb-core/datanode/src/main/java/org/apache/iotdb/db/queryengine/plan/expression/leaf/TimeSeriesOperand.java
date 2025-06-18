@@ -19,15 +19,17 @@
 
 package org.apache.iotdb.db.queryengine.plan.expression.leaf;
 
-import org.apache.iotdb.commons.path.MeasurementPath;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.commons.path.PathDeserializeUtil;
+import org.apache.iotdb.db.queryengine.execution.MemoryEstimationHelper;
 import org.apache.iotdb.db.queryengine.plan.expression.ExpressionType;
 import org.apache.iotdb.db.queryengine.plan.expression.visitor.ExpressionVisitor;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.parameter.InputLocation;
 import org.apache.iotdb.db.queryengine.transformation.dag.memory.LayerMemoryAssigner;
 
 import org.apache.tsfile.enums.TSDataType;
+import org.apache.tsfile.utils.RamUsageEstimator;
+import org.apache.tsfile.utils.ReadWriteIOUtils;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -37,29 +39,51 @@ import java.util.Map;
 
 public class TimeSeriesOperand extends LeafOperand {
 
-  private PartialPath path;
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(TimeSeriesOperand.class);
+
+  private final PartialPath path;
+
+  // if path is MeasurementPath or AlignedPath, this type is null
+  private final TSDataType type;
 
   public TimeSeriesOperand(PartialPath path) {
     this.path = path;
+    this.type = null;
+  }
+
+  public TimeSeriesOperand(PartialPath path, TSDataType dataType) {
+    this.path = path;
+    this.type = dataType;
   }
 
   public TimeSeriesOperand(ByteBuffer byteBuffer) {
     path = (PartialPath) PathDeserializeUtil.deserialize(byteBuffer);
+    boolean hasType = ReadWriteIOUtils.readBool(byteBuffer);
+    if (hasType) {
+      this.type = TSDataType.deserializeFrom(byteBuffer);
+    } else {
+      this.type = null;
+    }
   }
 
   public static TimeSeriesOperand constructColumnHeaderExpression(
       String columnName, TSDataType dataType) {
-    MeasurementPath measurementPath =
-        new MeasurementPath(new PartialPath(columnName, false), dataType);
-    return new TimeSeriesOperand(measurementPath);
+    return new TimeSeriesOperand(new PartialPath(columnName, false), dataType);
   }
 
   public PartialPath getPath() {
     return path;
   }
 
-  public void setPath(PartialPath path) {
-    this.path = path;
+  // get TSDataType of this TimeSeriesOperand returning, it will never return null
+  public TSDataType getOperandType() {
+    return type != null ? type : path.getSeriesType();
+  }
+
+  // get the type field of this TimeSeriesOperand, it may return null
+  public TSDataType getType() {
+    return type;
   }
 
   @Override
@@ -100,10 +124,27 @@ public class TimeSeriesOperand extends LeafOperand {
   @Override
   protected void serialize(ByteBuffer byteBuffer) {
     path.serialize(byteBuffer);
+    if (type == null) {
+      ReadWriteIOUtils.write(false, byteBuffer);
+    } else {
+      ReadWriteIOUtils.write(true, byteBuffer);
+      type.serializeTo(byteBuffer);
+    }
   }
 
   @Override
   protected void serialize(DataOutputStream stream) throws IOException {
     path.serialize(stream);
+    if (type == null) {
+      ReadWriteIOUtils.write(false, stream);
+    } else {
+      ReadWriteIOUtils.write(true, stream);
+      type.serializeTo(stream);
+    }
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE + MemoryEstimationHelper.getEstimatedSizeOfPartialPath(path);
   }
 }

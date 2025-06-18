@@ -45,6 +45,7 @@ public class StatementConstructionHandler {
     InsertTabletStatement insertStatement = new InsertTabletStatement();
     insertStatement.setDevicePath(
         DataNodeDevicePathCache.getInstance().getPartialPath(insertTabletRequest.getDeviceId()));
+    // TODO: remove the check for table model
     insertStatement.setMeasurements(
         PathUtils.checkIsLegalSingleMeasurementsAndUpdate(insertTabletRequest.getMeasurements())
             .toArray(new String[0]));
@@ -84,6 +85,7 @@ public class StatementConstructionHandler {
           columns[columnIndex] = booleanValues;
           break;
         case INT32:
+        case DATE:
           int[] intValues = new int[rowSize];
           for (int rowIndex = 0; rowIndex < rowSize; rowIndex++) {
             Object object = rawData.get(columnIndex).get(rowIndex);
@@ -99,6 +101,7 @@ public class StatementConstructionHandler {
           columns[columnIndex] = intValues;
           break;
         case INT64:
+        case TIMESTAMP:
           long[] longValues = new long[rowSize];
           for (int rowIndex = 0; rowIndex < rowSize; rowIndex++) {
             Object object = rawData.get(columnIndex).get(rowIndex);
@@ -140,6 +143,8 @@ public class StatementConstructionHandler {
           columns[columnIndex] = doubleValues;
           break;
         case TEXT:
+        case BLOB:
+        case STRING:
           Binary[] binaryValues = new Binary[rowSize];
           for (int rowIndex = 0; rowIndex < rowSize; rowIndex++) {
             if (rawData.get(columnIndex).get(rowIndex) == null) {

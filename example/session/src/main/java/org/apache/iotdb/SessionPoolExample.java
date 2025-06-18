@@ -16,21 +16,27 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb;
 
+import org.apache.iotdb.isession.SessionDataSet.DataIterator;
+import org.apache.iotdb.isession.pool.SessionDataSetWrapper;
 import org.apache.iotdb.rpc.IoTDBConnectionException;
 import org.apache.iotdb.rpc.StatementExecutionException;
-import org.apache.iotdb.session.SessionDataSet.DataIterator;
-import org.apache.iotdb.session.pool.SessionDataSetWrapper;
 import org.apache.iotdb.session.pool.SessionPool;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
+
+import org.apache.tsfile.enums.TSDataType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+@SuppressWarnings({"squid:S106", "squid:S1144"})
 public class SessionPoolExample {
+  private static final Logger LOGGER = LoggerFactory.getLogger(SessionPoolExample.class);
 
   private static SessionPool sessionPool;
   private static ExecutorService service;
@@ -109,7 +115,7 @@ public class SessionPoolExample {
                 System.out.println(wrapper.next());
               }
             } catch (IoTDBConnectionException | StatementExecutionException e) {
-              e.printStackTrace();
+              LOGGER.error("Query by row record error", e);
             } finally {
               // remember to close data set finally!
               sessionPool.closeResultSet(wrapper);
@@ -137,7 +143,7 @@ public class SessionPoolExample {
                 System.out.println(builder);
               }
             } catch (IoTDBConnectionException | StatementExecutionException e) {
-              e.printStackTrace();
+              LOGGER.error("Query by Iterator error", e);
             } finally {
               // remember to close data set finally!
               sessionPool.closeResultSet(wrapper);

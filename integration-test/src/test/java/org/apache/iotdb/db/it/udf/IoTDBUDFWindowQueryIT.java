@@ -16,9 +16,9 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.db.it.udf;
 
-import org.apache.iotdb.it.env.ConfigFactory;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
@@ -28,7 +28,6 @@ import org.apache.iotdb.itbase.constant.UDFTestConstant;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -48,23 +47,16 @@ public class IoTDBUDFWindowQueryIT {
 
   protected static final int ITERATION_TIMES = 10000;
 
-  protected static boolean enableSeqSpaceCompaction;
-  protected static boolean enableUnseqSpaceCompaction;
-  protected static boolean enableCrossSpaceCompaction;
-
   @BeforeClass
   public static void setUp() throws Exception {
-    enableSeqSpaceCompaction = ConfigFactory.getConfig().isEnableSeqSpaceCompaction();
-    enableUnseqSpaceCompaction = ConfigFactory.getConfig().isEnableUnseqSpaceCompaction();
-    enableCrossSpaceCompaction = ConfigFactory.getConfig().isEnableCrossSpaceCompaction();
-    ConfigFactory.getConfig().setEnableSeqSpaceCompaction(false);
-    ConfigFactory.getConfig().setEnableUnseqSpaceCompaction(false);
-    ConfigFactory.getConfig().setEnableCrossSpaceCompaction(false);
-    ConfigFactory.getConfig()
-        .setUdfCollectorMemoryBudgetInMB(5)
-        .setUdfTransformerMemoryBudgetInMB(5)
-        .setUdfReaderMemoryBudgetInMB(5);
-    EnvFactory.getEnv().initBeforeClass();
+    EnvFactory.getEnv()
+        .getConfig()
+        .getCommonConfig()
+        .setEnableSeqSpaceCompaction(false)
+        .setEnableUnseqSpaceCompaction(false)
+        .setEnableCrossSpaceCompaction(false)
+        .setUdfMemoryBudgetInMB(5);
+    EnvFactory.getEnv().initClusterEnvironment();
     createTimeSeries();
     generateData();
     registerUDF();
@@ -72,14 +64,7 @@ public class IoTDBUDFWindowQueryIT {
 
   @AfterClass
   public static void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterClass();
-    ConfigFactory.getConfig().setEnableSeqSpaceCompaction(enableSeqSpaceCompaction);
-    ConfigFactory.getConfig().setEnableUnseqSpaceCompaction(enableUnseqSpaceCompaction);
-    ConfigFactory.getConfig().setEnableCrossSpaceCompaction(enableCrossSpaceCompaction);
-    ConfigFactory.getConfig()
-        .setUdfCollectorMemoryBudgetInMB(100)
-        .setUdfTransformerMemoryBudgetInMB(100)
-        .setUdfReaderMemoryBudgetInMB(100);
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   private static void createTimeSeries() {
@@ -180,16 +165,12 @@ public class IoTDBUDFWindowQueryIT {
     testSlidingSizeWindow(3 * ITERATION_TIMES);
   }
 
-  // todo: remove ignore when exception handler in IT finishes
   @Test
-  @Ignore
   public void testSlidingSizeWindow7() {
     testSlidingSizeWindow(0);
   }
 
-  // todo: remove ignore when fixed
   @Test
-  @Ignore
   public void testSlidingSizeWindow8() {
     testSlidingSizeWindow(-ITERATION_TIMES);
   }
@@ -323,34 +304,29 @@ public class IoTDBUDFWindowQueryIT {
   }
 
   @Test
-  @Ignore
   public void testSlidingTimeWindow9() {
     testSlidingTimeWindow(
         (int) (0.01 * ITERATION_TIMES), (int) (0.05 * ITERATION_TIMES), ITERATION_TIMES / 2, 0);
   }
 
   @Test
-  @Ignore
   public void testSlidingTimeWindow10() {
     testSlidingTimeWindow(
         (int) (-0.01 * ITERATION_TIMES), (int) (0.05 * ITERATION_TIMES), 0, ITERATION_TIMES / 2);
   }
 
   @Test
-  @Ignore
   public void testSlidingTimeWindow11() {
     testSlidingTimeWindow(
         (int) (0.01 * ITERATION_TIMES), (int) (-0.05 * ITERATION_TIMES), 0, ITERATION_TIMES / 2);
   }
 
   @Test
-  @Ignore
   public void testSlidingTimeWindow12() {
     testSlidingTimeWindow((int) (0.01 * ITERATION_TIMES), 0, 0, ITERATION_TIMES / 2);
   }
 
   @Test
-  @Ignore
   public void testSlidingTimeWindow13() {
     testSlidingTimeWindow(0, (int) (0.05 * ITERATION_TIMES), 0, ITERATION_TIMES / 2);
   }
@@ -371,6 +347,10 @@ public class IoTDBUDFWindowQueryIT {
             UDFTestConstant.DISPLAY_WINDOW_END_KEY,
             displayWindowEnd);
 
+    int expectedCnt =
+        slidingStep <= 0
+            ? 0
+            : (int) Math.ceil((displayWindowEnd - displayWindowBegin) / (double) slidingStep);
     try (Connection conn = EnvFactory.getEnv().getConnection();
         Statement statement = conn.createStatement();
         ResultSet resultSet = statement.executeQuery(sql)) {
@@ -392,6 +372,7 @@ public class IoTDBUDFWindowQueryIT {
         assertEquals(expectedAccumulation, (int) (Double.parseDouble(resultSet.getString(2))));
         ++count;
       }
+      assertEquals(expectedCnt, count);
     } catch (SQLException throwable) {
       if (slidingStep > 0 && timeInterval > 0 && displayWindowEnd >= displayWindowBegin) {
         fail(throwable.getMessage());
@@ -428,6 +409,7 @@ public class IoTDBUDFWindowQueryIT {
 
         ++count;
       }
+      assertEquals(expectedCnt, count);
     } catch (SQLException throwable) {
       if (slidingStep > 0 && timeInterval > 0 && displayWindowEnd >= displayWindowBegin) {
         fail(throwable.getMessage());
@@ -488,7 +470,6 @@ public class IoTDBUDFWindowQueryIT {
   }
 
   @Test
-  @Ignore
   public void testSlidingTimeWindowWithTimeIntervalOnly6() {
     testSlidingTimeWindowWithTimeIntervalOnly(-ITERATION_TIMES);
   }

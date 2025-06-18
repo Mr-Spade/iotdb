@@ -20,15 +20,11 @@
 package org.apache.iotdb.commons.pipe.event;
 
 import org.apache.iotdb.commons.consensus.index.ProgressIndex;
-import org.apache.iotdb.commons.pipe.pattern.PipePattern;
-import org.apache.iotdb.commons.pipe.task.meta.PipeTaskMeta;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeTaskMeta;
+import org.apache.iotdb.commons.pipe.datastructure.pattern.TablePattern;
+import org.apache.iotdb.commons.pipe.datastructure.pattern.TreePattern;
 
 public abstract class PipeWritePlanEvent extends EnrichedEvent implements SerializableEvent {
-
-  private static final Logger LOGGER = LoggerFactory.getLogger(PipeWritePlanEvent.class);
 
   protected boolean isGeneratedByPipe;
 
@@ -36,33 +32,35 @@ public abstract class PipeWritePlanEvent extends EnrichedEvent implements Serial
 
   protected PipeWritePlanEvent(
       final String pipeName,
+      final long creationTime,
       final PipeTaskMeta pipeTaskMeta,
-      final PipePattern pattern,
+      final TreePattern treePattern,
+      final TablePattern tablePattern,
+      final String userName,
+      final boolean skipIfNoPrivileges,
       final boolean isGeneratedByPipe) {
-    super(pipeName, pipeTaskMeta, pattern, Long.MIN_VALUE, Long.MAX_VALUE);
+    super(
+        pipeName,
+        creationTime,
+        pipeTaskMeta,
+        treePattern,
+        tablePattern,
+        userName,
+        skipIfNoPrivileges,
+        Long.MIN_VALUE,
+        Long.MAX_VALUE);
     this.isGeneratedByPipe = isGeneratedByPipe;
   }
 
-  /**
-   * This event doesn't share resources with other events, so no need to maintain reference count.
-   * We just use a counter to prevent the reference count from being less than 0.
-   */
+  /** {@link PipeWritePlanEvent} does not share resources with other events. */
   @Override
   public boolean internallyIncreaseResourceReferenceCount(final String holderMessage) {
-    referenceCount.incrementAndGet();
     return true;
   }
 
-  /**
-   * This event doesn't share resources with other events, so no need to maintain reference count.
-   * We just use a counter to prevent the reference count from being less than 0.
-   */
+  /** This {@link PipeWritePlanEvent} does not share resources with other events. */
   @Override
   public boolean internallyDecreaseResourceReferenceCount(final String holderMessage) {
-    final long count = referenceCount.decrementAndGet();
-    if (count < 0) {
-      LOGGER.warn("The reference count is less than 0, may need to check the implementation.");
-    }
     return true;
   }
 
@@ -83,6 +81,11 @@ public abstract class PipeWritePlanEvent extends EnrichedEvent implements Serial
 
   @Override
   public boolean mayEventTimeOverlappedWithTimeRange() {
+    return true;
+  }
+
+  @Override
+  public boolean mayEventPathsOverlappedWithPattern() {
     return true;
   }
 

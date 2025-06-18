@@ -20,18 +20,29 @@
 package org.apache.iotdb.db.queryengine.plan.statement.crud;
 
 import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.db.exception.sql.SemanticException;
+import org.apache.iotdb.db.queryengine.common.MPPQueryContext;
 import org.apache.iotdb.db.queryengine.plan.analyze.schema.ISchemaValidation;
 import org.apache.iotdb.db.queryengine.plan.statement.StatementType;
 import org.apache.iotdb.db.queryengine.plan.statement.StatementVisitor;
+import org.apache.iotdb.db.schemaengine.schemaregion.attribute.update.UpdateDetailContainer;
 
+import org.apache.tsfile.annotations.TableModel;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.exception.NotImplementedException;
+import org.apache.tsfile.utils.RamUsageEstimator;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 public class InsertMultiTabletsStatement extends InsertBaseStatement {
+
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(InsertMultiTabletsStatement.class);
 
   /** The {@link InsertTabletStatement} list */
   List<InsertTabletStatement> insertTabletStatementList;
@@ -47,6 +58,14 @@ public class InsertMultiTabletsStatement extends InsertBaseStatement {
 
   public void setInsertTabletStatementList(List<InsertTabletStatement> insertTabletStatementList) {
     this.insertTabletStatementList = insertTabletStatementList;
+  }
+
+  public List<PartialPath> getDevicePaths() {
+    List<PartialPath> partialPaths = new ArrayList<>();
+    for (InsertTabletStatement insertTabletStatement : insertTabletStatementList) {
+      partialPaths.add(insertTabletStatement.devicePath);
+    }
+    return partialPaths;
   }
 
   public List<String[]> getMeasurementsList() {
@@ -89,7 +108,7 @@ public class InsertMultiTabletsStatement extends InsertBaseStatement {
   }
 
   @Override
-  public void updateAfterSchemaValidation() {
+  public void updateAfterSchemaValidation(MPPQueryContext context) {
     for (InsertTabletStatement insertTabletStatement : insertTabletStatementList) {
       if (!this.hasFailedMeasurements() && insertTabletStatement.hasFailedMeasurements()) {
         this.failedMeasurementIndex2Info = insertTabletStatement.failedMeasurementIndex2Info;
@@ -100,6 +119,13 @@ public class InsertMultiTabletsStatement extends InsertBaseStatement {
   @Override
   protected boolean checkAndCastDataType(int columnIndex, TSDataType dataType) {
     return false;
+  }
+
+  @Override
+  public void semanticCheck() {
+    for (InsertTabletStatement insertTabletStatement : insertTabletStatementList) {
+      insertTabletStatement.semanticCheck();
+    }
   }
 
   @Override
@@ -127,5 +153,50 @@ public class InsertMultiTabletsStatement extends InsertBaseStatement {
     InsertMultiTabletsStatement splitResult = new InsertMultiTabletsStatement();
     splitResult.setInsertTabletStatementList(mergedList);
     return splitResult;
+  }
+
+  @TableModel
+  @Override
+  public void toLowerCase() {
+    insertTabletStatementList.forEach(InsertTabletStatement::toLowerCase);
+  }
+
+  @Override
+  protected long calculateBytesUsed() {
+    return INSTANCE_SIZE
+        + (Objects.nonNull(insertTabletStatementList)
+            ? UpdateDetailContainer.LIST_SIZE
+                + insertTabletStatementList.stream()
+                    .mapToLong(InsertTabletStatement::calculateBytesUsed)
+                    .reduce(0L, Long::sum)
+            : 0);
+  }
+
+  @Override
+  @TableModel
+  public Optional<String> getDatabaseName() {
+    Optional<String> database = Optional.empty();
+    for (InsertTabletStatement insertTabletStatement : insertTabletStatementList) {
+      Optional<String> childDatabaseName = insertTabletStatement.getDatabaseName();
+      if (childDatabaseName.isPresent()
+          && database.isPresent()
+          && !Objects.equals(childDatabaseName.get(), database.get())) {
+        throw new SemanticException(
+            "Cannot insert into multiple databases within one statement, please split them manually");
+      }
+
+      database = childDatabaseName;
+    }
+    return database;
+  }
+
+  @Override
+  public void removeAttributeColumns() {
+    subRemoveAttributeColumns(Collections.emptyList());
+  }
+
+  @Override
+  protected void subRemoveAttributeColumns(List<Integer> columnsToKeep) {
+    insertTabletStatementList.forEach(InsertBaseStatement::removeAttributeColumns);
   }
 }

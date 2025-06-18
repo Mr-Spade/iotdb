@@ -18,21 +18,20 @@
  */
 package org.apache.iotdb.session.it;
 
-import org.apache.iotdb.commons.conf.IoTDBConstant;
-import org.apache.iotdb.it.env.ConfigFactory;
+import org.apache.iotdb.isession.ISession;
+import org.apache.iotdb.isession.SessionDataSet;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
 import org.apache.iotdb.rpc.IoTDBConnectionException;
 import org.apache.iotdb.rpc.StatementExecutionException;
-import org.apache.iotdb.session.ISession;
-import org.apache.iotdb.session.SessionDataSet;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
-import org.apache.iotdb.tsfile.read.common.RowRecord;
-import org.apache.iotdb.tsfile.write.record.Tablet;
-import org.apache.iotdb.tsfile.write.schema.MeasurementSchema;
 
+import org.apache.tsfile.enums.TSDataType;
+import org.apache.tsfile.read.common.RowRecord;
+import org.apache.tsfile.write.record.Tablet;
+import org.apache.tsfile.write.schema.IMeasurementSchema;
+import org.apache.tsfile.write.schema.MeasurementSchema;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -54,20 +53,15 @@ public class IoTDBSessionAlignedInsertIT {
   private static final String ROOT_SG1_D2 = "root.sg_1.d2";
   private static final double DELTA_DOUBLE = 1e-7d;
 
-  private int originMaxDegreeOfIndexNode;
-
   @Before
   public void setUp() throws Exception {
-    System.setProperty(IoTDBConstant.IOTDB_CONF, "src/test/resources/");
-    originMaxDegreeOfIndexNode = ConfigFactory.getConfig().getMaxDegreeOfIndexNode();
-    ConfigFactory.getConfig().setMaxDegreeOfIndexNode(3);
-    EnvFactory.getEnv().initBeforeTest();
+    EnvFactory.getEnv().getConfig().getCommonConfig().setMaxDegreeOfIndexNode(3);
+    EnvFactory.getEnv().initClusterEnvironment();
   }
 
   @After
   public void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterTest();
-    ConfigFactory.getConfig().setMaxDegreeOfIndexNode(originMaxDegreeOfIndexNode);
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   @Test
@@ -155,7 +149,7 @@ public class IoTDBSessionAlignedInsertIT {
       long time = 0;
       while (dataSet.hasNext()) {
         RowRecord rowRecord = dataSet.next();
-        assertEquals(time * 10 + 3, rowRecord.getFields().get(0).getFloatV(), DELTA_DOUBLE);
+        assertEquals(time * 10 + 3, rowRecord.getFields().get(0).getDoubleV(), DELTA_DOUBLE);
         time += 1;
       }
       assertEquals(100, time);
@@ -179,7 +173,7 @@ public class IoTDBSessionAlignedInsertIT {
       long time = 0;
       while (dataSet.hasNext()) {
         RowRecord rowRecord = dataSet.next();
-        assertEquals(time * 10 + 3, rowRecord.getFields().get(0).getFloatV(), DELTA_DOUBLE);
+        assertEquals(time * 10 + 3, rowRecord.getFields().get(0).getDoubleV(), DELTA_DOUBLE);
         time += 1;
       }
       assertEquals(100, time);
@@ -298,7 +292,7 @@ public class IoTDBSessionAlignedInsertIT {
       throws IoTDBConnectionException, StatementExecutionException {
     // The schema of measurements of one device
     // only measurementId and data type in MeasurementSchema take effects in Tablet
-    List<MeasurementSchema> schemaList = new ArrayList<>();
+    List<IMeasurementSchema> schemaList = new ArrayList<>();
     schemaList.add(new MeasurementSchema("s1", TSDataType.INT64));
     schemaList.add(new MeasurementSchema("s2", TSDataType.INT32));
 
@@ -306,19 +300,19 @@ public class IoTDBSessionAlignedInsertIT {
     long timestamp = 0;
 
     for (long row = 0; row < 100; row++) {
-      int rowIndex = tablet.rowSize++;
+      int rowIndex = tablet.getRowSize();
       tablet.addTimestamp(rowIndex, timestamp);
-      tablet.addValue(schemaList.get(0).getMeasurementId(), rowIndex, row * 10 + 1L);
-      tablet.addValue(schemaList.get(1).getMeasurementId(), rowIndex, (int) (row * 10 + 2));
+      tablet.addValue(schemaList.get(0).getMeasurementName(), rowIndex, row * 10 + 1L);
+      tablet.addValue(schemaList.get(1).getMeasurementName(), rowIndex, (int) (row * 10 + 2));
 
-      if (tablet.rowSize == tablet.getMaxRowNumber()) {
+      if (tablet.getRowSize() == tablet.getMaxRowNumber()) {
         session.insertAlignedTablet(tablet, true);
         tablet.reset();
       }
       timestamp++;
     }
 
-    if (tablet.rowSize != 0) {
+    if (tablet.getRowSize() != 0) {
       session.insertAlignedTablet(tablet);
       tablet.reset();
     }

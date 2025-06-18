@@ -21,6 +21,7 @@ package org.apache.iotdb.db.queryengine.plan.statement.metadata;
 
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.auth.entity.PrivilegeType;
+import org.apache.iotdb.commons.path.MeasurementPath;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.auth.AuthorityChecker;
 import org.apache.iotdb.db.queryengine.plan.statement.Statement;
@@ -31,6 +32,7 @@ import org.apache.iotdb.rpc.TSStatusCode;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * ALTER TIMESERIES statement.
@@ -40,7 +42,7 @@ import java.util.Map;
  * <p>ALTER TIMESERIES path RENAME | SET | DROP | ADD TAGS | ADD ATTRIBUTES | UPSERT
  */
 public class AlterTimeSeriesStatement extends Statement {
-  private PartialPath path;
+  private MeasurementPath path;
   private AlterTimeSeriesStatement.AlterType alterType;
 
   /**
@@ -80,11 +82,11 @@ public class AlterTimeSeriesStatement extends Statement {
     return Collections.singletonList(path);
   }
 
-  public PartialPath getPath() {
+  public MeasurementPath getPath() {
     return path;
   }
 
-  public void setPath(PartialPath path) {
+  public void setPath(MeasurementPath path) {
     this.path = path;
   }
 
@@ -138,14 +140,36 @@ public class AlterTimeSeriesStatement extends Statement {
       return new TSStatus(TSStatusCode.SUCCESS_STATUS.getStatusCode());
     }
     return AuthorityChecker.getTSStatus(
-        AuthorityChecker.checkFullPathPermission(
-            userName, path, PrivilegeType.WRITE_SCHEMA.ordinal()),
+        AuthorityChecker.checkFullPathPermission(userName, path, PrivilegeType.WRITE_SCHEMA),
         PrivilegeType.WRITE_SCHEMA);
   }
 
   @Override
   public <R, C> R accept(StatementVisitor<R, C> visitor, C context) {
-    return visitor.visitAlterTimeseries(this, context);
+    return visitor.visitAlterTimeSeries(this, context);
+  }
+
+  @Override
+  public boolean equals(final Object obj) {
+    if (this == obj) {
+      return true;
+    }
+    if (obj == null || getClass() != obj.getClass()) {
+      return false;
+    }
+    final AlterTimeSeriesStatement that = (AlterTimeSeriesStatement) obj;
+    return Objects.equals(this.path, that.path)
+        && Objects.equals(this.alterType, that.alterType)
+        && Objects.equals(this.alterMap, that.alterMap)
+        && Objects.equals(this.alias, that.alias)
+        && Objects.equals(this.tagsMap, that.tagsMap)
+        && Objects.equals(this.attributesMap, that.attributesMap)
+        && Objects.equals(this.isAlterView, that.isAlterView);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(path, alterType, alterMap, alias, tagsMap, attributesMap, isAlterView);
   }
 
   public enum AlterType {

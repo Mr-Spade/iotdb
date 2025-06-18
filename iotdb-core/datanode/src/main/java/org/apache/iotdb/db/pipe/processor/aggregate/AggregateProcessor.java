@@ -25,11 +25,11 @@ import org.apache.iotdb.commons.consensus.index.ProgressIndex;
 import org.apache.iotdb.commons.consensus.index.impl.MinimumProgressIndex;
 import org.apache.iotdb.commons.consensus.index.impl.TimeWindowStateProgressIndex;
 import org.apache.iotdb.commons.exception.IllegalPathException;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeTaskMeta;
 import org.apache.iotdb.commons.pipe.config.plugin.env.PipeTaskProcessorRuntimeEnvironment;
 import org.apache.iotdb.commons.pipe.event.EnrichedEvent;
-import org.apache.iotdb.commons.pipe.task.meta.PipeTaskMeta;
 import org.apache.iotdb.commons.utils.PathUtils;
-import org.apache.iotdb.db.pipe.agent.PipeAgent;
+import org.apache.iotdb.db.pipe.agent.PipeDataNodeAgent;
 import org.apache.iotdb.db.pipe.agent.plugin.dataregion.PipeDataRegionPluginAgent;
 import org.apache.iotdb.db.pipe.event.common.row.PipeResetTabletRow;
 import org.apache.iotdb.db.pipe.event.common.row.PipeRow;
@@ -46,9 +46,11 @@ import org.apache.iotdb.db.queryengine.transformation.dag.udf.UDFParametersFacto
 import org.apache.iotdb.db.storageengine.StorageEngine;
 import org.apache.iotdb.pipe.api.PipeProcessor;
 import org.apache.iotdb.pipe.api.access.Row;
+import org.apache.iotdb.pipe.api.annotation.TreeModel;
 import org.apache.iotdb.pipe.api.collector.EventCollector;
 import org.apache.iotdb.pipe.api.collector.RowCollector;
 import org.apache.iotdb.pipe.api.customizer.configuration.PipeProcessorRuntimeConfiguration;
+import org.apache.iotdb.pipe.api.customizer.configuration.PipeRuntimeEnvironment;
 import org.apache.iotdb.pipe.api.customizer.parameter.PipeParameterValidator;
 import org.apache.iotdb.pipe.api.customizer.parameter.PipeParameters;
 import org.apache.iotdb.pipe.api.event.Event;
@@ -56,14 +58,17 @@ import org.apache.iotdb.pipe.api.event.dml.insertion.TabletInsertionEvent;
 import org.apache.iotdb.pipe.api.event.dml.insertion.TsFileInsertionEvent;
 import org.apache.iotdb.pipe.api.exception.PipeException;
 
+import org.apache.tsfile.common.conf.TSFileConfig;
 import org.apache.tsfile.common.constant.TsFileConstant;
 import org.apache.tsfile.enums.TSDataType;
+import org.apache.tsfile.utils.Binary;
 import org.apache.tsfile.utils.BitMap;
 import org.apache.tsfile.utils.Pair;
 import org.apache.tsfile.write.schema.MeasurementSchema;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -101,6 +106,7 @@ import static org.apache.iotdb.commons.pipe.config.constant.PipeProcessorConstan
  * AbstractWindowingProcessor} and {@link AbstractOperatorProcessor} can be implemented by user and
  * loaded as a normal {@link PipeProcessor}
  */
+@TreeModel
 public class AggregateProcessor implements PipeProcessor {
   private static final String WINDOWING_PROCESSOR_SUFFIX = "-windowing-processor";
 
@@ -128,6 +134,9 @@ public class AggregateProcessor implements PipeProcessor {
 
   // Static values, calculated on initialization
   private String[] columnNameStringList;
+
+  private String dataBaseName;
+  private Boolean isTableModel;
 
   @Override
   public void validate(final PipeParameterValidator validator) throws Exception {
@@ -177,7 +186,16 @@ public class AggregateProcessor implements PipeProcessor {
   public void customize(
       final PipeParameters parameters, final PipeProcessorRuntimeConfiguration configuration)
       throws Exception {
-    pipeName = configuration.getRuntimeEnvironment().getPipeName();
+    final PipeRuntimeEnvironment environment = configuration.getRuntimeEnvironment();
+    pipeName = environment.getPipeName();
+    dataBaseName =
+        StorageEngine.getInstance()
+            .getDataRegion(new DataRegionId(environment.getRegionId()))
+            .getDatabaseName();
+    if (dataBaseName != null) {
+      isTableModel = PathUtils.isTableModelDatabase(dataBaseName);
+    }
+
     pipeName2referenceCountMap.compute(
         pipeName, (name, count) -> Objects.nonNull(count) ? count + 1 : 1);
     pipeName2timeSeries2TimeSeriesRuntimeStateMap.putIfAbsent(pipeName, new ConcurrentHashMap<>());
@@ -185,10 +203,7 @@ public class AggregateProcessor implements PipeProcessor {
     databaseWithPathSeparator =
         StorageEngine.getInstance()
                 .getDataRegion(
-                    new DataRegionId(
-                        ((PipeTaskProcessorRuntimeEnvironment)
-                                configuration.getRuntimeEnvironment())
-                            .getRegionId()))
+                    new DataRegionId(configuration.getRuntimeEnvironment().getRegionId()))
                 .getDatabaseName()
             + TsFileConstant.PATH_SEPARATOR;
 
@@ -247,7 +262,7 @@ public class AggregateProcessor implements PipeProcessor {
     // Load the useful aggregators' and their corresponding intermediate results' computational
     // logic.
     final Set<String> declaredIntermediateResultSet = new HashSet<>();
-    final PipeDataRegionPluginAgent agent = PipeAgent.plugin().dataRegion();
+    final PipeDataRegionPluginAgent agent = PipeDataNodeAgent.plugin().dataRegion();
     for (final String pipePluginName :
         agent.getSubProcessorNamesWithSpecifiedParent(AbstractOperatorProcessor.class)) {
       // Children are allowed to validate and configure the computational logic
@@ -375,17 +390,21 @@ public class AggregateProcessor implements PipeProcessor {
         .set(System.currentTimeMillis());
 
     final AtomicReference<Exception> exception = new AtomicReference<>();
-    final TimeWindowStateProgressIndex progressIndex =
-        new TimeWindowStateProgressIndex(new ConcurrentHashMap<>());
+    final TimeWindowStateProgressIndex[] progressIndex = {
+      new TimeWindowStateProgressIndex(new ConcurrentHashMap<>())
+    };
 
     final Iterable<TabletInsertionEvent> outputEvents =
         tabletInsertionEvent.processRowByRow(
             (row, rowCollector) ->
-                progressIndex.updateToMinimumEqualOrIsAfterProgressIndex(
-                    new TimeWindowStateProgressIndex(processRow(row, rowCollector, exception))));
+                progressIndex[0] =
+                    (TimeWindowStateProgressIndex)
+                        progressIndex[0].updateToMinimumEqualOrIsAfterProgressIndex(
+                            new TimeWindowStateProgressIndex(
+                                processRow(row, rowCollector, exception))));
 
     // Must reset progressIndex before collection
-    ((EnrichedEvent) tabletInsertionEvent).bindProgressIndex(progressIndex);
+    ((EnrichedEvent) tabletInsertionEvent).bindProgressIndex(progressIndex[0]);
 
     outputEvents.forEach(
         event -> {
@@ -450,7 +469,13 @@ public class AggregateProcessor implements PipeProcessor {
                   state.updateWindows(
                       timestamp, row.getInt(index), outputMinReportIntervalMilliseconds);
               break;
+            case DATE:
+              result =
+                  state.updateWindows(
+                      timestamp, row.getDate(index), outputMinReportIntervalMilliseconds);
+              break;
             case INT64:
+            case TIMESTAMP:
               result =
                   state.updateWindows(
                       timestamp, row.getLong(index), outputMinReportIntervalMilliseconds);
@@ -466,9 +491,15 @@ public class AggregateProcessor implements PipeProcessor {
                       timestamp, row.getDouble(index), outputMinReportIntervalMilliseconds);
               break;
             case TEXT:
+            case STRING:
               result =
                   state.updateWindows(
                       timestamp, row.getString(index), outputMinReportIntervalMilliseconds);
+              break;
+            case BLOB:
+              result =
+                  state.updateWindows(
+                      timestamp, row.getBinary(index), outputMinReportIntervalMilliseconds);
               break;
             default:
               throw new UnsupportedOperationException(
@@ -526,7 +557,8 @@ public class AggregateProcessor implements PipeProcessor {
                 final AtomicReference<TimeSeriesRuntimeState> stateReference =
                     pipeName2timeSeries2TimeSeriesRuntimeStateMap.get(pipeName).get(timeSeries);
                 synchronized (stateReference) {
-                  final PipeRowCollector rowCollector = new PipeRowCollector(pipeTaskMeta, null);
+                  final PipeRowCollector rowCollector =
+                      new PipeRowCollector(pipeTaskMeta, null, dataBaseName, isTableModel);
                   try {
                     collectWindowOutputs(
                         stateReference.get().forceOutput(), timeSeries, rowCollector);
@@ -620,7 +652,11 @@ public class AggregateProcessor implements PipeProcessor {
               case INT32:
                 valueColumns[columnIndex] = new int[distinctOutputs.size()];
                 break;
+              case DATE:
+                valueColumns[columnIndex] = new LocalDate[distinctOutputs.size()];
+                break;
               case INT64:
+              case TIMESTAMP:
                 valueColumns[columnIndex] = new long[distinctOutputs.size()];
                 break;
               case FLOAT:
@@ -630,7 +666,9 @@ public class AggregateProcessor implements PipeProcessor {
                 valueColumns[columnIndex] = new double[distinctOutputs.size()];
                 break;
               case TEXT:
-                valueColumns[columnIndex] = new String[distinctOutputs.size()];
+              case BLOB:
+              case STRING:
+                valueColumns[columnIndex] = new Binary[distinctOutputs.size()];
                 break;
               default:
                 throw new UnsupportedOperationException(
@@ -649,7 +687,12 @@ public class AggregateProcessor implements PipeProcessor {
               ((int[]) valueColumns[columnIndex])[rowIndex] =
                   (int) aggregatedResults.get(columnNameStringList[columnIndex]).getRight();
               break;
+            case DATE:
+              ((LocalDate[]) valueColumns[columnIndex])[rowIndex] =
+                  (LocalDate) aggregatedResults.get(columnNameStringList[columnIndex]).getRight();
+              break;
             case INT64:
+            case TIMESTAMP:
               ((long[]) valueColumns[columnIndex])[rowIndex] =
                   (long) aggregatedResults.get(columnNameStringList[columnIndex]).getRight();
               break;
@@ -662,8 +705,19 @@ public class AggregateProcessor implements PipeProcessor {
                   (double) aggregatedResults.get(columnNameStringList[columnIndex]).getRight();
               break;
             case TEXT:
-              ((String[]) valueColumns[columnIndex])[rowIndex] =
-                  (String) aggregatedResults.get(columnNameStringList[columnIndex]).getRight();
+            case STRING:
+              ((Binary[]) valueColumns[columnIndex])[rowIndex] =
+                  aggregatedResults.get(columnNameStringList[columnIndex]).getRight()
+                          instanceof Binary
+                      ? (Binary) aggregatedResults.get(columnNameStringList[columnIndex]).getRight()
+                      : new Binary(
+                          (String)
+                              aggregatedResults.get(columnNameStringList[columnIndex]).getRight(),
+                          TSFileConfig.STRING_CHARSET);
+              break;
+            case BLOB:
+              ((Binary[]) valueColumns[columnIndex])[rowIndex] =
+                  (Binary) aggregatedResults.get(columnNameStringList[columnIndex]).getRight();
               break;
             default:
               throw new UnsupportedOperationException(

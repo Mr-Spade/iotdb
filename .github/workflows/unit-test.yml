@@ -8,7 +8,7 @@ on:
     branches:
       - master
       - 'rel/*'
-      - pipe-meta-sync
+      - "rc/*"
     paths-ignore:
       - 'docs/**'
       - 'site/**'
@@ -16,7 +16,8 @@ on:
     branches:
       - master
       - 'rel/*'
-      - pipe-meta-sync
+      - "rc/*"
+      - 'force_ci/**'
     paths-ignore:
       - 'docs/**'
       - 'site/**'
@@ -28,25 +29,19 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  MAVEN_OPTS: -Dhttp.keepAlive=false -Dmaven.wagon.http.pool=false -Dmaven.wagon.http.retryHandler.class=standard -Dmaven.wagon.http.retryHandler.count=3
-  GRADLE_ENTERPRISE_ACCESS_KEY: ${{ secrets.GE_ACCESS_TOKEN }}
+  MAVEN_OPTS: -Xms2g -Xmx4g -Dhttp.keepAlive=false -Dmaven.wagon.http.pool=false -Dmaven.wagon.http.retryHandler.class=standard -Dmaven.wagon.http.retryHandler.count=3
+  MAVEN_ARGS: --batch-mode --no-transfer-progress
+  DEVELOCITY_ACCESS_KEY: ${{ secrets.DEVELOCITY_ACCESS_KEY }}
 
 jobs:
   unit-test:
     strategy:
       fail-fast: false
-      max-parallel: 20
+      max-parallel: 15
       matrix:
-        java: [ 8, 11, 17 ]
+        java: [ 17 ]
         os: [ ubuntu-latest, windows-latest ]
         it_task: [ 'others', 'datanode' ]
-        include:
-          - java: 17
-            os: macos-latest
-            it_task: 'datanode'
-          - java: 17
-            os: macos-latest
-            it_task: 'others'
     runs-on: ${{ matrix.os }}
 
     steps:

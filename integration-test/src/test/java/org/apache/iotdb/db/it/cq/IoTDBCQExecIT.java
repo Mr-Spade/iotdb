@@ -44,18 +44,18 @@ public class IoTDBCQExecIT {
 
   @BeforeClass
   public static void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeClass();
+    EnvFactory.getEnv().initClusterEnvironment();
   }
 
   @AfterClass
   public static void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterClass();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   @Test
   public void testCQExecution1() {
     String insertTemplate =
-        "INSERT INTO root.sg.d1(time, s1) VALUES (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d)";
+        "INSERT INTO root.sg.d1(time, s1) VALUES (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d)";
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
       long now = System.currentTimeMillis();
@@ -64,6 +64,10 @@ public class IoTDBCQExecIT {
 
       statement.execute("create timeseries root.sg.d1.s1 WITH DATATYPE=INT64");
       statement.execute("create timeseries root.sg.d1.s1_max WITH DATATYPE=INT64");
+
+      // firstly write one row to init data region, just for accelerating the following insert
+      // statement.
+      statement.execute("INSERT INTO root.sg.d1(time, s1) VALUES (0,0)");
 
       statement.execute(
           String.format(
@@ -100,7 +104,13 @@ public class IoTDBCQExecIT {
               + "  GROUP BY(1s) \n"
               + "END");
 
-      long targetTime = firstExecutionTime + 5_000;
+      // if the insert cost too much time
+      if (System.currentTimeMillis() > firstExecutionTime) {
+        statement.execute("DROP CQ cq1");
+        return;
+      }
+
+      long targetTime = firstExecutionTime + 10_000;
 
       while (System.currentTimeMillis() - targetTime < 0) {
         TimeUnit.SECONDS.sleep(1);
@@ -132,7 +142,7 @@ public class IoTDBCQExecIT {
   @Test
   public void testCQExecution2() {
     String insertTemplate =
-        "INSERT INTO root.sg.d2(time, s1) VALUES (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d)";
+        "INSERT INTO root.sg.d2(time, s1) VALUES (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d)";
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
       long now = System.currentTimeMillis();
@@ -141,6 +151,10 @@ public class IoTDBCQExecIT {
 
       statement.execute("create timeseries root.sg.d2.s1 WITH DATATYPE=INT64");
       statement.execute("create timeseries root.sg.d2.s1_max WITH DATATYPE=INT64");
+
+      // firstly write one row to init data region, just for accelerating the following insert
+      // statement.
+      statement.execute("INSERT INTO root.sg.d2(time, s1) VALUES (0,0)");
 
       statement.execute(
           String.format(
@@ -178,7 +192,13 @@ public class IoTDBCQExecIT {
               + "  GROUP BY(1s) \n"
               + "END");
 
-      long targetTime = firstExecutionTime + 5_000;
+      // if the insert cost too much time
+      if (System.currentTimeMillis() > firstExecutionTime) {
+        statement.execute("DROP CQ cq2");
+        return;
+      }
+
+      long targetTime = firstExecutionTime + 10_000;
 
       while (System.currentTimeMillis() - targetTime < 0) {
         TimeUnit.SECONDS.sleep(1);
@@ -210,7 +230,7 @@ public class IoTDBCQExecIT {
   @Test
   public void testCQExecution3() {
     String insertTemplate =
-        "INSERT INTO root.sg.d3(time, s1) VALUES (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d)";
+        "INSERT INTO root.sg.d3(time, s1) VALUES (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d)";
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
       long now = System.currentTimeMillis();
@@ -219,6 +239,10 @@ public class IoTDBCQExecIT {
 
       statement.execute("create timeseries root.sg.d3.s1 WITH DATATYPE=INT64");
       statement.execute("create timeseries root.sg.d3.s1_max WITH DATATYPE=INT64");
+
+      // firstly write one row to init data region, just for accelerating the following insert
+      // statement.
+      statement.execute("INSERT INTO root.sg.d3(time, s1) VALUES (0,0)");
 
       statement.execute(
           String.format(
@@ -257,7 +281,13 @@ public class IoTDBCQExecIT {
               + "  FILL(100)\n"
               + "END");
 
-      long targetTime = firstExecutionTime + 5_000;
+      // if the insert cost too much time
+      if (System.currentTimeMillis() > firstExecutionTime) {
+        statement.execute("DROP CQ cq3");
+        return;
+      }
+
+      long targetTime = firstExecutionTime + 10_000;
 
       while (System.currentTimeMillis() - targetTime < 0) {
         TimeUnit.SECONDS.sleep(1);
@@ -299,7 +329,7 @@ public class IoTDBCQExecIT {
   @Test
   public void testCQExecution4() {
     String insertTemplate =
-        "INSERT INTO root.sg.d4(time, s1) VALUES (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d)";
+        "INSERT INTO root.sg.d4(time, s1) VALUES (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d)";
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
       long now = System.currentTimeMillis();
@@ -308,6 +338,10 @@ public class IoTDBCQExecIT {
 
       statement.execute("create timeseries root.sg.d4.s1 WITH DATATYPE=INT64");
       statement.execute("create timeseries root.sg.d4.s1_max WITH DATATYPE=INT64");
+
+      // firstly write one row to init data region, just for accelerating the following insert
+      // statement.
+      statement.execute("INSERT INTO root.sg.d4(time, s1) VALUES (0,0)");
 
       statement.execute(
           String.format(
@@ -345,7 +379,13 @@ public class IoTDBCQExecIT {
               + "  GROUP BY(1s) \n"
               + "END");
 
-      long targetTime = firstExecutionTime + 5_000;
+      // if the insert cost too much time
+      if (System.currentTimeMillis() > firstExecutionTime) {
+        statement.execute("DROP CQ cq4");
+        return;
+      }
+
+      long targetTime = firstExecutionTime + 10_000;
 
       while (System.currentTimeMillis() - targetTime < 0) {
         TimeUnit.SECONDS.sleep(1);
@@ -375,7 +415,7 @@ public class IoTDBCQExecIT {
   @Test
   public void testCQExecution5() {
     String insertTemplate =
-        "INSERT INTO root.sg.d5(time, s1) VALUES (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d) (%d, %d)";
+        "INSERT INTO root.sg.d5(time, s1) VALUES (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d), (%d, %d)";
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
       long now = System.currentTimeMillis();
@@ -384,6 +424,10 @@ public class IoTDBCQExecIT {
 
       statement.execute("create timeseries root.sg.d5.s1 WITH DATATYPE=INT64");
       statement.execute("create timeseries root.sg.d5.precalculated_s1 WITH DATATYPE=DOUBLE");
+
+      // firstly write one row to init data region, just for accelerating the following insert
+      // statement.
+      statement.execute("INSERT INTO root.sg.d5(time, s1) VALUES (0,0)");
 
       statement.execute(
           String.format(
@@ -421,7 +465,13 @@ public class IoTDBCQExecIT {
               + "  align by device\n"
               + "END");
 
-      long targetTime = firstExecutionTime + 5_000;
+      // if the insert cost too much time
+      if (System.currentTimeMillis() > firstExecutionTime) {
+        statement.execute("DROP CQ cq5");
+        return;
+      }
+
+      long targetTime = firstExecutionTime + 10_000;
 
       while (System.currentTimeMillis() - targetTime < 0) {
         TimeUnit.SECONDS.sleep(1);

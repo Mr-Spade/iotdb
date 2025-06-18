@@ -31,6 +31,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.pool2.PooledObject;
 import org.apache.commons.pool2.impl.DefaultPooledObject;
 import org.apache.thrift.async.TAsyncClientManager;
+import org.apache.thrift.transport.TNonblockingSocket;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,10 +58,10 @@ public class AsyncPipeDataTransferServiceClient extends IClientRPCService.AsyncC
   private final AtomicBoolean isHandshakeFinished = new AtomicBoolean(false);
 
   public AsyncPipeDataTransferServiceClient(
-      ThriftClientProperty property,
-      TEndPoint endpoint,
-      TAsyncClientManager tClientManager,
-      ClientManager<TEndPoint, AsyncPipeDataTransferServiceClient> clientManager)
+      final ThriftClientProperty property,
+      final TEndPoint endpoint,
+      final TAsyncClientManager tClientManager,
+      final ClientManager<TEndPoint, AsyncPipeDataTransferServiceClient> clientManager)
       throws IOException {
     super(
         property.getProtocolFactory(),
@@ -80,7 +81,7 @@ public class AsyncPipeDataTransferServiceClient extends IClientRPCService.AsyncC
   }
 
   @Override
-  public void onError(Exception e) {
+  public void onError(final Exception e) {
     super.onError(e);
     ThriftClient.resolveException(e, this);
     returnSelf();
@@ -113,8 +114,17 @@ public class AsyncPipeDataTransferServiceClient extends IClientRPCService.AsyncC
     }
   }
 
-  public void setShouldReturnSelf(boolean shouldReturnSelf) {
+  public void setShouldReturnSelf(final boolean shouldReturnSelf) {
     this.shouldReturnSelf.set(shouldReturnSelf);
+  }
+
+  public void setTimeoutDynamically(final int timeout) {
+    try {
+      ((TNonblockingSocket) ___transport).setTimeout(timeout);
+    } catch (Exception e) {
+      setTimeout(timeout);
+      LOGGER.error("Failed to set timeout dynamically, set it statically", e);
+    }
   }
 
   private void close() {
@@ -131,7 +141,8 @@ public class AsyncPipeDataTransferServiceClient extends IClientRPCService.AsyncC
         LOGGER.error(
             "Unexpected exception occurs in {}, error msg is {}",
             this,
-            ExceptionUtils.getRootCause(e).toString());
+            ExceptionUtils.getRootCause(e).toString(),
+            e);
       }
       return false;
     }
@@ -146,12 +157,30 @@ public class AsyncPipeDataTransferServiceClient extends IClientRPCService.AsyncC
     LOGGER.info("Handshake finished for client {}", this);
   }
 
+  // To ensure that the socket will be closed eventually, we need to manually close the socket here,
+  // because the Client object may have thrown an exception before entering the asynchronous thread,
+  // and the returnSelf method may not be called, resulting in resource leakage.
+  public void resetMethodStateIfStopped() {
+    if (!___manager.isRunning()) {
+      if (___transport != null && ___transport.isOpen()) {
+        ___transport.close();
+        LOGGER.warn("Manually closing transport to prevent resource leakage.");
+      }
+      ___currentMethod = null;
+      LOGGER.info("Method state has been reset due to manager not running.");
+    }
+  }
+
   public String getIp() {
     return endpoint.getIp();
   }
 
   public int getPort() {
     return endpoint.getPort();
+  }
+
+  public TEndPoint getEndPoint() {
+    return endpoint;
   }
 
   @Override
@@ -163,20 +192,21 @@ public class AsyncPipeDataTransferServiceClient extends IClientRPCService.AsyncC
       extends AsyncThriftClientFactory<TEndPoint, AsyncPipeDataTransferServiceClient> {
 
     public Factory(
-        ClientManager<TEndPoint, AsyncPipeDataTransferServiceClient> clientManager,
-        ThriftClientProperty thriftClientProperty,
-        String threadName) {
+        final ClientManager<TEndPoint, AsyncPipeDataTransferServiceClient> clientManager,
+        final ThriftClientProperty thriftClientProperty,
+        final String threadName) {
       super(clientManager, thriftClientProperty, threadName);
     }
 
     @Override
     public void destroyObject(
-        TEndPoint endPoint, PooledObject<AsyncPipeDataTransferServiceClient> pooledObject) {
+        final TEndPoint endPoint,
+        final PooledObject<AsyncPipeDataTransferServiceClient> pooledObject) {
       pooledObject.getObject().close();
     }
 
     @Override
-    public PooledObject<AsyncPipeDataTransferServiceClient> makeObject(TEndPoint endPoint)
+    public PooledObject<AsyncPipeDataTransferServiceClient> makeObject(final TEndPoint endPoint)
         throws Exception {
       return new DefaultPooledObject<>(
           new AsyncPipeDataTransferServiceClient(
@@ -188,7 +218,8 @@ public class AsyncPipeDataTransferServiceClient extends IClientRPCService.AsyncC
 
     @Override
     public boolean validateObject(
-        TEndPoint endPoint, PooledObject<AsyncPipeDataTransferServiceClient> pooledObject) {
+        final TEndPoint endPoint,
+        final PooledObject<AsyncPipeDataTransferServiceClient> pooledObject) {
       return pooledObject.getObject().isReady();
     }
   }

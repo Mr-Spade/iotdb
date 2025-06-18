@@ -17,15 +17,23 @@
 #
 
 import struct
+import warnings
 
 from .TemplateNode import TemplateNode
-from ..tsfile.common.constant.TsFileConstant import TsFileConstant
-from ..tsfile.utils.Pair import Pair
-from ..tsfile.utils.ReadWriteIOUtils import ReadWriteUtils
+from ..tsfile.common.constant.tsfile_constant import TsFileConstant
+from ..tsfile.utils.pair import Pair
+from ..tsfile.utils.read_write_io_utils import ReadWriteUtils
+
+warnings.simplefilter("always", DeprecationWarning)
 
 
 class Template:
     def __init__(self, name, share_time: bool = False):
+        warnings.warn(
+            "The APIs about template are deprecated and will be removed in future versions. Use sql instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.name = name
         self.children = dict()
         self.share_time = share_time

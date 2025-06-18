@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.db.storageengine.dataregion.compaction;
 
 import org.apache.iotdb.db.exception.StorageEngineException;
@@ -102,14 +103,11 @@ public class CompactionTaskManagerTest extends InnerCompactionTest {
     } finally {
       seqResources.get(0).readUnlock();
     }
-    if (summaryFuture != null) {
-      summaryFuture.get();
-    }
+    manager.waitAllCompactionFinish();
     Assert.assertEquals(0, manager.getTotalTaskCount());
     for (TsFileResource resource : seqResources) {
       Assert.assertFalse(resource.isCompactionCandidate());
     }
-    manager.waitAllCompactionFinish();
   }
 
   @Test

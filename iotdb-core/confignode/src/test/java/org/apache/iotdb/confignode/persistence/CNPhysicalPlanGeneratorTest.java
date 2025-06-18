@@ -21,13 +21,14 @@ package org.apache.iotdb.confignode.persistence;
 
 import org.apache.iotdb.commons.auth.AuthException;
 import org.apache.iotdb.commons.auth.entity.PrivilegeType;
+import org.apache.iotdb.commons.conf.IoTDBConstant;
 import org.apache.iotdb.commons.file.SystemFileFactory;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.commons.utils.AuthUtils;
 import org.apache.iotdb.commons.utils.FileUtils;
 import org.apache.iotdb.confignode.consensus.request.ConfigPhysicalPlan;
 import org.apache.iotdb.confignode.consensus.request.ConfigPhysicalPlanType;
-import org.apache.iotdb.confignode.consensus.request.auth.AuthorPlan;
+import org.apache.iotdb.confignode.consensus.request.write.auth.AuthorTreePlan;
 import org.apache.iotdb.confignode.consensus.request.write.database.DatabaseSchemaPlan;
 import org.apache.iotdb.confignode.consensus.request.write.database.SetTTLPlan;
 import org.apache.iotdb.confignode.consensus.request.write.template.CommitSetSchemaTemplatePlan;
@@ -38,6 +39,7 @@ import org.apache.iotdb.confignode.persistence.schema.CNSnapshotFileType;
 import org.apache.iotdb.confignode.persistence.schema.ClusterSchemaInfo;
 import org.apache.iotdb.confignode.rpc.thrift.TDatabaseSchema;
 import org.apache.iotdb.db.schemaengine.template.Template;
+import org.apache.iotdb.rpc.TSStatusCode;
 
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.file.metadata.enums.CompressionType;
@@ -57,11 +59,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
+import static org.apache.iotdb.commons.conf.IoTDBConstant.PATH_ROOT;
 import static org.apache.iotdb.db.utils.constant.TestConstant.BASE_OUTPUT_PATH;
+import static org.apache.tsfile.common.constant.TsFileConstant.PATH_SEPARATER_NO_REGEX;
 
 public class CNPhysicalPlanGeneratorTest {
   private static AuthorInfo authorInfo;
   private static ClusterSchemaInfo clusterSchemaInfo;
+  private static TTLInfo ttlInfo;
 
   private static final File snapshotDir = new File(BASE_OUTPUT_PATH, "authorInfo-snapshot");
   private static final String USER_SNAPSHOT_FILE_NAME = "system" + File.separator + "users";
@@ -84,6 +89,13 @@ public class CNPhysicalPlanGeneratorTest {
     }
   }
 
+  private static void setupTTLInfo() throws IOException {
+    ttlInfo = new TTLInfo();
+    if (!snapshotDir.exists()) {
+      snapshotDir.mkdir();
+    }
+  }
+
   @After
   public void cleanUpInfo() throws AuthException {
     if (authorInfo != null) {
@@ -91,6 +103,9 @@ public class CNPhysicalPlanGeneratorTest {
     }
     if (clusterSchemaInfo != null) {
       clusterSchemaInfo.clear();
+    }
+    if (ttlInfo != null) {
+      ttlInfo.clear();
     }
     FileUtils.deleteFileOrDirectory(snapshotDir);
   }
@@ -100,7 +115,7 @@ public class CNPhysicalPlanGeneratorTest {
     final HashSet<Integer> answerSet = new HashSet<>();
     String roleName = "test1";
     setupAuthorInfo();
-    AuthorPlan plan = new AuthorPlan(ConfigPhysicalPlanType.CreateRole);
+    AuthorTreePlan plan = new AuthorTreePlan(ConfigPhysicalPlanType.CreateRole);
     plan.setRoleName(roleName);
     plan.setPermissions(new HashSet<>());
     plan.setNodeNameList(new ArrayList<>());
@@ -109,7 +124,7 @@ public class CNPhysicalPlanGeneratorTest {
     authorInfo.authorNonQuery(plan);
 
     // Step 2: grant role path privileges - plan2
-    plan = new AuthorPlan(ConfigPhysicalPlanType.GrantRole);
+    plan = new AuthorTreePlan(ConfigPhysicalPlanType.GrantRole);
     plan.setRoleName(roleName);
     plan.setUserName("");
     plan.setNodeNameList(Collections.singletonList(new PartialPath("root.db.t1")));
@@ -128,7 +143,7 @@ public class CNPhysicalPlanGeneratorTest {
     answerSet.add(plan.hashCode());
 
     // Step 3: grant role sys privileges - plan3
-    plan = new AuthorPlan(ConfigPhysicalPlanType.GrantRole);
+    plan = new AuthorTreePlan(ConfigPhysicalPlanType.GrantRole);
     plan.setRoleName(roleName);
     plan.setUserName("");
     plan.setNodeNameList(Collections.emptyList());
@@ -177,25 +192,28 @@ public class CNPhysicalPlanGeneratorTest {
     final String userName = "test1";
     final Set<Integer> answerSet = new HashSet<>();
     setupAuthorInfo();
-    AuthorPlan plan = new AuthorPlan(ConfigPhysicalPlanType.CreateUser);
+    AuthorTreePlan plan = new AuthorTreePlan(ConfigPhysicalPlanType.CreateUser);
     plan.setPassword("password");
     plan.setUserName(userName);
     plan.setPermissions(new HashSet<>());
     plan.setNodeNameList(new ArrayList<>());
     // Create user plan 1
     authorInfo.authorNonQuery(plan);
-    plan.setAuthorType(ConfigPhysicalPlanType.CreateUserWithRawPassword);
+    plan = new AuthorTreePlan(ConfigPhysicalPlanType.CreateUserWithRawPassword);
     plan.setPassword(AuthUtils.encryptPassword("password"));
+    plan.setUserName(userName);
+    plan.setPermissions(new HashSet<>());
+    plan.setNodeNameList(new ArrayList<>());
     answerSet.add(plan.hashCode());
 
-    plan = new AuthorPlan(ConfigPhysicalPlanType.CreateRole);
+    plan = new AuthorTreePlan(ConfigPhysicalPlanType.CreateRole);
     plan.setRoleName("role1");
     plan.setPermissions(new HashSet<>());
     plan.setNodeNameList(new ArrayList<>());
     authorInfo.authorNonQuery(plan);
 
     // Grant path privileges, plan 2 , plan 3
-    plan = new AuthorPlan(ConfigPhysicalPlanType.GrantUser);
+    plan = new AuthorTreePlan(ConfigPhysicalPlanType.GrantUser);
     plan.setUserName(userName);
     plan.setRoleName("");
     plan.setNodeNameList(Collections.singletonList(new PartialPath("root.db1.t2")));
@@ -215,7 +233,7 @@ public class CNPhysicalPlanGeneratorTest {
     answerSet.add(plan.hashCode());
 
     // Grant system privileges, plan 4
-    plan = new AuthorPlan(ConfigPhysicalPlanType.GrantUser);
+    plan = new AuthorTreePlan(ConfigPhysicalPlanType.GrantUser);
     plan.setUserName(userName);
     plan.setRoleName("");
     plan.setNodeNameList(Collections.emptyList());
@@ -225,7 +243,7 @@ public class CNPhysicalPlanGeneratorTest {
     answerSet.add(plan.hashCode());
 
     // Grant role to user, plan 5
-    plan = new AuthorPlan(ConfigPhysicalPlanType.GrantRoleToUser);
+    plan = new AuthorTreePlan(ConfigPhysicalPlanType.GrantRoleToUser);
     plan.setRoleName("role1");
     plan.setUserName("");
     plan.setUserName(userName);
@@ -276,6 +294,7 @@ public class CNPhysicalPlanGeneratorTest {
   @Test
   public void databaseWithoutTemplateGeneratorTest() throws Exception {
     setupClusterSchemaInfo();
+    setupTTLInfo();
     final Set<Integer> answerSet = new HashSet<>();
     final Set<String> storageGroupPathList = new TreeSet<>();
     storageGroupPathList.add("root.sg");
@@ -288,46 +307,63 @@ public class CNPhysicalPlanGeneratorTest {
     for (String path : storageGroupPathList) {
       final TDatabaseSchema tDatabaseSchema = new TDatabaseSchema();
       tDatabaseSchema.setName(path);
-      tDatabaseSchema.setTTL(i);
+      tDatabaseSchema.setTTL(i + 1);
       tDatabaseSchema.setDataReplicationFactor(i);
       tDatabaseSchema.setSchemaReplicationFactor(i);
       tDatabaseSchema.setTimePartitionInterval(i);
-      clusterSchemaInfo.createDatabase(
-          new DatabaseSchemaPlan(ConfigPhysicalPlanType.CreateDatabase, tDatabaseSchema));
-      final SetTTLPlan plan =
-          new SetTTLPlan(Arrays.asList(path.split("\\.")), tDatabaseSchema.getTTL());
-      answerSet.add(plan.hashCode());
-      TDatabaseSchema tDatabaseSchemaBak = new TDatabaseSchema(tDatabaseSchema);
-      tDatabaseSchemaBak.unsetTTL();
       DatabaseSchemaPlan databaseSchemaPlan =
-          new DatabaseSchemaPlan(ConfigPhysicalPlanType.CreateDatabase, tDatabaseSchemaBak);
+          new DatabaseSchemaPlan(ConfigPhysicalPlanType.CreateDatabase, tDatabaseSchema);
+      clusterSchemaInfo.createDatabase(databaseSchemaPlan);
       answerSet.add(databaseSchemaPlan.hashCode());
+      SetTTLPlan setTTLPlan =
+          new SetTTLPlan(path.split(PATH_SEPARATER_NO_REGEX), tDatabaseSchema.getTTL());
+      ttlInfo.setTTL(setTTLPlan);
+      answerSet.add(setTTLPlan.hashCode());
       i++;
     }
 
-    final boolean success = clusterSchemaInfo.processTakeSnapshot(snapshotDir);
+    final boolean success =
+        clusterSchemaInfo.processTakeSnapshot(snapshotDir)
+            && ttlInfo.processTakeSnapshot(snapshotDir);
     Assert.assertTrue(success);
     final File schemaInfo =
         SystemFileFactory.INSTANCE.getFile(snapshotDir + File.separator + SCHEMA_INFO_FILE_NAME);
     final File templateInfo =
         SystemFileFactory.INSTANCE.getFile(snapshotDir + File.separator + TEMPLATE_INFO_FILE_NAME);
+    final File ttlInfo =
+        SystemFileFactory.INSTANCE.getFile(
+            snapshotDir + File.separator + TTLInfo.SNAPSHOT_FILENAME);
 
-    final CNPhysicalPlanGenerator planGenerator =
+    CNPhysicalPlanGenerator planGenerator =
         new CNPhysicalPlanGenerator(schemaInfo.toPath(), templateInfo.toPath());
     int count = 0;
     for (ConfigPhysicalPlan plan : planGenerator) {
       if (plan.getType() == ConfigPhysicalPlanType.CreateDatabase) {
         Assert.assertTrue(answerSet.contains(plan.hashCode()));
-      } else if (plan.getType() == ConfigPhysicalPlanType.SetTTL) {
-        final String[] database = ((SetTTLPlan) plan).getDatabasePathPattern();
-        final PartialPath databasePath = new PartialPath(database);
-        Assert.assertTrue(answerSet.contains(plan.hashCode()));
-        clusterSchemaInfo.setTTL((SetTTLPlan) plan);
+        count++;
       }
-      count++;
     }
     planGenerator.checkException();
-    Assert.assertEquals(10, count);
+    Assert.assertEquals(5, count);
+    planGenerator = new CNPhysicalPlanGenerator(ttlInfo.toPath(), CNSnapshotFileType.TTL);
+    for (ConfigPhysicalPlan plan : planGenerator) {
+      if (plan.getType() == ConfigPhysicalPlanType.SetTTL) {
+        if (!new PartialPath(((SetTTLPlan) plan).getPathPattern())
+            .getFullPath()
+            .equals(
+                PATH_ROOT
+                    + IoTDBConstant.PATH_SEPARATOR
+                    + IoTDBConstant.MULTI_LEVEL_PATH_WILDCARD)) {
+          Assert.assertTrue(answerSet.contains(plan.hashCode()));
+        }
+        Assert.assertEquals(
+            CNPhysicalPlanGeneratorTest.ttlInfo.setTTL((SetTTLPlan) plan).code,
+            TSStatusCode.SUCCESS_STATUS.getStatusCode());
+        count++;
+      }
+    }
+    planGenerator.checkException();
+    Assert.assertEquals(11, count);
   }
 
   @Test
@@ -377,6 +413,7 @@ public class CNPhysicalPlanGeneratorTest {
   @Test
   public void templateAndDatabaseCompletedTest() throws Exception {
     setupClusterSchemaInfo();
+    setupTTLInfo();
     final Set<Integer> answerSet = new HashSet<>();
     final Set<String> storageGroupPathList = new TreeSet<>();
     storageGroupPathList.add("root.sg");
@@ -388,20 +425,18 @@ public class CNPhysicalPlanGeneratorTest {
     for (String path : storageGroupPathList) {
       final TDatabaseSchema tDatabaseSchema = new TDatabaseSchema();
       tDatabaseSchema.setName(path);
-      tDatabaseSchema.setTTL(i);
+      tDatabaseSchema.setTTL(i + 1);
       tDatabaseSchema.setDataReplicationFactor(i);
       tDatabaseSchema.setSchemaReplicationFactor(i);
       tDatabaseSchema.setTimePartitionInterval(i);
-      clusterSchemaInfo.createDatabase(
-          new DatabaseSchemaPlan(ConfigPhysicalPlanType.CreateDatabase, tDatabaseSchema));
+      final DatabaseSchemaPlan databaseSchemaPlan =
+          new DatabaseSchemaPlan(ConfigPhysicalPlanType.CreateDatabase, tDatabaseSchema);
+      clusterSchemaInfo.createDatabase(databaseSchemaPlan);
+      answerSet.add(databaseSchemaPlan.hashCode());
       final SetTTLPlan plan =
           new SetTTLPlan(Arrays.asList(path.split("\\.")), tDatabaseSchema.getTTL());
+      ttlInfo.setTTL(plan);
       answerSet.add(plan.hashCode());
-      final TDatabaseSchema tDatabaseSchemaBak = new TDatabaseSchema(tDatabaseSchema);
-      tDatabaseSchemaBak.unsetTTL();
-      final DatabaseSchemaPlan databaseSchemaPlan =
-          new DatabaseSchemaPlan(ConfigPhysicalPlanType.CreateDatabase, tDatabaseSchemaBak);
-      answerSet.add(databaseSchemaPlan.hashCode());
       i++;
     }
     final Template t1 =
@@ -441,19 +476,22 @@ public class CNPhysicalPlanGeneratorTest {
     answerSet.add(setSchemaTemplatePlan1.hashCode());
     answerSet.add(setSchemaTemplatePlan1.hashCode());
 
-    final boolean success = clusterSchemaInfo.processTakeSnapshot(snapshotDir);
+    final boolean success =
+        clusterSchemaInfo.processTakeSnapshot(snapshotDir)
+            && ttlInfo.processTakeSnapshot(snapshotDir);
     Assert.assertTrue(success);
     final File schemaInfo =
         SystemFileFactory.INSTANCE.getFile(snapshotDir + File.separator + SCHEMA_INFO_FILE_NAME);
     final File templateInfo =
         SystemFileFactory.INSTANCE.getFile(snapshotDir + File.separator + TEMPLATE_INFO_FILE_NAME);
-    final CNPhysicalPlanGenerator planGenerator =
+    final File ttlInfo =
+        SystemFileFactory.INSTANCE.getFile(
+            snapshotDir + File.separator + TTLInfo.SNAPSHOT_FILENAME);
+    CNPhysicalPlanGenerator planGenerator =
         new CNPhysicalPlanGenerator(schemaInfo.toPath(), templateInfo.toPath());
     int count = 0;
     for (ConfigPhysicalPlan plan : planGenerator) {
       if (plan.getType() == ConfigPhysicalPlanType.CreateDatabase) {
-        Assert.assertTrue(answerSet.contains(plan.hashCode()));
-      } else if (plan.getType() == ConfigPhysicalPlanType.SetTTL) {
         Assert.assertTrue(answerSet.contains(plan.hashCode()));
       } else if (plan.getType() == ConfigPhysicalPlanType.CreateSchemaTemplate) {
         Assert.assertTrue(answerSet.contains(plan.hashCode()));
@@ -470,6 +508,26 @@ public class CNPhysicalPlanGeneratorTest {
       }
       count++;
     }
-    Assert.assertEquals(12, count);
+    Assert.assertEquals(8, count);
+
+    planGenerator = new CNPhysicalPlanGenerator(ttlInfo.toPath(), CNSnapshotFileType.TTL);
+    for (ConfigPhysicalPlan plan : planGenerator) {
+      if (plan.getType() == ConfigPhysicalPlanType.SetTTL) {
+        if (!new PartialPath(((SetTTLPlan) plan).getPathPattern())
+            .getFullPath()
+            .equals(
+                PATH_ROOT
+                    + IoTDBConstant.PATH_SEPARATOR
+                    + IoTDBConstant.MULTI_LEVEL_PATH_WILDCARD)) {
+          Assert.assertTrue(answerSet.contains(plan.hashCode()));
+        }
+        Assert.assertEquals(
+            CNPhysicalPlanGeneratorTest.ttlInfo.setTTL((SetTTLPlan) plan).code,
+            TSStatusCode.SUCCESS_STATUS.getStatusCode());
+        count++;
+      }
+    }
+    planGenerator.checkException();
+    Assert.assertEquals(13, count);
   }
 }

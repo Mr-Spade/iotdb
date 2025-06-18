@@ -46,12 +46,9 @@ import java.util.Objects;
 import java.util.OptionalLong;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -101,13 +98,14 @@ public class LogDispatcher {
 
   public synchronized void start() {
     if (!threads.isEmpty()) {
-      threads.forEach(thread -> thread.setFuture(executorService.submit(thread)));
+      threads.forEach(logDispatcherThread -> executorService.submit(logDispatcherThread));
     }
   }
 
   public synchronized void stop() {
     if (!threads.isEmpty()) {
-      threads.forEach(LogDispatcherThread::stop);
+      threads.forEach(LogDispatcherThread::setStopped);
+      threads.forEach(LogDispatcherThread::processStopped);
       executorService.shutdownNow();
       int timeout = 10;
       try {
@@ -122,7 +120,8 @@ public class LogDispatcher {
     stopped = true;
   }
 
-  public synchronized void addLogDispatcherThread(Peer peer, long initialSyncIndex) {
+  public synchronized void addLogDispatcherThread(
+      Peer peer, long initialSyncIndex, boolean startNow) {
     if (stopped) {
       return;
     }
@@ -133,7 +132,9 @@ public class LogDispatcher {
     if (this.executorService == null) {
       initLogSyncThreadPool();
     }
-    thread.setFuture(executorService.submit(thread));
+    if (startNow) {
+      executorService.submit(thread);
+    }
   }
 
   public synchronized void removeLogDispatcherThread(Peer peer) throws IOException {
@@ -231,7 +232,7 @@ public class LogDispatcher {
 
     private final LogDispatcherThreadMetrics logDispatcherThreadMetrics;
 
-    private Future<?> future;
+    private final CountDownLatch runFinished = new CountDownLatch(1);
 
     public LogDispatcherThread(Peer peer, IoTConsensusConfig config, long initialSyncIndex) {
       this.peer = peer;
@@ -257,10 +258,6 @@ public class LogDispatcher {
       return controller.getCurrentIndex();
     }
 
-    public void setFuture(Future<?> future) {
-      this.future = future;
-    }
-
     public long getLastFlushedSyncIndex() {
       return controller.getLastFlushedIndex();
     }
@@ -283,7 +280,7 @@ public class LogDispatcher {
 
     /** try to offer a request into queue with memory control. */
     public boolean offer(IndexedConsensusRequest indexedConsensusRequest) {
-      if (!iotConsensusMemoryManager.reserve(indexedConsensusRequest.getSerializedSize(), true)) {
+      if (!iotConsensusMemoryManager.reserve(indexedConsensusRequest.getMemorySize(), true)) {
         return false;
       }
       boolean success;
@@ -291,43 +288,47 @@ public class LogDispatcher {
         success = pendingEntries.offer(indexedConsensusRequest);
       } catch (Throwable t) {
         // If exception occurs during request offer, the reserved memory should be released
-        iotConsensusMemoryManager.free(indexedConsensusRequest.getSerializedSize(), true);
+        iotConsensusMemoryManager.free(indexedConsensusRequest.getMemorySize(), true);
         throw t;
       }
       if (!success) {
         // If offer failed, the reserved memory should be released
-        iotConsensusMemoryManager.free(indexedConsensusRequest.getSerializedSize(), true);
+        iotConsensusMemoryManager.free(indexedConsensusRequest.getMemorySize(), true);
       }
       return success;
     }
 
     /** try to remove a request from queue with memory control. */
     private void releaseReservedMemory(IndexedConsensusRequest indexedConsensusRequest) {
-      iotConsensusMemoryManager.free(indexedConsensusRequest.getSerializedSize(), true);
+      iotConsensusMemoryManager.free(indexedConsensusRequest.getMemorySize(), true);
     }
 
     public void stop() {
+      setStopped();
+      processStopped();
+    }
+
+    private void setStopped() {
       stopped = true;
-      if (!future.cancel(true)) {
-        logger.warn("LogDispatcherThread Future for {} is not stopped", peer);
-      }
+    }
+
+    private void processStopped() {
       try {
-        future.get(30, TimeUnit.SECONDS);
-      } catch (InterruptedException | ExecutionException | TimeoutException e) {
+        if (!runFinished.await(30, TimeUnit.SECONDS)) {
+          logger.info("{}: Dispatcher for {} didn't stop after 30s.", impl.getThisNode(), peer);
+        }
+      } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
-        logger.warn("LogDispatcherThread Future for {} is not stopped", peer, e);
-      } catch (CancellationException ignored) {
-        // ignore because it is expected
       }
       long requestSize = 0;
       for (IndexedConsensusRequest indexedConsensusRequest : pendingEntries) {
-        requestSize += indexedConsensusRequest.getSerializedSize();
+        requestSize += indexedConsensusRequest.getMemorySize();
       }
       pendingEntries.clear();
       iotConsensusMemoryManager.free(requestSize, true);
       requestSize = 0;
       for (IndexedConsensusRequest indexedConsensusRequest : bufferedEntries) {
-        requestSize += indexedConsensusRequest.getSerializedSize();
+        requestSize += indexedConsensusRequest.getMemorySize();
       }
       iotConsensusMemoryManager.free(requestSize, true);
       syncStatus.free();
@@ -351,7 +352,7 @@ public class LogDispatcher {
       logger.info("{}: Dispatcher for {} starts", impl.getThisNode(), peer);
       try {
         Batch batch;
-        while (!Thread.interrupted()) {
+        while (!Thread.interrupted() && !stopped) {
           long startTime = System.nanoTime();
           while ((batch = getBatch()).isEmpty()) {
             // we may block here if there is no requests in the queue
@@ -366,12 +367,12 @@ public class LogDispatcher {
               }
             }
             // Immediately check for interrupts after poll and sleep
-            if (Thread.interrupted()) {
+            if (Thread.interrupted() || stopped) {
               throw new InterruptedException("Interrupted after polling and sleeping");
             }
           }
           // Immediately check for interrupts after a time-consuming getBatch() operation
-          if (Thread.interrupted()) {
+          if (Thread.interrupted() || stopped) {
             throw new InterruptedException("Interrupted after getting a batch");
           }
           logDispatcherThreadMetrics.recordConstructBatchTime(System.nanoTime() - startTime);
@@ -388,6 +389,7 @@ public class LogDispatcher {
       } catch (Exception e) {
         logger.error("Unexpected error in logDispatcher for peer {}", peer, e);
       }
+      runFinished.countDown();
       logger.info("{}: Dispatcher for {} exits", impl.getThisNode(), peer);
     }
 

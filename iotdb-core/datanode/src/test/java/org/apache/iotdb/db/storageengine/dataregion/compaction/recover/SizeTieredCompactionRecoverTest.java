@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.db.storageengine.dataregion.compaction.recover;
 
 import org.apache.iotdb.commons.conf.IoTDBConstant;
@@ -28,6 +29,7 @@ import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.exception.DataRegionException;
 import org.apache.iotdb.db.storageengine.StorageEngine;
 import org.apache.iotdb.db.storageengine.dataregion.DataRegion;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.constant.CompactionTaskType;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.performer.ICompactionPerformer;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.performer.impl.FastCompactionPerformer;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.recover.CompactionRecoverTask;
@@ -243,7 +245,9 @@ public class SizeTieredCompactionRecoverTest {
     performer.setSummary(new FastCompactionTaskSummary());
     performer.perform();
     CompactionUtils.moveTargetFile(
-        Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+        Collections.singletonList(targetResource),
+        CompactionTaskType.INNER_SEQ,
+        COMPACTION_TEST_SG);
 
     CompactionRecoverTask recoverTask =
         new CompactionRecoverTask(
@@ -270,7 +274,9 @@ public class SizeTieredCompactionRecoverTest {
     performer.setSummary(new FastCompactionTaskSummary());
     performer.perform();
     CompactionUtils.moveTargetFile(
-        Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+        Collections.singletonList(targetResource),
+        CompactionTaskType.INNER_SEQ,
+        COMPACTION_TEST_SG);
 
     InnerSpaceCompactionTask innerSpaceCompactionTask =
         new InnerSpaceCompactionTask(COMPACTION_TEST_SG, "0", tsFileManager, new File(logFilePath));
@@ -300,7 +306,9 @@ public class SizeTieredCompactionRecoverTest {
     performer.setSummary(new FastCompactionTaskSummary());
     performer.perform();
     CompactionUtils.moveTargetFile(
-        Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+        Collections.singletonList(targetResource),
+        CompactionTaskType.INNER_SEQ,
+        COMPACTION_TEST_SG);
     FileOutputStream targetStream = new FileOutputStream(targetResource.getTsFile(), true);
     FileChannel channel = targetStream.getChannel();
     channel.truncate(targetResource.getTsFile().length() - 100);
@@ -330,7 +338,9 @@ public class SizeTieredCompactionRecoverTest {
     performer.setSummary(new FastCompactionTaskSummary());
     performer.perform();
     CompactionUtils.moveTargetFile(
-        Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+        Collections.singletonList(targetResource),
+        CompactionTaskType.INNER_SEQ,
+        COMPACTION_TEST_SG);
     FileOutputStream targetStream = new FileOutputStream(targetResource.getTsFile(), true);
     FileChannel channel = targetStream.getChannel();
     channel.truncate(targetResource.getTsFile().length() - 100);
@@ -365,7 +375,9 @@ public class SizeTieredCompactionRecoverTest {
     performer.setSummary(new FastCompactionTaskSummary());
     performer.perform();
     CompactionUtils.moveTargetFile(
-        Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+        Collections.singletonList(targetResource),
+        CompactionTaskType.INNER_SEQ,
+        COMPACTION_TEST_SG);
     CompactionRecoverTask recoverTask =
         new CompactionRecoverTask(
             COMPACTION_TEST_SG, "0", tsFileManager, new File(logFilePath), true);
@@ -391,7 +403,9 @@ public class SizeTieredCompactionRecoverTest {
     performer.setSummary(new FastCompactionTaskSummary());
     performer.perform();
     CompactionUtils.moveTargetFile(
-        Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+        Collections.singletonList(targetResource),
+        CompactionTaskType.INNER_SEQ,
+        COMPACTION_TEST_SG);
     InnerSpaceCompactionTask innerSpaceCompactionTask =
         new InnerSpaceCompactionTask(COMPACTION_TEST_SG, "0", tsFileManager, new File(logFilePath));
     innerSpaceCompactionTask.recover();
@@ -421,7 +435,9 @@ public class SizeTieredCompactionRecoverTest {
     performer.setSummary(new FastCompactionTaskSummary());
     performer.perform();
     CompactionUtils.moveTargetFile(
-        Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+        Collections.singletonList(targetResource),
+        CompactionTaskType.INNER_SEQ,
+        COMPACTION_TEST_SG);
     FileOutputStream targetStream = new FileOutputStream(targetResource.getTsFile(), true);
     FileChannel channel = targetStream.getChannel();
     channel.truncate(targetResource.getTsFile().length() - 100);
@@ -451,7 +467,9 @@ public class SizeTieredCompactionRecoverTest {
     performer.setSummary(new FastCompactionTaskSummary());
     performer.perform();
     CompactionUtils.moveTargetFile(
-        Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+        Collections.singletonList(targetResource),
+        CompactionTaskType.INNER_SEQ,
+        COMPACTION_TEST_SG);
     FileOutputStream targetStream = new FileOutputStream(targetResource.getTsFile(), true);
     FileChannel channel = targetStream.getChannel();
     channel.truncate(targetResource.getTsFile().length() - 100);
@@ -489,7 +507,9 @@ public class SizeTieredCompactionRecoverTest {
       performer.setSummary(new FastCompactionTaskSummary());
       performer.perform();
       CompactionUtils.moveTargetFile(
-          Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+          Collections.singletonList(targetResource),
+          CompactionTaskType.INNER_SEQ,
+          COMPACTION_TEST_SG);
       FileUtils.moveDirectory(
           new File(TestConstant.BASE_OUTPUT_PATH + File.separator + "data"),
           new File(TestConstant.BASE_OUTPUT_PATH + File.separator + "data1"));
@@ -559,7 +579,9 @@ public class SizeTieredCompactionRecoverTest {
       performer.setSummary(new FastCompactionTaskSummary());
       performer.perform();
       CompactionUtils.moveTargetFile(
-          Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+          Collections.singletonList(targetResource),
+          CompactionTaskType.INNER_SEQ,
+          COMPACTION_TEST_SG);
       FileUtils.moveDirectory(
           new File(TestConstant.BASE_OUTPUT_PATH + File.separator + "data"),
           new File(TestConstant.BASE_OUTPUT_PATH + File.separator + "data1"));
@@ -635,7 +657,9 @@ public class SizeTieredCompactionRecoverTest {
       performer.setSummary(new FastCompactionTaskSummary());
       performer.perform();
       CompactionUtils.moveTargetFile(
-          Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+          Collections.singletonList(targetResource),
+          CompactionTaskType.INNER_SEQ,
+          COMPACTION_TEST_SG);
       FileOutputStream targetStream = new FileOutputStream(targetResource.getTsFile(), true);
       FileChannel channel = targetStream.getChannel();
       channel.truncate(targetResource.getTsFile().length() - 100);
@@ -704,7 +728,9 @@ public class SizeTieredCompactionRecoverTest {
       performer.setSummary(new FastCompactionTaskSummary());
       performer.perform();
       CompactionUtils.moveTargetFile(
-          Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+          Collections.singletonList(targetResource),
+          CompactionTaskType.INNER_SEQ,
+          COMPACTION_TEST_SG);
       FileOutputStream targetStream = new FileOutputStream(targetResource.getTsFile(), true);
       FileChannel channel = targetStream.getChannel();
       channel.truncate(targetResource.getTsFile().length() - 100);
@@ -778,7 +804,9 @@ public class SizeTieredCompactionRecoverTest {
       performer.setSummary(new FastCompactionTaskSummary());
       performer.perform();
       CompactionUtils.moveTargetFile(
-          Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+          Collections.singletonList(targetResource),
+          CompactionTaskType.INNER_SEQ,
+          COMPACTION_TEST_SG);
       FileUtils.moveDirectory(
           new File(TestConstant.BASE_OUTPUT_PATH + File.separator + "data"),
           new File(TestConstant.BASE_OUTPUT_PATH + File.separator + "data1"));
@@ -848,7 +876,9 @@ public class SizeTieredCompactionRecoverTest {
       performer.setSummary(new FastCompactionTaskSummary());
       performer.perform();
       CompactionUtils.moveTargetFile(
-          Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+          Collections.singletonList(targetResource),
+          CompactionTaskType.INNER_SEQ,
+          COMPACTION_TEST_SG);
       FileUtils.moveDirectory(
           new File(TestConstant.BASE_OUTPUT_PATH + File.separator + "data"),
           new File(TestConstant.BASE_OUTPUT_PATH + File.separator + "data1"));
@@ -924,7 +954,9 @@ public class SizeTieredCompactionRecoverTest {
       performer.setSummary(new FastCompactionTaskSummary());
       performer.perform();
       CompactionUtils.moveTargetFile(
-          Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+          Collections.singletonList(targetResource),
+          CompactionTaskType.INNER_SEQ,
+          COMPACTION_TEST_SG);
       FileOutputStream targetStream = new FileOutputStream(targetResource.getTsFile(), true);
       FileChannel channel = targetStream.getChannel();
       channel.truncate(targetResource.getTsFile().length() - 100);
@@ -993,7 +1025,9 @@ public class SizeTieredCompactionRecoverTest {
       performer.setSummary(new FastCompactionTaskSummary());
       performer.perform();
       CompactionUtils.moveTargetFile(
-          Collections.singletonList(targetResource), true, COMPACTION_TEST_SG);
+          Collections.singletonList(targetResource),
+          CompactionTaskType.INNER_SEQ,
+          COMPACTION_TEST_SG);
       FileOutputStream targetStream = new FileOutputStream(targetResource.getTsFile(), true);
       FileChannel channel = targetStream.getChannel();
       channel.truncate(targetResource.getTsFile().length() - 100);

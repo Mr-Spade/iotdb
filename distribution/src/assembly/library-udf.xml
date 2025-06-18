@@ -31,19 +31,32 @@
             <includes>
                 <include>org.apache.iotdb:library-udf:jar:${project.version}</include>
             </includes>
-            <outputDirectory>ext/udf</outputDirectory>
+            <outputDirectory/>
             <outputFileNameMapping>${artifact.artifactId}.${artifact.extension}</outputFileNameMapping>
             <unpack>false</unpack>
         </dependencySet>
     </dependencySets>
     <fileSets>
         <fileSet>
-            <directory>${maven.multiModuleProjectDirectory}/library-udf/src/assembly/tools</directory>
-            <outputDirectory>tools</outputDirectory>
+            <directory>${project.basedir}/../library-udf/src/assembly/tools</directory>
+            <outputDirectory/>
             <fileMode>0755</fileMode>
         </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../licenses</directory>
+            <outputDirectory>licenses</outputDirectory>
+        </fileSet>
     </fileSets>
-    <componentDescriptors>
-        <componentDescriptor>common-files.xml</componentDescriptor>
-    </componentDescriptors>
+    <files>
+        <file>
+            <source>${project.basedir}/../LICENSE-binary</source>
+            <outputDirectory>licenses</outputDirectory>
+            <destName>LICENSE</destName>
+        </file>
+        <file>
+            <source>${project.basedir}/../NOTICE-binary</source>
+            <outputDirectory>licenses</outputDirectory>
+            <destName>NOTICE</destName>
+        </file>
+    </files>
 </assembly>

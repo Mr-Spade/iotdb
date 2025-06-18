@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.library.drepair.util;
 
 import java.util.ArrayList;
@@ -33,7 +34,7 @@ public class TimestampInterval {
   protected long deltaT;
   protected long start0;
 
-  public TimestampInterval(long[] time, double[] original) throws Exception {
+  public TimestampInterval(long[] time, double[] original) {
     // keep the time series
     this.time = time;
     this.original = original;
@@ -43,19 +44,15 @@ public class TimestampInterval {
 
   // get standard interval
   // -1 median -2 mode -3 cluster
-  public long getInterval(int mode) {
-    switch (mode) {
-      case -1:
-        this.deltaT = getIntervalByMedian();
-        break;
-      case -2:
-        this.deltaT = getIntervalByMode();
-        break;
-      case -3:
-        this.deltaT = getIntervalByCluster();
-        break;
-      default:
-        this.deltaT = mode;
+  public long getInterval(long mode) {
+    if (mode == -1L) {
+      this.deltaT = getIntervalByMedian();
+    } else if (mode == -2L) {
+      this.deltaT = getIntervalByMode();
+    } else if (mode == -3L) {
+      this.deltaT = getIntervalByCluster();
+    } else {
+      this.deltaT = mode;
     }
     return this.deltaT;
   }
@@ -98,7 +95,6 @@ public class TimestampInterval {
   // cluster
   private long getIntervalByCluster() {
     // get array of timestamp intervals
-    HashMap<Object, Integer> map = new LinkedHashMap<>();
     long maxInterval = 0;
     long minInterval = 9999999;
     long[] intervals = new long[n];
@@ -172,17 +168,18 @@ public class TimestampInterval {
       case 2:
         this.start0 = getStart0ByMode();
         break;
+      default:
     }
     return this.start0;
   }
 
   private long getStart0ByLinear() {
-    long sum_ = 0;
+    long sum = 0;
     for (int i = 0; i < n; i++) {
-      sum_ += time[i];
-      sum_ -= this.deltaT * i;
+      sum += time[i];
+      sum -= this.deltaT * i;
     }
-    return sum_ / n;
+    return sum / n;
   }
 
   private long getStart0ByMode() {

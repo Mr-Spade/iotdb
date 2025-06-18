@@ -20,6 +20,9 @@ package org.apache.iotdb.itbase.runtime;
 
 import org.apache.iotdb.jdbc.Config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -28,12 +31,16 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.apache.iotdb.rpc.RpcUtils.isSetSqlDialect;
+import static org.apache.iotdb.rpc.RpcUtils.isUseDatabase;
+
 /** The implementation of {@link ClusterTestStatement} in cluster test. */
 public class ClusterTestStatement implements Statement {
 
-  private static final int DEFAULT_QUERY_TIMEOUT = 60;
-  private final Statement writeStatement;
-  private final String writEndpoint;
+  private static final Logger LOGGER = LoggerFactory.getLogger(ClusterTestStatement.class);
+  private static final int DEFAULT_QUERY_TIMEOUT = 120;
+  private Statement writeStatement;
+  private String writEndpoint;
   private final List<Statement> readStatements = new ArrayList<>();
   private final List<String> readEndpoints = new ArrayList<>();
   private boolean closed = false;
@@ -41,22 +48,34 @@ public class ClusterTestStatement implements Statement {
   private int queryTimeout = DEFAULT_QUERY_TIMEOUT;
   private int fetchSize = Config.DEFAULT_FETCH_SIZE;
 
-  public ClusterTestStatement(NodeConnection writeConnection, List<NodeConnection> readConnections)
-      throws SQLException {
-    this.writeStatement = writeConnection.getUnderlyingConnecton().createStatement();
-    updateConfig(writeStatement);
-    writEndpoint = writeConnection.toString();
+  public ClusterTestStatement(
+      NodeConnection writeConnection, List<NodeConnection> readConnections) {
+    try {
+      this.writeStatement = writeConnection.getUnderlyingConnecton().createStatement();
+      updateConfig(writeStatement, 0);
+      writEndpoint = writeConnection.toString();
+    } catch (SQLException e) {
+      LOGGER.warn("Failed to create write statement.", e);
+    }
+
     for (NodeConnection readConnection : readConnections) {
-      Statement readStatement = readConnection.getUnderlyingConnecton().createStatement();
-      this.readStatements.add(readStatement);
-      this.readEndpoints.add(readConnection.toString());
-      updateConfig(readStatement);
+      try {
+        Statement readStatement = readConnection.getUnderlyingConnecton().createStatement();
+        this.readStatements.add(readStatement);
+        this.readEndpoints.add(readConnection.toString());
+        updateConfig(readStatement, queryTimeout);
+      } catch (SQLException e) {
+        LOGGER.warn("Cannot create read statement from connection {}.", readConnection, e);
+      }
+    }
+    if (readStatements.isEmpty()) {
+      LOGGER.warn("Failed to create any read statement.");
     }
   }
 
-  private void updateConfig(Statement statement) throws SQLException {
+  private void updateConfig(Statement statement, int timeout) throws SQLException {
     maxRows = Math.min(statement.getMaxRows(), maxRows);
-    statement.setQueryTimeout(queryTimeout);
+    statement.setQueryTimeout(timeout);
   }
 
   @Override
@@ -171,7 +190,16 @@ public class ClusterTestStatement implements Statement {
 
   @Override
   public boolean execute(String sql) throws SQLException {
-    return writeStatement.execute(sql);
+    sql = sql.trim();
+    boolean result = writeStatement.execute(sql);
+    // if 'use XXXX' or 'set sql_dialect', sendRequest to all statements
+    if (isUseDatabase(sql) || isSetSqlDialect(sql)) {
+      for (Statement readStatement : readStatements) {
+        boolean tmp = readStatement.execute(sql);
+        result = result && tmp;
+      }
+    }
+    return result;
   }
 
   @Override

@@ -16,10 +16,10 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.db.it;
 
-import org.apache.iotdb.db.mpp.common.header.ColumnHeaderConstant;
-import org.apache.iotdb.it.env.ConfigFactory;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
@@ -50,23 +50,17 @@ public class IoTDBNestedQueryIT {
 
   protected static final int ITERATION_TIMES = 10;
 
-  protected static boolean enableSeqSpaceCompaction;
-  protected static boolean enableUnseqSpaceCompaction;
-  protected static boolean enableCrossSpaceCompaction;
-
   @BeforeClass
   public static void setUp() throws Exception {
-    enableSeqSpaceCompaction = ConfigFactory.getConfig().isEnableSeqSpaceCompaction();
-    enableUnseqSpaceCompaction = ConfigFactory.getConfig().isEnableUnseqSpaceCompaction();
-    enableCrossSpaceCompaction = ConfigFactory.getConfig().isEnableCrossSpaceCompaction();
-    ConfigFactory.getConfig().setEnableSeqSpaceCompaction(false);
-    ConfigFactory.getConfig().setEnableUnseqSpaceCompaction(false);
-    ConfigFactory.getConfig().setEnableCrossSpaceCompaction(false);
-    ConfigFactory.getConfig()
-        .setUdfCollectorMemoryBudgetInMB(5)
-        .setUdfTransformerMemoryBudgetInMB(5)
-        .setUdfReaderMemoryBudgetInMB(5);
-    EnvFactory.getEnv().initBeforeClass();
+    EnvFactory.getEnv()
+        .getConfig()
+        .getCommonConfig()
+        .setEnableSeqSpaceCompaction(false)
+        .setEnableUnseqSpaceCompaction(false)
+        .setEnableCrossSpaceCompaction(false)
+        .setUdfMemoryBudgetInMB(5);
+
+    EnvFactory.getEnv().initClusterEnvironment();
     createTimeSeries();
     generateData();
     registerUDF();
@@ -74,14 +68,7 @@ public class IoTDBNestedQueryIT {
 
   @AfterClass
   public static void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterClass();
-    ConfigFactory.getConfig().setEnableSeqSpaceCompaction(enableSeqSpaceCompaction);
-    ConfigFactory.getConfig().setEnableUnseqSpaceCompaction(enableUnseqSpaceCompaction);
-    ConfigFactory.getConfig().setEnableCrossSpaceCompaction(enableCrossSpaceCompaction);
-    ConfigFactory.getConfig()
-        .setUdfCollectorMemoryBudgetInMB(100)
-        .setUdfTransformerMemoryBudgetInMB(100)
-        .setUdfReaderMemoryBudgetInMB(100);
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   private static void createTimeSeries() {
@@ -91,6 +78,10 @@ public class IoTDBNestedQueryIT {
       statement.execute("CREATE TIMESERIES root.vehicle.d1.s1 with datatype=INT32,encoding=PLAIN");
       statement.execute("CREATE TIMESERIES root.vehicle.d1.s2 with datatype=INT32,encoding=PLAIN");
       statement.execute("CREATE TIMESERIES root.vehicle.d1.s3 with datatype=TEXT,encoding=PLAIN");
+      statement.execute("CREATE TIMESERIES root.vehicle.d1.s4 with datatype=STRING,encoding=PLAIN");
+      statement.execute("CREATE TIMESERIES root.vehicle.d1.s5 with datatype=DATE,encoding=PLAIN");
+      statement.execute(
+          "CREATE TIMESERIES root.vehicle.d1.s6 with datatype=TIMESTAMP,encoding=PLAIN");
       statement.execute("CREATE TIMESERIES root.vehicle.d2.s1 with datatype=FLOAT,encoding=PLAIN");
       statement.execute("CREATE TIMESERIES root.vehicle.d2.s2 with datatype=DOUBLE,encoding=PLAIN");
       statement.execute(
@@ -106,11 +97,15 @@ public class IoTDBNestedQueryIT {
       for (int i = 1; i <= ITERATION_TIMES; ++i) {
         statement.execute(
             String.format(
-                "insert into root.vehicle.d1(timestamp,s1,s2,s3) values(%d,%d,%d,%s)", i, i, i, i));
+                "insert into root.vehicle.d1(timestamp,s1,s2,s3,s4,s6) values(%d,%d,%d,%s,%s,%d)",
+                i, i, i, i, i, i));
         statement.execute(
             (String.format(
                 "insert into root.vehicle.d2(timestamp,s1,s2) values(%d,%d,%d)", i, i, i)));
       }
+      statement.execute("insert into root.vehicle.d1(timestamp,s5) values(1,'2024-01-01')");
+      statement.execute("insert into root.vehicle.d1(timestamp,s5) values(2,'2024-01-02')");
+      statement.execute("insert into root.vehicle.d1(timestamp,s5) values(3,'2024-01-03')");
     } catch (SQLException throwable) {
       fail(throwable.getMessage());
     }
@@ -630,14 +625,40 @@ public class IoTDBNestedQueryIT {
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
       String query =
-          "SELECT s1 FROM root.vehicle.d1 WHERE s3 LIKE '_' && s3 REGEXP '[0-9]' && s3 IN ('4', '2', '3')";
+          "SELECT s1 FROM root.vehicle.d1 WHERE s3 LIKE '_' && s3 not REGEXP '[0-9]' && s3 IN ('4', '2', '3')";
       try (ResultSet rs = statement.executeQuery(query)) {
+        Assert.assertFalse(rs.next());
+      }
+
+      String query2 =
+          "SELECT s1 FROM root.vehicle.d1 WHERE s4 LIKE '_' && s4 REGEXP '[0-9]' && s4 IN ('4', '2', '3')";
+      try (ResultSet rs = statement.executeQuery(query2)) {
         for (int i = 2; i <= 4; i++) {
           Assert.assertTrue(rs.next());
           Assert.assertEquals(i, rs.getLong(1));
         }
         Assert.assertFalse(rs.next());
       }
+
+      String query3 =
+          "SELECT s1 FROM root.vehicle.d1 WHERE s5 IN ('2024-01-01', '2024-01-02', '2024-01-03')";
+      try (ResultSet rs = statement.executeQuery(query3)) {
+        for (int i = 1; i <= 3; i++) {
+          Assert.assertTrue(rs.next());
+          Assert.assertEquals(i, rs.getLong(1));
+        }
+        Assert.assertFalse(rs.next());
+      }
+
+      String query4 = "SELECT s1 FROM root.vehicle.d1 WHERE s6 IN (1, 2, 3)";
+      try (ResultSet rs = statement.executeQuery(query4)) {
+        for (int i = 1; i <= 3; i++) {
+          Assert.assertTrue(rs.next());
+          Assert.assertEquals(i, rs.getLong(1));
+        }
+        Assert.assertFalse(rs.next());
+      }
+
     } catch (SQLException e) {
       e.printStackTrace();
       Assert.fail(e.getMessage());

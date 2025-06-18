@@ -19,7 +19,8 @@
 
 package org.apache.iotdb.db.queryengine.execution.operator.process;
 
-import org.apache.iotdb.db.queryengine.execution.aggregation.Aggregator;
+import org.apache.iotdb.db.queryengine.execution.MemoryEstimationHelper;
+import org.apache.iotdb.db.queryengine.execution.aggregation.TreeAggregator;
 import org.apache.iotdb.db.queryengine.execution.aggregation.timerangeiterator.ITimeRangeIterator;
 import org.apache.iotdb.db.queryengine.execution.operator.Operator;
 import org.apache.iotdb.db.queryengine.execution.operator.OperatorContext;
@@ -30,6 +31,7 @@ import org.apache.iotdb.db.queryengine.execution.operator.window.WindowParameter
 import org.apache.tsfile.block.column.Column;
 import org.apache.tsfile.read.common.block.TsBlock;
 import org.apache.tsfile.utils.BitMap;
+import org.apache.tsfile.utils.RamUsageEstimator;
 
 import java.util.List;
 
@@ -48,6 +50,9 @@ import static org.apache.iotdb.db.queryengine.execution.operator.window.WindowMa
  */
 public class RawDataAggregationOperator extends SingleInputAggregationOperator {
 
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(RawDataAggregationOperator.class);
+
   private final IWindowManager windowManager;
 
   // needSkip is the signal to determine whether to skip the points out of current window to get
@@ -64,7 +69,7 @@ public class RawDataAggregationOperator extends SingleInputAggregationOperator {
 
   public RawDataAggregationOperator(
       OperatorContext operatorContext,
-      List<Aggregator> aggregators,
+      List<TreeAggregator> aggregators,
       ITimeRangeIterator timeRangeIterator,
       Operator child,
       boolean ascending,
@@ -190,7 +195,7 @@ public class RawDataAggregationOperator extends SingleInputAggregationOperator {
       }
 
       TsBlock inputRegion = inputTsBlock.getRegion(0, lastIndexToProcess + 1);
-      for (Aggregator aggregator : aggregators) {
+      for (TreeAggregator aggregator : aggregators) {
         // Current agg method has been calculated
         if (aggregator.hasFinalResult()) {
           continue;
@@ -224,6 +229,14 @@ public class RawDataAggregationOperator extends SingleInputAggregationOperator {
     windowManager.appendAggregationResult(resultTsBlockBuilder, aggregators);
   }
 
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE
+        + MemoryEstimationHelper.getEstimatedSizeOfAccountableObject(child)
+        + MemoryEstimationHelper.getEstimatedSizeOfAccountableObject(operatorContext)
+        + (resultTsBlockBuilder == null ? 0 : resultTsBlockBuilder.getRetainedSizeInBytes());
+  }
+
   private boolean skipPreviousWindowAndInitCurWindow() {
     // Before we initialize windowManager and aggregators, we should ensure that we have consumed
     // all points belong to previous window
@@ -242,7 +255,7 @@ public class RawDataAggregationOperator extends SingleInputAggregationOperator {
 
   private void initWindowAndAggregators() {
     windowManager.initCurWindow();
-    for (Aggregator aggregator : aggregators) {
+    for (TreeAggregator aggregator : aggregators) {
       aggregator.reset();
     }
   }

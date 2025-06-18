@@ -19,11 +19,9 @@
 
 package org.apache.iotdb.library.anomaly;
 
-import org.apache.iotdb.commons.udf.utils.UDFDataTypeTransformer;
 import org.apache.iotdb.library.util.CircularQueue;
 import org.apache.iotdb.library.util.LongCircularQueue;
 import org.apache.iotdb.library.util.Util;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.udf.api.UDTF;
 import org.apache.iotdb.udf.api.access.Row;
 import org.apache.iotdb.udf.api.collector.PointCollector;
@@ -36,14 +34,14 @@ import org.apache.iotdb.udf.api.type.Type;
 /** This function detects outliers which lies over average +/- k * sigma. */
 public class UDTFKSigma implements UDTF {
   private double mean = 0.0;
-  private double var = 0.0;
+  private double variance = 0.0;
   private double sumX2 = 0.0;
   private double sumX1 = 0.0;
   private double multipleK;
   private int windowSize = 0;
   private CircularQueue<Object> v;
   private LongCircularQueue t;
-  private TSDataType dataType;
+  private Type dataType;
 
   @Override
   public void validate(UDFParameterValidator validator) throws Exception {
@@ -67,7 +65,7 @@ public class UDTFKSigma implements UDTF {
         .setAccessStrategy(new RowByRowAccessStrategy())
         .setOutputDataType(udfParameters.getDataType(0));
     this.multipleK = udfParameters.getDoubleOrDefault("k", 3);
-    this.dataType = UDFDataTypeTransformer.transformToTsDataType(udfParameters.getDataType(0));
+    this.dataType = udfParameters.getDataType(0);
     this.windowSize = udfParameters.getIntOrDefault("window", 10000);
     this.v = new CircularQueue<>(windowSize);
     this.t = new LongCircularQueue(windowSize);
@@ -79,7 +77,7 @@ public class UDTFKSigma implements UDTF {
     long timestamp = row.getTime();
     if (Double.isFinite(value) && !Double.isNaN(value)) {
       if (v.isFull()) {
-        double frontValue = Double.parseDouble(v.pop().toString());
+        final double frontValue = Double.parseDouble(v.pop().toString());
         switch (dataType) {
           case INT32:
             v.push(row.getInt(0));
@@ -93,15 +91,23 @@ public class UDTFKSigma implements UDTF {
           case FLOAT:
             v.push(row.getFloat(0));
             break;
+          case TIMESTAMP:
+          case DATE:
+          case TEXT:
+          case STRING:
+          case BLOB:
+          case BOOLEAN:
+          default:
+            break;
         }
         t.pop();
         t.push(timestamp);
         this.sumX1 = this.sumX1 - frontValue + value;
         this.sumX2 = this.sumX2 - frontValue * frontValue + value * value;
         this.mean = this.sumX1 / v.getSize();
-        this.var = this.sumX2 / v.getSize() - this.mean * this.mean;
+        this.variance = this.sumX2 / v.getSize() - this.mean * this.mean;
         if (Math.abs(value - mean)
-            > multipleK * Math.sqrt(this.var * v.getSize() / (v.getSize() - 1))) {
+            > multipleK * Math.sqrt(this.variance * v.getSize() / (v.getSize() - 1))) {
           Util.putValue(collector, dataType, timestamp, Util.getValueAsObject(row));
         }
       } else {
@@ -118,19 +124,27 @@ public class UDTFKSigma implements UDTF {
           case FLOAT:
             v.push(row.getFloat(0));
             break;
+          case BLOB:
+          case BOOLEAN:
+          case STRING:
+          case TEXT:
+          case DATE:
+          case TIMESTAMP:
+          default:
+            break;
         }
         t.push(timestamp);
         this.sumX1 = this.sumX1 + value;
         this.sumX2 = this.sumX2 + value * value;
         this.mean = this.sumX1 / v.getSize();
-        this.var = this.sumX2 / v.getSize() - this.mean * this.mean;
+        this.variance = this.sumX2 / v.getSize() - this.mean * this.mean;
         if (v.getSize() == this.windowSize) {
-          double stddev = Math.sqrt(this.var * v.getSize() / (v.getSize() - 1));
+          double stddev = Math.sqrt(this.variance * v.getSize() / (v.getSize() - 1));
           for (int i = 0; i < v.getSize(); i++) {
-            Object v = this.v.get(i);
+            Object vi = this.v.get(i);
             timestamp = this.t.get(i);
-            if (Math.abs(Double.parseDouble(v.toString()) - mean) > multipleK * stddev) {
-              Util.putValue(collector, dataType, timestamp, v);
+            if (Math.abs(Double.parseDouble(vi.toString()) - mean) > multipleK * stddev) {
+              Util.putValue(collector, dataType, timestamp, vi);
             }
           }
         }
@@ -141,12 +155,12 @@ public class UDTFKSigma implements UDTF {
   @Override
   public void terminate(PointCollector collector) throws Exception {
     if (!v.isFull() && v.getSize() > 1) {
-      double stddev = Math.sqrt(this.var * v.getSize() / (v.getSize() - 1));
+      double stddev = Math.sqrt(this.variance * v.getSize() / (v.getSize() - 1));
       for (int i = 0; i < v.getSize(); i++) {
-        Object v = this.v.get(i);
+        Object vi = this.v.get(i);
         long timestamp = this.t.get(i);
-        if (Math.abs(Double.parseDouble(v.toString()) - mean) > multipleK * stddev) {
-          Util.putValue(collector, dataType, timestamp, v);
+        if (Math.abs(Double.parseDouble(vi.toString()) - mean) > multipleK * stddev) {
+          Util.putValue(collector, dataType, timestamp, vi);
         }
       }
     }

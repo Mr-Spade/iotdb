@@ -19,6 +19,7 @@
 
 package org.apache.iotdb.db.queryengine.execution.operator.process;
 
+import org.apache.iotdb.db.queryengine.execution.MemoryEstimationHelper;
 import org.apache.iotdb.db.queryengine.execution.operator.Operator;
 import org.apache.iotdb.db.queryengine.execution.operator.OperatorContext;
 import org.apache.iotdb.db.utils.datastructure.MergeSortHeap;
@@ -32,6 +33,7 @@ import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.read.common.block.TsBlock;
 import org.apache.tsfile.read.common.block.TsBlockBuilder;
 import org.apache.tsfile.read.common.block.column.TimeColumnBuilder;
+import org.apache.tsfile.utils.RamUsageEstimator;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -40,7 +42,10 @@ import java.util.concurrent.TimeUnit;
 
 import static com.google.common.util.concurrent.Futures.successfulAsList;
 
-public class MergeSortOperator extends AbstractConsumeAllOperator {
+public abstract class MergeSortOperator extends AbstractConsumeAllOperator {
+
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(MergeSortOperator.class);
 
   private final List<TSDataType> dataTypes;
   private final TsBlockBuilder tsBlockBuilder;
@@ -50,7 +55,7 @@ public class MergeSortOperator extends AbstractConsumeAllOperator {
 
   private boolean finished;
 
-  public MergeSortOperator(
+  MergeSortOperator(
       OperatorContext operatorContext,
       List<Operator> inputOperators,
       List<TSDataType> dataTypes,
@@ -120,7 +125,7 @@ public class MergeSortOperator extends AbstractConsumeAllOperator {
       MergeSortKey mergeSortKey = mergeSortHeap.poll();
       TsBlock targetBlock = mergeSortKey.tsBlock;
       int rowIndex = mergeSortKey.rowIndex;
-      timeBuilder.writeLong(targetBlock.getTimeByIndex(rowIndex));
+      appendTime(timeBuilder, targetBlock.getTimeByIndex(rowIndex));
       for (int i = 0; i < valueColumnBuilders.length; i++) {
         if (targetBlock.getColumn(i).isNull(rowIndex)) {
           valueColumnBuilders[i].appendNull();
@@ -141,8 +146,12 @@ public class MergeSortOperator extends AbstractConsumeAllOperator {
         break;
       }
     }
-    return tsBlockBuilder.build();
+    return buildResult(tsBlockBuilder);
   }
+
+  protected abstract void appendTime(TimeColumnBuilder timeBuilder, long time);
+
+  protected abstract TsBlock buildResult(TsBlockBuilder resultBuilder);
 
   @Override
   public boolean hasNext() throws Exception {
@@ -212,6 +221,18 @@ public class MergeSortOperator extends AbstractConsumeAllOperator {
       currentRetainedSize += (maxReturnSize + child.calculateRetainedSizeAfterCallingNext());
     }
     return currentRetainedSize - minChildReturnSize;
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE
+        + children.stream()
+            .mapToLong(MemoryEstimationHelper::getEstimatedSizeOfAccountableObject)
+            .sum()
+        + MemoryEstimationHelper.getEstimatedSizeOfAccountableObject(operatorContext)
+        + RamUsageEstimator.sizeOf(canCallNext)
+        + RamUsageEstimator.sizeOf(noMoreTsBlocks)
+        + tsBlockBuilder.getRetainedSizeInBytes();
   }
 
   // region helper function used in prepareInput

@@ -21,13 +21,17 @@ package org.apache.iotdb.db.storageengine.dataregion.wal.node;
 
 import org.apache.iotdb.consensus.common.DataSet;
 import org.apache.iotdb.consensus.iot.log.ConsensusReqReader;
+import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.ContinuousSameSearchIndexSeparatorNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.DeleteDataNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertRowNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertRowsNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertTabletNode;
+import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.RelationalDeleteDataNode;
 import org.apache.iotdb.db.storageengine.dataregion.flush.FlushListener;
 import org.apache.iotdb.db.storageengine.dataregion.memtable.IMemTable;
 import org.apache.iotdb.db.storageengine.dataregion.wal.utils.listener.WALFlushListener;
+
+import java.util.List;
 
 /** This interface provides uniform interface for writing wal and making checkpoints. */
 public interface IWALNode extends FlushListener, AutoCloseable, ConsensusReqReader, DataSet {
@@ -39,10 +43,16 @@ public interface IWALNode extends FlushListener, AutoCloseable, ConsensusReqRead
   WALFlushListener log(long memTableId, InsertRowsNode insertRowsNode);
 
   /** Log InsertTabletNode. */
-  WALFlushListener log(long memTableId, InsertTabletNode insertTabletNode, int start, int end);
+  WALFlushListener log(long memTableId, InsertTabletNode insertTabletNode, List<int[]> rangeList);
 
   /** Log DeleteDataNode. */
   WALFlushListener log(long memTableId, DeleteDataNode deleteDataNode);
+
+  /** Log DeleteDataNode. */
+  WALFlushListener log(long memTableId, RelationalDeleteDataNode deleteDataNode);
+
+  /** Log BatchDoneNode */
+  WALFlushListener log(long memTableId, ContinuousSameSearchIndexSeparatorNode separatorNode);
 
   /** Callback when memTable created. */
   void onMemTableCreated(IMemTable memTable, String targetTsFile);

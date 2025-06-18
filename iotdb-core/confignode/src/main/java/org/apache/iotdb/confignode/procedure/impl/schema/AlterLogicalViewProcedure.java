@@ -30,9 +30,9 @@ import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.commons.path.PathDeserializeUtil;
 import org.apache.iotdb.commons.path.PathPatternTree;
 import org.apache.iotdb.commons.schema.view.viewExpression.ViewExpression;
-import org.apache.iotdb.confignode.client.DataNodeRequestType;
-import org.apache.iotdb.confignode.client.async.AsyncDataNodeClientPool;
-import org.apache.iotdb.confignode.client.async.handlers.AsyncClientHandler;
+import org.apache.iotdb.confignode.client.async.CnToDnAsyncRequestType;
+import org.apache.iotdb.confignode.client.async.CnToDnInternalServiceAsyncRequestManager;
+import org.apache.iotdb.confignode.client.async.handlers.DataNodeAsyncRequestContext;
 import org.apache.iotdb.confignode.procedure.env.ConfigNodeProcedureEnv;
 import org.apache.iotdb.confignode.procedure.exception.ProcedureException;
 import org.apache.iotdb.confignode.procedure.exception.ProcedureSuspendedException;
@@ -74,14 +74,14 @@ public class AlterLogicalViewProcedure
   private transient PathPatternTree pathPatternTree;
   private transient ByteBuffer patternTreeBytes;
 
-  public AlterLogicalViewProcedure(boolean isGeneratedByPipe) {
+  public AlterLogicalViewProcedure(final boolean isGeneratedByPipe) {
     super(isGeneratedByPipe);
   }
 
   public AlterLogicalViewProcedure(
-      String queryId,
-      Map<PartialPath, ViewExpression> viewPathToSourceMap,
-      boolean isGeneratedByPipe) {
+      final String queryId,
+      final Map<PartialPath, ViewExpression> viewPathToSourceMap,
+      final boolean isGeneratedByPipe) {
     super(isGeneratedByPipe);
     this.queryId = queryId;
     this.viewPathToSourceMap = viewPathToSourceMap;
@@ -89,9 +89,10 @@ public class AlterLogicalViewProcedure
   }
 
   @Override
-  protected Flow executeFromState(ConfigNodeProcedureEnv env, AlterLogicalViewState state)
+  protected Flow executeFromState(
+      final ConfigNodeProcedureEnv env, final AlterLogicalViewState state)
       throws ProcedureSuspendedException, ProcedureYieldException, InterruptedException {
-    long startTime = System.currentTimeMillis();
+    final long startTime = System.currentTimeMillis();
     try {
       switch (state) {
         case CLEAN_DATANODE_SCHEMA_CACHE:
@@ -103,7 +104,7 @@ public class AlterLogicalViewProcedure
           LOGGER.info("Alter view {}", viewPathToSourceMap.keySet());
           try {
             alterLogicalView(env);
-          } catch (ProcedureException e) {
+          } catch (final ProcedureException e) {
             setFailure(e);
           }
           return Flow.NO_MORE_STATE;
@@ -117,17 +118,17 @@ public class AlterLogicalViewProcedure
     }
   }
 
-  private void invalidateCache(ConfigNodeProcedureEnv env) {
-    Map<Integer, TDataNodeLocation> dataNodeLocationMap =
+  private void invalidateCache(final ConfigNodeProcedureEnv env) {
+    final Map<Integer, TDataNodeLocation> dataNodeLocationMap =
         env.getConfigManager().getNodeManager().getRegisteredDataNodeLocations();
-    AsyncClientHandler<TInvalidateMatchedSchemaCacheReq, TSStatus> clientHandler =
-        new AsyncClientHandler<>(
-            DataNodeRequestType.INVALIDATE_MATCHED_SCHEMA_CACHE,
+    final DataNodeAsyncRequestContext<TInvalidateMatchedSchemaCacheReq, TSStatus> clientHandler =
+        new DataNodeAsyncRequestContext<>(
+            CnToDnAsyncRequestType.INVALIDATE_MATCHED_SCHEMA_CACHE,
             new TInvalidateMatchedSchemaCacheReq(patternTreeBytes),
             dataNodeLocationMap);
-    AsyncDataNodeClientPool.getInstance().sendAsyncRequestToDataNodeWithRetry(clientHandler);
-    Map<Integer, TSStatus> statusMap = clientHandler.getResponseMap();
-    for (TSStatus status : statusMap.values()) {
+    CnToDnInternalServiceAsyncRequestManager.getInstance().sendAsyncRequestWithRetry(clientHandler);
+    final Map<Integer, TSStatus> statusMap = clientHandler.getResponseMap();
+    for (final TSStatus status : statusMap.values()) {
       // all dataNodes must clear the related schemaengine cache
       if (status.getCode() != TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
         LOGGER.error(
@@ -140,22 +141,22 @@ public class AlterLogicalViewProcedure
     }
   }
 
-  private void alterLogicalView(ConfigNodeProcedureEnv env) throws ProcedureException {
-    Map<TConsensusGroupId, TRegionReplicaSet> targetSchemaRegionGroup =
+  private void alterLogicalView(final ConfigNodeProcedureEnv env) throws ProcedureException {
+    final Map<TConsensusGroupId, TRegionReplicaSet> targetSchemaRegionGroup =
         env.getConfigManager().getRelatedSchemaRegionGroup(pathPatternTree);
-    Map<TConsensusGroupId, Map<PartialPath, ViewExpression>> schemaRegionRequestMap =
+    final Map<TConsensusGroupId, Map<PartialPath, ViewExpression>> schemaRegionRequestMap =
         new HashMap<>();
-    for (Map.Entry<PartialPath, ViewExpression> entry : viewPathToSourceMap.entrySet()) {
+    for (final Map.Entry<PartialPath, ViewExpression> entry : viewPathToSourceMap.entrySet()) {
       schemaRegionRequestMap
           .computeIfAbsent(getBelongedSchemaRegion(env, entry.getKey()), k -> new HashMap<>())
           .put(entry.getKey(), entry.getValue());
     }
-    AlterLogicalViewRegionTaskExecutor<TAlterViewReq> regionTaskExecutor =
+    final AlterLogicalViewRegionTaskExecutor<TAlterViewReq> regionTaskExecutor =
         new AlterLogicalViewRegionTaskExecutor<>(
             "Alter view",
             env,
             targetSchemaRegionGroup,
-            DataNodeRequestType.ALTER_VIEW,
+            CnToDnAsyncRequestType.ALTER_VIEW,
             (dataNodeLocation, consensusGroupIdList) -> {
               TAlterViewReq req = new TAlterViewReq().setIsGeneratedByPipe(isGeneratedByPipe);
               req.setSchemaRegionIdList(consensusGroupIdList);
@@ -187,16 +188,16 @@ public class AlterLogicalViewProcedure
   }
 
   private TConsensusGroupId getBelongedSchemaRegion(
-      ConfigNodeProcedureEnv env, PartialPath viewPath) throws ProcedureException {
-    PathPatternTree patternTree = new PathPatternTree();
+      final ConfigNodeProcedureEnv env, final PartialPath viewPath) throws ProcedureException {
+    final PathPatternTree patternTree = new PathPatternTree();
     patternTree.appendFullPath(viewPath);
     patternTree.constructTree();
-    Map<String, Map<TSeriesPartitionSlot, TConsensusGroupId>> schemaPartitionTable =
+    final Map<String, Map<TSeriesPartitionSlot, TConsensusGroupId>> schemaPartitionTable =
         env.getConfigManager().getSchemaPartition(patternTree).schemaPartitionTable;
     if (schemaPartitionTable.isEmpty()) {
       throw new ProcedureException(new ViewNotExistException(viewPath.getFullPath()));
     } else {
-      Map<TSeriesPartitionSlot, TConsensusGroupId> slotMap =
+      final Map<TSeriesPartitionSlot, TConsensusGroupId> slotMap =
           schemaPartitionTable.values().iterator().next();
       if (slotMap.isEmpty()) {
         throw new ProcedureException(new ViewNotExistException(viewPath.getFullPath()));
@@ -207,24 +208,26 @@ public class AlterLogicalViewProcedure
   }
 
   @Override
-  protected boolean isRollbackSupported(AlterLogicalViewState alterLogicalViewState) {
+  protected boolean isRollbackSupported(final AlterLogicalViewState alterLogicalViewState) {
     return true;
   }
 
   @Override
   protected void rollbackState(
-      ConfigNodeProcedureEnv env, AlterLogicalViewState alterLogicalViewState)
+      final ConfigNodeProcedureEnv env, final AlterLogicalViewState alterLogicalViewState)
       throws IOException, InterruptedException, ProcedureException {
-    invalidateCache(env);
+    if (alterLogicalViewState == AlterLogicalViewState.CLEAN_DATANODE_SCHEMA_CACHE) {
+      invalidateCache(env);
+    }
   }
 
   @Override
-  protected AlterLogicalViewState getState(int stateId) {
+  protected AlterLogicalViewState getState(final int stateId) {
     return AlterLogicalViewState.values()[stateId];
   }
 
   @Override
-  protected int getStateId(AlterLogicalViewState alterLogicalViewState) {
+  protected int getStateId(final AlterLogicalViewState alterLogicalViewState) {
     return alterLogicalViewState.ordinal();
   }
 
@@ -238,16 +241,16 @@ public class AlterLogicalViewProcedure
   }
 
   private void generatePathPatternTree() {
-    PathPatternTree patternTree = new PathPatternTree();
-    for (PartialPath path : viewPathToSourceMap.keySet()) {
+    final PathPatternTree patternTree = new PathPatternTree();
+    for (final PartialPath path : viewPathToSourceMap.keySet()) {
       patternTree.appendFullPath(path);
     }
     patternTree.constructTree();
-    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-    DataOutputStream dataOutputStream = new DataOutputStream(byteArrayOutputStream);
+    final ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+    final DataOutputStream dataOutputStream = new DataOutputStream(byteArrayOutputStream);
     try {
       patternTree.serialize(dataOutputStream);
-    } catch (IOException ignored) {
+    } catch (final IOException ignored) {
       // won't reach here
     }
 
@@ -256,7 +259,7 @@ public class AlterLogicalViewProcedure
   }
 
   @Override
-  public void serialize(DataOutputStream stream) throws IOException {
+  public void serialize(final DataOutputStream stream) throws IOException {
     stream.writeShort(
         isGeneratedByPipe
             ? ProcedureType.PIPE_ENRICHED_ALTER_LOGICAL_VIEW_PROCEDURE.getTypeCode()
@@ -264,19 +267,19 @@ public class AlterLogicalViewProcedure
     super.serialize(stream);
     ReadWriteIOUtils.write(queryId, stream);
     ReadWriteIOUtils.write(this.viewPathToSourceMap.size(), stream);
-    for (Map.Entry<PartialPath, ViewExpression> entry : viewPathToSourceMap.entrySet()) {
+    for (final Map.Entry<PartialPath, ViewExpression> entry : viewPathToSourceMap.entrySet()) {
       entry.getKey().serialize(stream);
       ViewExpression.serialize(entry.getValue(), stream);
     }
   }
 
   @Override
-  public void deserialize(ByteBuffer byteBuffer) {
+  public void deserialize(final ByteBuffer byteBuffer) {
     super.deserialize(byteBuffer);
     queryId = ReadWriteIOUtils.readString(byteBuffer);
 
-    Map<PartialPath, ViewExpression> viewPathToSourceMap = new HashMap<>();
-    int size = byteBuffer.getInt();
+    final Map<PartialPath, ViewExpression> viewPathToSourceMap = new HashMap<>();
+    final int size = byteBuffer.getInt();
     PartialPath path;
     ViewExpression viewExpression;
     for (int i = 0; i < size; i++) {
@@ -289,10 +292,14 @@ public class AlterLogicalViewProcedure
   }
 
   @Override
-  public boolean equals(Object o) {
-    if (this == o) return true;
-    if (!(o instanceof AlterLogicalViewProcedure)) return false;
-    AlterLogicalViewProcedure that = (AlterLogicalViewProcedure) o;
+  public boolean equals(final Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (!(o instanceof AlterLogicalViewProcedure)) {
+      return false;
+    }
+    final AlterLogicalViewProcedure that = (AlterLogicalViewProcedure) o;
     return Objects.equals(getProcId(), that.getProcId())
         && Objects.equals(getCurrentState(), that.getCurrentState())
         && Objects.equals(getCycles(), that.getCycles())
@@ -320,27 +327,27 @@ public class AlterLogicalViewProcedure
     private final List<TSStatus> failureStatusList = new ArrayList<>();
 
     AlterLogicalViewRegionTaskExecutor(
-        String taskName,
-        ConfigNodeProcedureEnv env,
-        Map<TConsensusGroupId, TRegionReplicaSet> targetSchemaRegionGroup,
-        DataNodeRequestType dataNodeRequestType,
-        BiFunction<TDataNodeLocation, List<TConsensusGroupId>, Q> dataNodeRequestGenerator) {
+        final String taskName,
+        final ConfigNodeProcedureEnv env,
+        final Map<TConsensusGroupId, TRegionReplicaSet> targetSchemaRegionGroup,
+        final CnToDnAsyncRequestType dataNodeRequestType,
+        final BiFunction<TDataNodeLocation, List<TConsensusGroupId>, Q> dataNodeRequestGenerator) {
       super(env, targetSchemaRegionGroup, false, dataNodeRequestType, dataNodeRequestGenerator);
       this.taskName = taskName;
     }
 
     @Override
     protected List<TConsensusGroupId> processResponseOfOneDataNode(
-        TDataNodeLocation dataNodeLocation,
-        List<TConsensusGroupId> consensusGroupIdList,
-        TSStatus response) {
-      List<TConsensusGroupId> failedRegionList = new ArrayList<>();
+        final TDataNodeLocation dataNodeLocation,
+        final List<TConsensusGroupId> consensusGroupIdList,
+        final TSStatus response) {
+      final List<TConsensusGroupId> failedRegionList = new ArrayList<>();
       if (response.getCode() == TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
         return failedRegionList;
       }
 
       if (response.getCode() == TSStatusCode.MULTIPLE_ERROR.getStatusCode()) {
-        List<TSStatus> subStatusList = response.getSubStatus();
+        final List<TSStatus> subStatusList = response.getSubStatus();
         TSStatus subStatus;
         for (int i = 0; i < subStatusList.size(); i++) {
           subStatus = subStatusList.get(i);
@@ -359,7 +366,7 @@ public class AlterLogicalViewProcedure
       return failedRegionList;
     }
 
-    private void collectFailure(TSStatus failureStatus) {
+    private void collectFailure(final TSStatus failureStatus) {
       if (failureStatus.getCode() == TSStatusCode.MULTIPLE_ERROR.getStatusCode()) {
         failureStatusList.addAll(failureStatus.getSubStatus());
       } else {
@@ -379,12 +386,13 @@ public class AlterLogicalViewProcedure
 
     @Override
     protected void onAllReplicasetFailure(
-        TConsensusGroupId consensusGroupId, Set<TDataNodeLocation> dataNodeLocationSet) {
+        final TConsensusGroupId consensusGroupId,
+        final Set<TDataNodeLocation> dataNodeLocationSet) {
       setFailure(
           new ProcedureException(
               new MetadataException(
                   String.format(
-                      "Alter view %s failed when [%s] because all replicaset of schemaRegion %s failed. %s",
+                      "Alter view %s failed when [%s] because failed to execute in all replicaset of schemaRegion %s. Failure nodes: %s",
                       viewPathToSourceMap.keySet(),
                       taskName,
                       consensusGroupId.id,

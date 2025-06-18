@@ -24,6 +24,8 @@ import org.apache.iotdb.db.queryengine.plan.execution.IQueryExecution;
 import org.apache.iotdb.service.rpc.thrift.TSQueryDataSet;
 
 import org.apache.tsfile.block.column.Column;
+import org.apache.tsfile.common.conf.TSFileConfig;
+import org.apache.tsfile.common.conf.TSFileDescriptor;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.read.common.block.TsBlock;
 import org.apache.tsfile.utils.Binary;
@@ -47,10 +49,13 @@ public class QueryDataSetUtils {
 
   private static final int FLAG = 0x01;
 
+  private static final TSFileConfig TSFLE_CONFIG = TSFileDescriptor.getInstance().getConfig();
+
   private QueryDataSetUtils() {}
 
   public static Pair<TSQueryDataSet, Boolean> convertTsBlockByFetchSize(
       IQueryExecution queryExecution, int fetchSize) throws IOException, IoTDBException {
+    fetchSize = fetchSize > 0 ? fetchSize : TSFLE_CONFIG.getMaxTsBlockLineNumber();
     boolean finished = false;
     int columnNum = queryExecution.getOutputValueColumnCount();
     // one time column and each value column has an actual value buffer and a bitmap value to
@@ -142,6 +147,7 @@ public class QueryDataSetUtils {
         TSDataType type = column.getDataType();
         switch (type) {
           case INT32:
+          case DATE:
             for (int i = 0; i < currentCount; i++) {
               rowCount++;
               if (column.isNull(i)) {
@@ -159,6 +165,7 @@ public class QueryDataSetUtils {
             }
             break;
           case INT64:
+          case TIMESTAMP:
             for (int i = 0; i < currentCount; i++) {
               rowCount++;
               if (column.isNull(i)) {
@@ -227,6 +234,8 @@ public class QueryDataSetUtils {
             }
             break;
           case TEXT:
+          case BLOB:
+          case STRING:
             for (int i = 0; i < currentCount; i++) {
               rowCount++;
               if (column.isNull(i)) {
@@ -316,6 +325,7 @@ public class QueryDataSetUtils {
       TSDataType type = column.getDataType();
       switch (type) {
         case INT32:
+        case DATE:
           doWithInt32Column(
               rowCount,
               column,
@@ -326,6 +336,7 @@ public class QueryDataSetUtils {
               dataBitmapOutputStream);
           break;
         case INT64:
+        case TIMESTAMP:
           doWithInt64Column(
               rowCount,
               column,
@@ -366,6 +377,8 @@ public class QueryDataSetUtils {
               dataBitmapOutputStream);
           break;
         case TEXT:
+        case BLOB:
+        case STRING:
           doWithTextColumn(
               rowCount,
               column,
@@ -599,6 +612,7 @@ public class QueryDataSetUtils {
    */
   public static Pair<List<ByteBuffer>, Boolean> convertQueryResultByFetchSize(
       IQueryExecution queryExecution, int fetchSize) throws IoTDBException {
+    fetchSize = fetchSize > 0 ? fetchSize : TSFLE_CONFIG.getMaxTsBlockLineNumber();
     int rowCount = 0;
     List<ByteBuffer> res = new ArrayList<>();
     while (rowCount < fetchSize) {
@@ -646,7 +660,7 @@ public class QueryDataSetUtils {
     for (int i = 0; i < columns; i++) {
       boolean hasBitMap = BytesUtils.byteToBool(buffer.get());
       if (hasBitMap) {
-        byte[] bytes = new byte[size / Byte.SIZE + 1];
+        byte[] bytes = new byte[BitMap.getSizeOfBytes(size)];
         for (int j = 0; j < bytes.length; j++) {
           bytes[j] = buffer.get();
         }
@@ -665,7 +679,7 @@ public class QueryDataSetUtils {
     for (int i = 0; i < columns; i++) {
       boolean hasBitMap = BytesUtils.byteToBool(stream.readByte());
       if (hasBitMap) {
-        byte[] bytes = new byte[size / Byte.SIZE + 1];
+        byte[] bytes = new byte[BitMap.getSizeOfBytes(size)];
         for (int j = 0; j < bytes.length; j++) {
           bytes[j] = stream.readByte();
         }
@@ -707,6 +721,7 @@ public class QueryDataSetUtils {
           values[i] = boolValues;
           break;
         case INT32:
+        case DATE:
           int[] intValues = new int[size];
           for (int index = 0; index < size; index++) {
             intValues[index] = buffer.getInt();
@@ -714,6 +729,7 @@ public class QueryDataSetUtils {
           values[i] = intValues;
           break;
         case INT64:
+        case TIMESTAMP:
           long[] longValues = new long[size];
           for (int index = 0; index < size; index++) {
             longValues[index] = buffer.getLong();
@@ -735,6 +751,8 @@ public class QueryDataSetUtils {
           values[i] = doubleValues;
           break;
         case TEXT:
+        case BLOB:
+        case STRING:
           Binary[] binaryValues = new Binary[size];
           for (int index = 0; index < size; index++) {
             int binarySize = buffer.getInt();
@@ -760,9 +778,11 @@ public class QueryDataSetUtils {
         case BOOLEAN:
           parseBooleanColumn(size, stream, values, i);
           break;
+        case DATE:
         case INT32:
           parseInt32Column(size, stream, values, i);
           break;
+        case TIMESTAMP:
         case INT64:
           parseInt64Column(size, stream, values, i);
           break;
@@ -773,6 +793,8 @@ public class QueryDataSetUtils {
           parseDoubleColumn(size, stream, values, i);
           break;
         case TEXT:
+        case BLOB:
+        case STRING:
           parseTextColumn(size, stream, values, i);
           break;
         default:

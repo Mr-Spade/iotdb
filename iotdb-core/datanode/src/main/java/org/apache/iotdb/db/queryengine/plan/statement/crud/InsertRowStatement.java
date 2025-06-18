@@ -29,46 +29,64 @@ import org.apache.iotdb.db.exception.metadata.DataTypeMismatchException;
 import org.apache.iotdb.db.exception.metadata.PathNotExistException;
 import org.apache.iotdb.db.exception.query.QueryProcessException;
 import org.apache.iotdb.db.exception.sql.SemanticException;
+import org.apache.iotdb.db.pipe.resource.memory.InsertNodeMemoryEstimator;
+import org.apache.iotdb.db.queryengine.common.MPPQueryContext;
 import org.apache.iotdb.db.queryengine.common.schematree.IMeasurementSchemaInfo;
 import org.apache.iotdb.db.queryengine.plan.analyze.schema.ISchemaValidation;
+import org.apache.iotdb.db.queryengine.plan.relational.metadata.ColumnSchema;
+import org.apache.iotdb.db.queryengine.plan.relational.sql.ast.InsertRow;
+import org.apache.iotdb.db.queryengine.plan.relational.sql.ast.Statement;
 import org.apache.iotdb.db.queryengine.plan.statement.StatementType;
 import org.apache.iotdb.db.queryengine.plan.statement.StatementVisitor;
 import org.apache.iotdb.db.utils.CommonUtils;
 import org.apache.iotdb.db.utils.TypeInferenceUtils;
+import org.apache.iotdb.rpc.TSStatusCode;
 
+import org.apache.tsfile.annotations.TableModel;
 import org.apache.tsfile.enums.TSDataType;
+import org.apache.tsfile.file.metadata.IDeviceID;
+import org.apache.tsfile.file.metadata.IDeviceID.Factory;
 import org.apache.tsfile.file.metadata.enums.CompressionType;
 import org.apache.tsfile.file.metadata.enums.TSEncoding;
+import org.apache.tsfile.utils.Binary;
 import org.apache.tsfile.utils.Pair;
+import org.apache.tsfile.utils.RamUsageEstimator;
 import org.apache.tsfile.utils.ReadWriteIOUtils;
 import org.apache.tsfile.write.schema.MeasurementSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public class InsertRowStatement extends InsertBaseStatement implements ISchemaValidation {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(InsertRowStatement.class);
 
-  private static final byte TYPE_RAW_STRING = -1;
-  private static final byte TYPE_NULL = -2;
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(InsertRowStatement.class);
 
-  private long time;
-  private Object[] values;
-  private boolean isNeedInferType = false;
+  protected static final byte TYPE_RAW_STRING = -1;
+  protected static final byte TYPE_NULL = -2;
+
+  protected long time;
+  protected Object[] values;
+  protected boolean isNeedInferType = false;
 
   /**
    * This param record whether the source of logical view is aligned. Only used when there are
    * views.
    */
-  private boolean[] measurementIsAligned;
+  protected boolean[] measurementIsAligned;
+
+  protected IDeviceID deviceID;
 
   public InsertRowStatement() {
     super();
@@ -81,7 +99,7 @@ public class InsertRowStatement extends InsertBaseStatement implements ISchemaVa
   public List<PartialPath> getPaths() {
     List<PartialPath> ret = new ArrayList<>();
     for (String m : measurements) {
-      PartialPath fullPath = devicePath.concatNode(m);
+      PartialPath fullPath = devicePath.concatAsMeasurementPath(m);
       ret.add(fullPath);
     }
     return ret;
@@ -133,9 +151,11 @@ public class InsertRowStatement extends InsertBaseStatement implements ISchemaVa
           values[i] = ReadWriteIOUtils.readBool(buffer);
           break;
         case INT32:
+        case DATE:
           values[i] = ReadWriteIOUtils.readInt(buffer);
           break;
         case INT64:
+        case TIMESTAMP:
           values[i] = ReadWriteIOUtils.readLong(buffer);
           break;
         case FLOAT:
@@ -145,6 +165,8 @@ public class InsertRowStatement extends InsertBaseStatement implements ISchemaVa
           values[i] = ReadWriteIOUtils.readDouble(buffer);
           break;
         case TEXT:
+        case BLOB:
+        case STRING:
           values[i] = ReadWriteIOUtils.readBinary(buffer);
           break;
         default:
@@ -174,15 +196,9 @@ public class InsertRowStatement extends InsertBaseStatement implements ISchemaVa
 
   @Override
   protected boolean checkAndCastDataType(int columnIndex, TSDataType dataType) {
-    if (CommonUtils.checkCanCastType(dataTypes[columnIndex], dataType)) {
-      LOGGER.warn(
-          "Inserting to {}.{} : Cast from {} to {}",
-          devicePath,
-          measurements[columnIndex],
-          dataTypes[columnIndex],
-          dataType);
+    if (dataType.isCompatible(dataTypes[columnIndex])) {
       values[columnIndex] =
-          CommonUtils.castValue(dataTypes[columnIndex], dataType, values[columnIndex]);
+          dataType.castFromSingleValue(dataTypes[columnIndex], values[columnIndex]);
       dataTypes[columnIndex] = dataType;
       return true;
     }
@@ -194,7 +210,7 @@ public class InsertRowStatement extends InsertBaseStatement implements ISchemaVa
    * Notice: measurementSchemas must be initialized before calling this method
    */
   @SuppressWarnings("squid:S3776") // Suppress high Cognitive Complexity warning
-  public void transferType() throws QueryProcessException {
+  public void transferType(ZoneId zoneId) throws QueryProcessException {
 
     for (int i = 0; i < measurementSchemas.length; i++) {
       // null when time series doesn't exist
@@ -215,7 +231,10 @@ public class InsertRowStatement extends InsertBaseStatement implements ISchemaVa
       // parse string value to specific type
       dataTypes[i] = measurementSchemas[i].getType();
       try {
-        values[i] = CommonUtils.parseValue(dataTypes[i], values[i].toString());
+        // if the type is binary and the value is already binary, do not convert
+        if (values[i] != null && !(dataTypes[i].isBinary() && values[i] instanceof Binary)) {
+          values[i] = CommonUtils.parseValue(dataTypes[i], values[i].toString(), zoneId);
+        }
       } catch (Exception e) {
         LOGGER.warn(
             "data type of {}.{} is not consistent, "
@@ -228,7 +247,8 @@ public class InsertRowStatement extends InsertBaseStatement implements ISchemaVa
         if (!IoTDBDescriptor.getInstance().getConfig().isEnablePartialInsert()) {
           throw e;
         } else {
-          markFailedMeasurement(i, e);
+          markFailedMeasurement(
+              i, new SemanticException(e, TSStatusCode.DATA_TYPE_MISMATCH.getStatusCode()));
         }
       }
     }
@@ -253,6 +273,43 @@ public class InsertRowStatement extends InsertBaseStatement implements ISchemaVa
     measurements[index] = null;
     dataTypes[index] = null;
     values[index] = null;
+  }
+
+  @Override
+  public void removeAllFailedMeasurementMarks() {
+    if (failedMeasurementIndex2Info == null) {
+      return;
+    }
+    failedMeasurementIndex2Info.forEach(
+        (index, info) -> {
+          if (measurements != null) {
+            measurements[index] = info.getMeasurement();
+          }
+
+          if (dataTypes != null) {
+            dataTypes[index] = info.getDataType();
+          }
+
+          if (values != null) {
+            values[index] = info.getValue();
+          }
+        });
+    failedMeasurementIndex2Info.clear();
+  }
+
+  public Map<Integer, FailedMeasurementInfo> getFailedMeasurementInfoMap() {
+    return failedMeasurementIndex2Info;
+  }
+
+  @Override
+  public void semanticCheck() {
+    super.semanticCheck();
+    if (measurements.length != values.length) {
+      throw new SemanticException(
+          String.format(
+              "the measurementList's size %d is not consistent with the valueList's size %d",
+              measurements.length, values.length));
+    }
   }
 
   public boolean isNeedSplit() {
@@ -282,7 +339,8 @@ public class InsertRowStatement extends InsertBaseStatement implements ISchemaVa
       for (int i = 0; i < pairList.size(); i++) {
         int realIndex = pairList.get(i).right;
         copiedValues[i] = this.values[realIndex];
-        measurements[i] = pairList.get(i).left;
+        measurements[i] =
+            Objects.nonNull(this.measurements[realIndex]) ? pairList.get(i).left : null;
         measurementSchemas[i] = this.measurementSchemas[realIndex];
         dataTypes[i] = this.dataTypes[realIndex];
         if (this.measurementIsAligned != null) {
@@ -324,18 +382,22 @@ public class InsertRowStatement extends InsertBaseStatement implements ISchemaVa
   }
 
   @Override
-  public void updateAfterSchemaValidation() throws QueryProcessException {
+  public void updateAfterSchemaValidation(MPPQueryContext context) throws QueryProcessException {
     if (isNeedInferType) {
-      transferType();
+      transferType(context == null ? ZoneId.systemDefault() : context.getZoneId());
     }
   }
 
   @Override
   public TSDataType getDataType(int index) {
-    if (isNeedInferType) {
-      return TypeInferenceUtils.getPredictedDataType(values[index], true);
-    } else {
+    if (isNeedInferType && (dataTypes == null || dataTypes[index] == null)) {
+      if (dataTypes == null) {
+        dataTypes = new TSDataType[measurements.length];
+      }
+      dataTypes[index] = TypeInferenceUtils.getPredictedDataType(values[index], true);
       return dataTypes[index];
+    } else {
+      return dataTypes != null ? dataTypes[index] : null;
     }
   }
 
@@ -426,5 +488,64 @@ public class InsertRowStatement extends InsertBaseStatement implements ISchemaVa
   public Pair<Integer, Integer> getRangeOfLogicalViewSchemaListRecorded() {
     return new Pair<>(
         this.recordedBeginOfLogicalViewSchemaList, this.recordedEndOfLogicalViewSchemaList);
+  }
+
+  @TableModel
+  public IDeviceID getTableDeviceID() {
+    if (deviceID == null) {
+      String[] deviceIdSegments = new String[getIdColumnIndices().size() + 1];
+      deviceIdSegments[0] = this.getTableName();
+      for (int i = 0; i < getIdColumnIndices().size(); i++) {
+        final Integer columnIndex = getIdColumnIndices().get(i);
+        deviceIdSegments[i + 1] =
+            values[columnIndex] != null ? values[columnIndex].toString() : null;
+      }
+      deviceID = Factory.DEFAULT_FACTORY.create(deviceIdSegments);
+    }
+
+    return deviceID;
+  }
+
+  @TableModel
+  public IDeviceID getRawTableDeviceID() {
+    return deviceID;
+  }
+
+  @TableModel
+  @Override
+  public Statement toRelationalStatement(MPPQueryContext context) {
+    return new InsertRow(this, context);
+  }
+
+  @TableModel
+  @Override
+  public void insertColumn(int pos, ColumnSchema columnSchema) {
+    super.insertColumn(pos, columnSchema);
+    Object[] tmpValues = new Object[values.length + 1];
+    System.arraycopy(values, 0, tmpValues, 0, pos);
+    System.arraycopy(values, pos, tmpValues, pos + 1, values.length - pos);
+    values = tmpValues;
+  }
+
+  @TableModel
+  @Override
+  public void swapColumn(int src, int target) {
+    super.swapColumn(src, target);
+    CommonUtils.swapArray(values, src, target);
+  }
+
+  @Override
+  protected long calculateBytesUsed() {
+    return INSTANCE_SIZE
+        + InsertNodeMemoryEstimator.sizeOfValues(values, measurementSchemas)
+        + RamUsageEstimator.sizeOf(measurementIsAligned)
+        + InsertNodeMemoryEstimator.sizeOfIDeviceID(deviceID);
+  }
+
+  @Override
+  protected void subRemoveAttributeColumns(List<Integer> columnsToKeep) {
+    if (values != null) {
+      values = columnsToKeep.stream().map(i -> values[i]).toArray();
+    }
   }
 }

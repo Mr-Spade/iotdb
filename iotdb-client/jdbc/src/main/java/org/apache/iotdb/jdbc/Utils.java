@@ -19,6 +19,7 @@
 
 package org.apache.iotdb.jdbc;
 
+import java.nio.charset.Charset;
 import java.time.DateTimeException;
 import java.time.ZoneId;
 import java.util.Properties;
@@ -32,10 +33,10 @@ public class Utils {
     "squid:S5843",
     "squid:S5998"
   }) // Regular expressions should not be too complicated
-  static final Pattern SUFFIX_URL_PATTERN = Pattern.compile("([0-9]{1,5})(/|\\\\?.*=.*(&.*=.*)*)?");
+  static final Pattern SUFFIX_URL_PATTERN = Pattern.compile("(/|\\\\?.*=.*(&.*=.*)*)?");
 
   static final String COLON = ":";
-  static final String SLASH = "/";
+  static final char SLASH = '/';
   static final String PARAMETER_SEPARATOR = "?";
 
   static final String RPC_COMPRESS = "rpc_compress";
@@ -58,28 +59,47 @@ public class Utils {
       String subURL = url.substring(Config.IOTDB_URL_PREFIX.length());
       int i = subURL.lastIndexOf(COLON);
       host = subURL.substring(0, i);
-      suffixURL = subURL.substring(i + 1);
+      params.setHost(host);
+      i++;
+      // parse port
+      int port = 0;
+      for (; i < subURL.length() && Character.isDigit(subURL.charAt(i)); i++) {
+        port = port * 10 + (subURL.charAt(i) - '0');
+      }
+      suffixURL = i < subURL.length() ? subURL.substring(i) : "";
+      // legal port
+      if (port >= 1 && port <= 65535) {
+        params.setPort(port);
 
-      matcher = SUFFIX_URL_PATTERN.matcher(suffixURL);
-      if (matcher.matches() && parseUrlParam(subURL, info)) {
-        isUrlLegal = true;
+        // parse database
+        if (i < subURL.length() && subURL.charAt(i) == SLASH) {
+          int endIndex = subURL.indexOf(PARAMETER_SEPARATOR, i + 1);
+          String database;
+          if (endIndex <= i + 1) {
+            if (i + 1 == subURL.length()) {
+              database = null;
+            } else {
+              database = subURL.substring(i + 1);
+            }
+            suffixURL = "";
+          } else {
+            database = subURL.substring(i + 1, endIndex);
+            suffixURL = subURL.substring(endIndex);
+          }
+          params.setDb(database);
+        }
+
+        matcher = SUFFIX_URL_PATTERN.matcher(suffixURL);
+        if (matcher.matches() && parseUrlParam(subURL, info)) {
+          isUrlLegal = true;
+        }
       }
     }
     if (!isUrlLegal) {
       throw new IoTDBURLException(
-          "Error url format, url should be jdbc:iotdb://anything:port/ or jdbc:iotdb://anything:port?property1=value1&property2=value2");
+          "Error url format, url should be jdbc:iotdb://anything:port/[database] or jdbc:iotdb://anything:port[/database]?property1=value1&property2=value2, current url is "
+              + url);
     }
-
-    params.setHost(host);
-
-    // parse port
-    String port = suffixURL;
-    if (suffixURL.contains(PARAMETER_SEPARATOR)) {
-      port = suffixURL.split("\\" + PARAMETER_SEPARATOR)[0];
-    } else if (suffixURL.contains(SLASH)) {
-      port = suffixURL.substring(0, suffixURL.length() - 1);
-    }
-    params.setPort(Integer.parseInt(port));
 
     if (info.containsKey(Config.AUTH_USER)) {
       params.setUsername(info.getProperty(Config.AUTH_USER));
@@ -104,17 +124,20 @@ public class Utils {
     if (info.containsKey(Config.TIME_ZONE)) {
       params.setTimeZone(info.getProperty(Config.TIME_ZONE));
     }
-
+    if (info.containsKey(Config.CHARSET)) {
+      params.setCharset(info.getProperty(Config.CHARSET));
+    }
     if (info.containsKey(Config.USE_SSL)) {
       params.setUseSSL(Boolean.parseBoolean(info.getProperty(Config.USE_SSL)));
     }
-
     if (info.containsKey(Config.TRUST_STORE)) {
       params.setTrustStore(info.getProperty(Config.TRUST_STORE));
     }
-
     if (info.containsKey(Config.TRUST_STORE_PWD)) {
       params.setTrustStorePwd(info.getProperty(Config.TRUST_STORE_PWD));
+    }
+    if (info.containsKey(Config.SQL_DIALECT)) {
+      params.setSqlDialect(info.getProperty(Config.SQL_DIALECT));
     }
 
     return params;
@@ -154,6 +177,7 @@ public class Utils {
         case Config.TRUST_STORE_PWD:
         case Config.VERSION:
         case Config.NETWORK_TIMEOUT:
+        case Config.SQL_DIALECT:
           info.put(key, value);
           break;
         case Config.TIME_ZONE:
@@ -161,6 +185,14 @@ public class Utils {
             // Check the validity of the time zone string.
             ZoneId.of(value);
           } catch (DateTimeException e) {
+            return false;
+          }
+          info.put(key, value);
+          break;
+        case Config.CHARSET:
+          try {
+            Charset.forName(value);
+          } catch (Exception e) {
             return false;
           }
           info.put(key, value);

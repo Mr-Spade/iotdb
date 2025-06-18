@@ -21,19 +21,23 @@ package org.apache.iotdb.db.storageengine.dataregion.compaction.cross;
 
 import org.apache.iotdb.commons.exception.IllegalPathException;
 import org.apache.iotdb.commons.exception.MetadataException;
+import org.apache.iotdb.commons.path.AlignedFullPath;
 import org.apache.iotdb.commons.path.AlignedPath;
-import org.apache.iotdb.commons.path.MeasurementPath;
+import org.apache.iotdb.commons.path.IFullPath;
+import org.apache.iotdb.commons.path.NonAlignedFullPath;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.exception.MergeException;
 import org.apache.iotdb.db.exception.StorageEngineException;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.AbstractCompactionTest;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.constant.CompactionTaskType;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.performer.ICrossCompactionPerformer;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.performer.impl.FastCompactionPerformer;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.CrossSpaceCompactionTask;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.InnerSpaceCompactionTask;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.subtask.FastCompactionTaskSummary;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.CompactionUtils;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.CompactionScheduleContext;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.selector.ICompactionSelector;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.selector.ICrossSpaceSelector;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.selector.impl.RewriteCrossSpaceCompactionSelector;
@@ -46,6 +50,7 @@ import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileManager;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResourceStatus;
 import org.apache.iotdb.db.storageengine.dataregion.utils.TsFileResourceUtils;
+import org.apache.iotdb.db.storageengine.rescon.memory.SystemInfo;
 import org.apache.iotdb.db.tools.validate.TsFileValidationTool;
 
 import org.apache.tsfile.common.conf.TSFileDescriptor;
@@ -53,7 +58,6 @@ import org.apache.tsfile.common.constant.TsFileConstant;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.exception.write.WriteProcessException;
 import org.apache.tsfile.file.metadata.IDeviceID;
-import org.apache.tsfile.file.metadata.PlainDeviceID;
 import org.apache.tsfile.read.TimeValuePair;
 import org.apache.tsfile.utils.Pair;
 import org.apache.tsfile.write.schema.MeasurementSchema;
@@ -72,6 +76,7 @@ import java.util.Map;
 import static org.apache.iotdb.commons.conf.IoTDBConstant.PATH_SEPARATOR;
 import static org.apache.tsfile.utils.TsFileGeneratorUtils.alignDeviceOffset;
 
+@SuppressWarnings("OptionalGetWithoutIsPresent")
 public class CrossSpaceCompactionWithFastPerformerValidationTest extends AbstractCompactionTest {
   TsFileManager tsFileManager =
       new TsFileManager(COMPACTION_TEST_SG, "0", STORAGE_GROUP_DIR.getPath());
@@ -79,6 +84,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
   private final String oldThreadName = Thread.currentThread().getName();
 
   private ICrossCompactionPerformer performer = new FastCompactionPerformer(true);
+  private long compactionMemory = SystemInfo.getInstance().getMemorySizeForCompaction();
 
   @Before
   public void setUp()
@@ -87,6 +93,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     IoTDBDescriptor.getInstance().getConfig().setMinCrossCompactionUnseqFileLevel(0);
     IoTDBDescriptor.getInstance().getConfig().setTargetChunkSize(1024);
     TSFileDescriptor.getInstance().getConfig().setMaxNumberOfPointsInPage(30);
+    SystemInfo.getInstance().setMemorySizeForCompaction(100 * 1024 * 1024);
     Thread.currentThread().setName("pool-1-IoTDB-Compaction-Worker-1");
   }
 
@@ -95,7 +102,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     super.tearDown();
     Thread.currentThread().setName(oldThreadName);
     FileReaderManager.getInstance().closeAndRemoveAllOpenedReaders();
-    TsFileValidationTool.badFileNum = 0;
+    SystemInfo.getInstance().setMemorySizeForCompaction(compactionMemory);
+    TsFileValidationTool.setBadFileNum(0);
   }
 
   /**
@@ -115,7 +123,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     tsFileManager.addAll(unseqResources, false);
 
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
     Assert.assertEquals(1, selected.get(0).getSeqFiles().size());
@@ -157,7 +165,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -201,7 +209,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -251,7 +259,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -299,7 +307,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -348,7 +356,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -396,7 +404,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -445,7 +453,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -497,7 +505,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -547,7 +555,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -598,7 +606,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -647,7 +655,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -698,7 +706,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -750,7 +758,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -801,7 +809,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -854,7 +862,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -908,7 +916,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -961,7 +969,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1015,7 +1023,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1069,7 +1077,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1123,7 +1131,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1173,7 +1181,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1223,7 +1231,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1274,7 +1282,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1323,7 +1331,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1374,7 +1382,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1426,7 +1434,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1477,7 +1485,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1530,7 +1538,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1584,7 +1592,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1637,7 +1645,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1691,7 +1699,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1745,7 +1753,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1799,7 +1807,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1842,7 +1850,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     unclosedSeqResource.setStatusForTest(TsFileResourceStatus.UNCLOSED);
     TsFileResource lastSeqResource = seqResources.get(4);
     for (IDeviceID deviceID : lastSeqResource.getDevices()) {
-      unclosedSeqResource.updateStartTime(deviceID, lastSeqResource.getStartTime(deviceID));
+      unclosedSeqResource.updateStartTime(deviceID, lastSeqResource.getStartTime(deviceID).get());
     }
     seqResources.remove(4);
     seqResources.add(4, unclosedSeqResource);
@@ -1853,7 +1861,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1895,7 +1903,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     unclosedSeqResource.setStatusForTest(TsFileResourceStatus.UNCLOSED);
     TsFileResource lastSeqResource = seqResources.get(4);
     for (IDeviceID deviceID : lastSeqResource.getDevices()) {
-      unclosedSeqResource.updateStartTime(deviceID, lastSeqResource.getStartTime(deviceID));
+      unclosedSeqResource.updateStartTime(deviceID, lastSeqResource.getStartTime(deviceID).get());
     }
     seqResources.remove(4);
     seqResources.add(4, unclosedSeqResource);
@@ -1906,7 +1914,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
     // Assert.assertEquals(0, result.length);
@@ -1941,7 +1949,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     unclosedSeqResource.setStatusForTest(TsFileResourceStatus.UNCLOSED);
     TsFileResource lastSeqResource = seqResources.get(4);
     for (IDeviceID deviceID : lastSeqResource.getDevices()) {
-      unclosedSeqResource.updateStartTime(deviceID, lastSeqResource.getStartTime(deviceID));
+      unclosedSeqResource.updateStartTime(deviceID, lastSeqResource.getStartTime(deviceID).get());
     }
     seqResources.remove(4);
     seqResources.add(4, unclosedSeqResource);
@@ -1952,7 +1960,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -1993,7 +2001,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     unclosedSeqResource.setStatusForTest(TsFileResourceStatus.UNCLOSED);
     TsFileResource lastSeqResource = seqResources.get(4);
     for (IDeviceID deviceID : lastSeqResource.getDevices()) {
-      unclosedSeqResource.updateStartTime(deviceID, lastSeqResource.getStartTime(deviceID));
+      unclosedSeqResource.updateStartTime(deviceID, lastSeqResource.getStartTime(deviceID).get());
     }
     seqResources.remove(4);
     seqResources.add(4, unclosedSeqResource);
@@ -2004,7 +2012,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -2046,8 +2054,9 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     unclosedUnSeqResource.setStatusForTest(TsFileResourceStatus.UNCLOSED);
     TsFileResource lastUnSeqResource = unseqResources.get(1);
     for (IDeviceID deviceID : lastUnSeqResource.getDevices()) {
-      unclosedUnSeqResource.updateStartTime(deviceID, lastUnSeqResource.getStartTime(deviceID));
-      unclosedUnSeqResource.updateEndTime(deviceID, lastUnSeqResource.getEndTime(deviceID));
+      unclosedUnSeqResource.updateStartTime(
+          deviceID, lastUnSeqResource.getStartTime(deviceID).get());
+      unclosedUnSeqResource.updateEndTime(deviceID, lastUnSeqResource.getEndTime(deviceID).get());
     }
     unseqResources.remove(1);
     unseqResources.add(1, unclosedUnSeqResource);
@@ -2058,7 +2067,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     CrossSpaceCompactionCandidate resource =
         new CrossSpaceCompactionCandidate(seqResources, unseqResources);
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector("", "", 0, null);
+        new RewriteCrossSpaceCompactionSelector("", "", 0, null, new CompactionScheduleContext());
     List<CrossCompactionTaskResource> selected =
         selector.selectCrossSpaceTask(seqResources, unseqResources);
 
@@ -2106,7 +2115,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     performer.setSummary(new FastCompactionTaskSummary());
     performer.perform();
 
-    CompactionUtils.moveTargetFile(targetResources, true, COMPACTION_TEST_SG + "-" + "0");
+    CompactionUtils.moveTargetFile(
+        targetResources, CompactionTaskType.INNER_SEQ, COMPACTION_TEST_SG + "-" + "0");
     CompactionUtils.combineModsInInnerCompaction(sourceFiles, targetResources.get(0));
     tsFileManager.replace(sourceFiles, Collections.emptyList(), targetResources, 0);
     CompactionUtils.deleteTsFilesInDisk(sourceFiles, COMPACTION_TEST_SG + "-" + "0");
@@ -2117,7 +2127,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
         IoTDBDescriptor.getInstance()
             .getConfig()
             .getCrossCompactionSelector()
-            .createInstance(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+            .createInstance(
+                COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     // In the process of getting the file list and starting to select files, the file list is
     // updated (the file is deleted or the status is updated)
     List<CrossCompactionTaskResource> selected =
@@ -2143,13 +2154,17 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     tsFileManager
         .getTsFileList(true)
         .get(0)
-        .updateEndTime(new PlainDeviceID(COMPACTION_TEST_SG + PATH_SEPARATOR + "d1"), 1100L);
+        .updateEndTime(
+            IDeviceID.Factory.DEFAULT_FACTORY.create(COMPACTION_TEST_SG + PATH_SEPARATOR + "d1"),
+            1100L);
 
     // set the end time of d1 in the second seq file to 1200
     tsFileManager
         .getTsFileList(true)
         .get(1)
-        .updateStartTime(new PlainDeviceID(COMPACTION_TEST_SG + PATH_SEPARATOR + "d1"), 1200L);
+        .updateStartTime(
+            IDeviceID.Factory.DEFAULT_FACTORY.create(COMPACTION_TEST_SG + PATH_SEPARATOR + "d1"),
+            1200L);
 
     for (int i = 1; i < seqResources.size(); i++) {
       tsFileManager.getTsFileList(true).get(i).degradeTimeIndex();
@@ -2194,7 +2209,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
   @Test
   public void testCompactionSchedule() throws Exception {
     IoTDBDescriptor.getInstance().getConfig().setFileLimitPerCrossTask(1);
-    IoTDBDescriptor.getInstance().getConfig().setFileLimitPerInnerTask(2);
+    IoTDBDescriptor.getInstance().getConfig().setInnerCompactionCandidateFileNum(2);
     createFiles(10, 10, 5, 1000, 0, 0, 100, 100, false, true);
     createFiles(1, 5, 10, 1000, 4000, 4000, 0, 100, false, false);
     createFiles(1, 5, 10, 1000, 5000, 5000, 0, 100, false, false);
@@ -2207,7 +2222,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
         IoTDBDescriptor.getInstance()
             .getConfig()
             .getCrossCompactionSelector()
-            .createInstance(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+            .createInstance(
+                COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     CrossCompactionTaskResource sourceFiles =
         crossSpaceCompactionSelector
             .selectCrossSpaceTask(
@@ -2224,7 +2240,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
     performer.setSummary(new FastCompactionTaskSummary());
     performer.perform();
 
-    CompactionUtils.moveTargetFile(targetResources, false, COMPACTION_TEST_SG + "-" + "0");
+    CompactionUtils.moveTargetFile(
+        targetResources, CompactionTaskType.CROSS, COMPACTION_TEST_SG + "-" + "0");
     CompactionUtils.combineModsInCrossCompaction(
         sourceFiles.getSeqFiles(), sourceFiles.getUnseqFiles(), targetResources);
     tsFileManager.replace(
@@ -2248,7 +2265,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
         IoTDBDescriptor.getInstance()
             .getConfig()
             .getInnerSequenceCompactionSelector()
-            .createInstance(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+            .createInstance(
+                COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     Assert.assertEquals(0, innerSelector.selectInnerSpaceTask(targetResources).size());
 
     // first compaction task finishes successfully
@@ -2278,7 +2296,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
 
   @Test
   public void testNonAlignedUnseqFilesNotOverlapWithSeqFiles1() throws Exception {
-    IoTDBDescriptor.getInstance().getConfig().setFileLimitPerInnerTask(2);
+    IoTDBDescriptor.getInstance().getConfig().setInnerCompactionCandidateFileNum(2);
     createFiles(5, 10, 5, 1000, 0, 0, 100, 100, false, true);
     createFiles(2, 5, 10, 500, 6000, 6000, 0, 100, false, false);
     createFiles(3, 10, 5, 1000, 7500, 7500, 100, 100, false, true);
@@ -2299,21 +2317,23 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
       CompactionFileGeneratorUtils.generateMods(deleteMap, resource, false);
     }
 
-    List<PartialPath> timeseriesPaths = new ArrayList<>();
+    List<IFullPath> timeseriesPaths = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
       for (int j = 0; j < 10; j++) {
         timeseriesPaths.add(
-            new MeasurementPath(
-                COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i + PATH_SEPARATOR + "s" + j,
-                TSDataType.INT64));
+            new NonAlignedFullPath(
+                IDeviceID.Factory.DEFAULT_FACTORY.create(
+                    COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i),
+                new MeasurementSchema("s" + j, TSDataType.INT64)));
       }
     }
-    Map<PartialPath, List<TimeValuePair>> sourceData =
+    Map<IFullPath, List<TimeValuePair>> sourceData =
         readSourceFiles(timeseriesPaths, Collections.emptyList());
 
     // inner seq space compact
     List<InnerSpaceCompactionTask> taskResources =
-        new SizeTieredCompactionSelector(COMPACTION_TEST_SG, "0", 0, true, tsFileManager)
+        new SizeTieredCompactionSelector(
+                COMPACTION_TEST_SG, "0", 0, true, tsFileManager, new CompactionScheduleContext())
             .selectInnerSpaceTask(tsFileManager.getOrCreateSequenceListByTimePartition(0));
     for (InnerSpaceCompactionTask task : taskResources) {
       Assert.assertTrue(task.start());
@@ -2324,7 +2344,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
         IoTDBDescriptor.getInstance()
             .getConfig()
             .getCrossCompactionSelector()
-            .createInstance(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+            .createInstance(
+                COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     CrossCompactionTaskResource sourceFiles =
         crossSpaceCompactionSelector
             .selectCrossSpaceTask(
@@ -2351,7 +2372,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
 
   @Test
   public void testNonAlignedUnseqFilesNotOverlapWithSeqFiles2() throws Exception {
-    IoTDBDescriptor.getInstance().getConfig().setFileLimitPerInnerTask(2);
+    IoTDBDescriptor.getInstance().getConfig().setInnerCompactionCandidateFileNum(2);
     createFiles(5, 10, 5, 1000, 0, 0, 100, 100, false, true);
     createFiles(2, 5, 10, 500, 6000, 6000, 0, 100, false, false);
 
@@ -2371,21 +2392,23 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
       CompactionFileGeneratorUtils.generateMods(deleteMap, resource, false);
     }
 
-    List<PartialPath> timeseriesPaths = new ArrayList<>();
+    List<IFullPath> timeseriesPaths = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
       for (int j = 0; j < 10; j++) {
         timeseriesPaths.add(
-            new MeasurementPath(
-                COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i + PATH_SEPARATOR + "s" + j,
-                TSDataType.INT64));
+            new NonAlignedFullPath(
+                IDeviceID.Factory.DEFAULT_FACTORY.create(
+                    COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i),
+                new MeasurementSchema("s" + j, TSDataType.INT64)));
       }
     }
-    Map<PartialPath, List<TimeValuePair>> sourceData =
+    Map<IFullPath, List<TimeValuePair>> sourceData =
         readSourceFiles(timeseriesPaths, Collections.emptyList());
 
     // inner seq space compact
     List<InnerSpaceCompactionTask> taskResources =
-        new SizeTieredCompactionSelector(COMPACTION_TEST_SG, "0", 0, true, tsFileManager)
+        new SizeTieredCompactionSelector(
+                COMPACTION_TEST_SG, "0", 0, true, tsFileManager, new CompactionScheduleContext())
             .selectInnerSpaceTask(tsFileManager.getOrCreateSequenceListByTimePartition(0));
     for (InnerSpaceCompactionTask task : taskResources) {
       Assert.assertTrue(task.start());
@@ -2396,7 +2419,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
         IoTDBDescriptor.getInstance()
             .getConfig()
             .getCrossCompactionSelector()
-            .createInstance(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+            .createInstance(
+                COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     CrossCompactionTaskResource sourceFiles =
         crossSpaceCompactionSelector
             .selectCrossSpaceTask(
@@ -2422,7 +2446,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
 
   @Test
   public void testNonAlignedUnseqFilesNotOverlapWithSeqFiles3() throws Exception {
-    IoTDBDescriptor.getInstance().getConfig().setFileLimitPerInnerTask(2);
+    IoTDBDescriptor.getInstance().getConfig().setInnerCompactionCandidateFileNum(2);
     createFiles(4, 10, 5, 1000, 0, 0, 100, 100, false, true);
     createFiles(2, 5, 10, 500, 6000, 6000, 0, 100, false, false);
     createFiles(1, 10, 5, 1000, 7500, 7500, 100, 100, false, true);
@@ -2443,21 +2467,23 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
       CompactionFileGeneratorUtils.generateMods(deleteMap, resource, false);
     }
 
-    List<PartialPath> timeseriesPaths = new ArrayList<>();
+    List<IFullPath> timeseriesPaths = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
       for (int j = 0; j < 10; j++) {
         timeseriesPaths.add(
-            new MeasurementPath(
-                COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i + PATH_SEPARATOR + "s" + j,
-                TSDataType.INT64));
+            new NonAlignedFullPath(
+                IDeviceID.Factory.DEFAULT_FACTORY.create(
+                    COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i),
+                new MeasurementSchema("s" + j, TSDataType.INT64)));
       }
     }
-    Map<PartialPath, List<TimeValuePair>> sourceData =
+    Map<IFullPath, List<TimeValuePair>> sourceData =
         readSourceFiles(timeseriesPaths, Collections.emptyList());
 
     // inner seq space compact
     List<InnerSpaceCompactionTask> innerSpaceCompactionTasks =
-        new SizeTieredCompactionSelector(COMPACTION_TEST_SG, "0", 0, true, tsFileManager)
+        new SizeTieredCompactionSelector(
+                COMPACTION_TEST_SG, "0", 0, true, tsFileManager, new CompactionScheduleContext())
             .selectInnerSpaceTask(tsFileManager.getOrCreateSequenceListByTimePartition(0));
     for (InnerSpaceCompactionTask task : innerSpaceCompactionTasks) {
       Assert.assertTrue(task.start());
@@ -2468,7 +2494,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
         IoTDBDescriptor.getInstance()
             .getConfig()
             .getCrossCompactionSelector()
-            .createInstance(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+            .createInstance(
+                COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     CrossCompactionTaskResource sourceFiles =
         crossSpaceCompactionSelector
             .selectCrossSpaceTask(
@@ -2494,7 +2521,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
 
   @Test
   public void testNonAlignedUnseqFilesNotOverlapWithSeqFiles4() throws Exception {
-    IoTDBDescriptor.getInstance().getConfig().setFileLimitPerInnerTask(2);
+    IoTDBDescriptor.getInstance().getConfig().setInnerCompactionCandidateFileNum(2);
     createFiles(5, 10, 5, 1000, 0, 0, 100, 100, false, true);
     createFiles(1, 9, 10, 500, 100, 100, 0, 100, false, false);
     createFiles(2, 5, 10, 500, 6000, 6000, 0, 100, false, false);
@@ -2516,21 +2543,23 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
       CompactionFileGeneratorUtils.generateMods(deleteMap, resource, false);
     }
 
-    List<PartialPath> timeseriesPaths = new ArrayList<>();
+    List<IFullPath> timeseriesPaths = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
       for (int j = 0; j < 10; j++) {
         timeseriesPaths.add(
-            new MeasurementPath(
-                COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i + PATH_SEPARATOR + "s" + j,
-                TSDataType.INT64));
+            new NonAlignedFullPath(
+                IDeviceID.Factory.DEFAULT_FACTORY.create(
+                    COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i),
+                new MeasurementSchema("s" + j, TSDataType.INT64)));
       }
     }
-    Map<PartialPath, List<TimeValuePair>> sourceData =
+    Map<IFullPath, List<TimeValuePair>> sourceData =
         readSourceFiles(timeseriesPaths, Collections.emptyList());
 
     // inner seq space compact
     List<InnerSpaceCompactionTask> innerSpaceCompactionTasks =
-        new SizeTieredCompactionSelector(COMPACTION_TEST_SG, "0", 0, true, tsFileManager)
+        new SizeTieredCompactionSelector(
+                COMPACTION_TEST_SG, "0", 0, true, tsFileManager, new CompactionScheduleContext())
             .selectInnerSpaceTask(tsFileManager.getOrCreateSequenceListByTimePartition(0));
     for (InnerSpaceCompactionTask task : innerSpaceCompactionTasks) {
       Assert.assertTrue(task.start());
@@ -2541,7 +2570,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
         IoTDBDescriptor.getInstance()
             .getConfig()
             .getCrossCompactionSelector()
-            .createInstance(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+            .createInstance(
+                COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     CrossCompactionTaskResource sourceFiles =
         crossSpaceCompactionSelector
             .selectCrossSpaceTask(
@@ -2568,7 +2598,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
 
   @Test
   public void testAlignedUnseqFilesNotOverlapWithSeqFiles1() throws Exception {
-    IoTDBDescriptor.getInstance().getConfig().setFileLimitPerInnerTask(2);
+    IoTDBDescriptor.getInstance().getConfig().setInnerCompactionCandidateFileNum(2);
     createFiles(5, 10, 5, 1000, 0, 0, 100, 100, true, true);
     createFiles(2, 5, 10, 500, 6000, 6000, 0, 100, true, false);
     createFiles(3, 10, 5, 1000, 7500, 7500, 100, 100, true, true);
@@ -2595,22 +2625,24 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
       CompactionFileGeneratorUtils.generateMods(deleteMap, resource, false);
     }
 
-    List<PartialPath> timeseriesPaths = new ArrayList<>();
+    List<IFullPath> timeseriesPaths = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
       for (int j = 0; j < 10; j++) {
         timeseriesPaths.add(
-            new AlignedPath(
-                COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i,
+            new AlignedFullPath(
+                IDeviceID.Factory.DEFAULT_FACTORY.create(
+                    COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i),
                 Collections.singletonList("s" + j),
                 Collections.singletonList(new MeasurementSchema("s" + j, TSDataType.INT64))));
       }
     }
-    Map<PartialPath, List<TimeValuePair>> sourceData =
+    Map<IFullPath, List<TimeValuePair>> sourceData =
         readSourceFiles(timeseriesPaths, Collections.emptyList());
 
     // inner seq space compact
     List<InnerSpaceCompactionTask> innerSpaceCompactionTasks =
-        new SizeTieredCompactionSelector(COMPACTION_TEST_SG, "0", 0, true, tsFileManager)
+        new SizeTieredCompactionSelector(
+                COMPACTION_TEST_SG, "0", 0, true, tsFileManager, new CompactionScheduleContext())
             .selectInnerSpaceTask(tsFileManager.getOrCreateSequenceListByTimePartition(0));
     for (InnerSpaceCompactionTask task : innerSpaceCompactionTasks) {
       Assert.assertTrue(task.start());
@@ -2621,7 +2653,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
         IoTDBDescriptor.getInstance()
             .getConfig()
             .getCrossCompactionSelector()
-            .createInstance(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+            .createInstance(
+                COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     CrossCompactionTaskResource sourceFiles =
         crossSpaceCompactionSelector
             .selectCrossSpaceTask(
@@ -2647,7 +2680,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
 
   @Test
   public void testAlignedUnseqFilesNotOverlapWithSeqFiles2() throws Exception {
-    IoTDBDescriptor.getInstance().getConfig().setFileLimitPerInnerTask(2);
+    IoTDBDescriptor.getInstance().getConfig().setInnerCompactionCandidateFileNum(2);
     createFiles(5, 10, 5, 1000, 0, 0, 100, 100, true, true);
     createFiles(2, 5, 10, 500, 6000, 6000, 0, 100, true, false);
 
@@ -2673,22 +2706,24 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
       CompactionFileGeneratorUtils.generateMods(deleteMap, resource, false);
     }
 
-    List<PartialPath> timeseriesPaths = new ArrayList<>();
+    List<IFullPath> timeseriesPaths = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
       for (int j = 0; j < 10; j++) {
         timeseriesPaths.add(
-            new AlignedPath(
-                COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i,
+            new AlignedFullPath(
+                IDeviceID.Factory.DEFAULT_FACTORY.create(
+                    COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i),
                 Collections.singletonList("s" + j),
                 Collections.singletonList(new MeasurementSchema("s" + j, TSDataType.INT64))));
       }
     }
-    Map<PartialPath, List<TimeValuePair>> sourceData =
+    Map<IFullPath, List<TimeValuePair>> sourceData =
         readSourceFiles(timeseriesPaths, Collections.emptyList());
 
     // inner seq space compact
     List<InnerSpaceCompactionTask> innerSpaceCompactionTasks =
-        new SizeTieredCompactionSelector(COMPACTION_TEST_SG, "0", 0, true, tsFileManager)
+        new SizeTieredCompactionSelector(
+                COMPACTION_TEST_SG, "0", 0, true, tsFileManager, new CompactionScheduleContext())
             .selectInnerSpaceTask(tsFileManager.getOrCreateSequenceListByTimePartition(0));
     for (InnerSpaceCompactionTask task : innerSpaceCompactionTasks) {
       Assert.assertTrue(task.start());
@@ -2699,7 +2734,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
         IoTDBDescriptor.getInstance()
             .getConfig()
             .getCrossCompactionSelector()
-            .createInstance(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+            .createInstance(
+                COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     CrossCompactionTaskResource sourceFiles =
         crossSpaceCompactionSelector
             .selectCrossSpaceTask(
@@ -2725,7 +2761,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
 
   @Test
   public void testAlignedUnseqFilesNotOverlapWithSeqFiles3() throws Exception {
-    IoTDBDescriptor.getInstance().getConfig().setFileLimitPerInnerTask(2);
+    IoTDBDescriptor.getInstance().getConfig().setInnerCompactionCandidateFileNum(2);
     createFiles(4, 10, 5, 1000, 0, 0, 100, 100, true, true);
     createFiles(2, 5, 10, 500, 6000, 6000, 0, 100, true, false);
     createFiles(1, 10, 5, 1000, 7500, 7500, 100, 100, true, true);
@@ -2752,22 +2788,24 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
       CompactionFileGeneratorUtils.generateMods(deleteMap, resource, false);
     }
 
-    List<PartialPath> timeseriesPaths = new ArrayList<>();
+    List<IFullPath> timeseriesPaths = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
       for (int j = 0; j < 10; j++) {
         timeseriesPaths.add(
-            new AlignedPath(
-                COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i,
+            new AlignedFullPath(
+                IDeviceID.Factory.DEFAULT_FACTORY.create(
+                    COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i),
                 Collections.singletonList("s" + j),
                 Collections.singletonList(new MeasurementSchema("s" + j, TSDataType.INT64))));
       }
     }
-    Map<PartialPath, List<TimeValuePair>> sourceData =
+    Map<IFullPath, List<TimeValuePair>> sourceData =
         readSourceFiles(timeseriesPaths, Collections.emptyList());
 
     // inner seq space compact
     List<InnerSpaceCompactionTask> innerSpaceCompactionTasks =
-        new SizeTieredCompactionSelector(COMPACTION_TEST_SG, "0", 0, true, tsFileManager)
+        new SizeTieredCompactionSelector(
+                COMPACTION_TEST_SG, "0", 0, true, tsFileManager, new CompactionScheduleContext())
             .selectInnerSpaceTask(tsFileManager.getOrCreateSequenceListByTimePartition(0));
     for (InnerSpaceCompactionTask task : innerSpaceCompactionTasks) {
       Assert.assertTrue(task.start());
@@ -2778,7 +2816,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
         IoTDBDescriptor.getInstance()
             .getConfig()
             .getCrossCompactionSelector()
-            .createInstance(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+            .createInstance(
+                COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     CrossCompactionTaskResource sourceFiles =
         crossSpaceCompactionSelector
             .selectCrossSpaceTask(
@@ -2804,7 +2843,7 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
 
   @Test
   public void testAlignedUnseqFilesNotOverlapWithSeqFiles4() throws Exception {
-    IoTDBDescriptor.getInstance().getConfig().setFileLimitPerInnerTask(2);
+    IoTDBDescriptor.getInstance().getConfig().setInnerCompactionCandidateFileNum(2);
     createFiles(5, 10, 5, 1000, 0, 0, 100, 100, true, true);
     createFiles(1, 9, 10, 500, 100, 100, 0, 100, true, false);
     createFiles(2, 5, 10, 500, 6000, 6000, 0, 100, true, false);
@@ -2832,22 +2871,24 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
       CompactionFileGeneratorUtils.generateMods(deleteMap, resource, false);
     }
 
-    List<PartialPath> timeseriesPaths = new ArrayList<>();
+    List<IFullPath> timeseriesPaths = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
       for (int j = 0; j < 10; j++) {
         timeseriesPaths.add(
-            new AlignedPath(
-                COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i,
+            new AlignedFullPath(
+                IDeviceID.Factory.DEFAULT_FACTORY.create(
+                    COMPACTION_TEST_SG + PATH_SEPARATOR + "d" + i),
                 Collections.singletonList("s" + j),
                 Collections.singletonList(new MeasurementSchema("s" + j, TSDataType.INT64))));
       }
     }
-    Map<PartialPath, List<TimeValuePair>> sourceData =
+    Map<IFullPath, List<TimeValuePair>> sourceData =
         readSourceFiles(timeseriesPaths, Collections.emptyList());
 
     // inner seq space compact
     List<InnerSpaceCompactionTask> innerSpaceCompactionTasks =
-        new SizeTieredCompactionSelector(COMPACTION_TEST_SG, "0", 0, true, tsFileManager)
+        new SizeTieredCompactionSelector(
+                COMPACTION_TEST_SG, "0", 0, true, tsFileManager, new CompactionScheduleContext())
             .selectInnerSpaceTask(tsFileManager.getOrCreateSequenceListByTimePartition(0));
     for (InnerSpaceCompactionTask task : innerSpaceCompactionTasks) {
       Assert.assertTrue(task.start());
@@ -2858,7 +2899,8 @@ public class CrossSpaceCompactionWithFastPerformerValidationTest extends Abstrac
         IoTDBDescriptor.getInstance()
             .getConfig()
             .getCrossCompactionSelector()
-            .createInstance(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+            .createInstance(
+                COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     CrossCompactionTaskResource sourceFiles =
         crossSpaceCompactionSelector
             .selectCrossSpaceTask(

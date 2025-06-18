@@ -16,8 +16,11 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.confignode.it;
 
+import org.apache.iotdb.common.rpc.thrift.FunctionType;
+import org.apache.iotdb.common.rpc.thrift.Model;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.common.rpc.thrift.TSeriesPartitionSlot;
 import org.apache.iotdb.common.rpc.thrift.TTimePartitionSlot;
@@ -35,16 +38,15 @@ import org.apache.iotdb.confignode.rpc.thrift.TCreateFunctionReq;
 import org.apache.iotdb.confignode.rpc.thrift.TCreateTriggerReq;
 import org.apache.iotdb.confignode.rpc.thrift.TDataPartitionReq;
 import org.apache.iotdb.confignode.rpc.thrift.TDataPartitionTableResp;
+import org.apache.iotdb.confignode.rpc.thrift.TDatabaseSchema;
 import org.apache.iotdb.confignode.rpc.thrift.TGetTriggerTableResp;
 import org.apache.iotdb.confignode.rpc.thrift.TGetUDFTableResp;
+import org.apache.iotdb.confignode.rpc.thrift.TGetUdfTableReq;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaPartitionReq;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaPartitionTableResp;
-import org.apache.iotdb.confignode.rpc.thrift.TSetStorageGroupReq;
 import org.apache.iotdb.confignode.rpc.thrift.TShowCQResp;
-import org.apache.iotdb.confignode.rpc.thrift.TStorageGroupSchema;
 import org.apache.iotdb.confignode.rpc.thrift.TTimeSlotList;
 import org.apache.iotdb.consensus.ConsensusFactory;
-import org.apache.iotdb.it.env.ConfigFactory;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
@@ -72,34 +74,26 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.apache.iotdb.confignode.it.utils.ConfigNodeTestUtils.generatePatternTreeBuffer;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 @RunWith(IoTDBTestRunner.class)
 @Category({ClusterIT.class})
 public class IoTDBConfigNodeSnapshotIT {
-
-  protected static String originalConfigNodeConsensusProtocolClass;
-
-  protected static int originalRatisSnapshotTriggerThreshold;
   private static final int testRatisSnapshotTriggerThreshold = 100;
-
-  protected static long originalTimePartitionInterval;
   private static final long testTimePartitionInterval = 86400;
 
   @Before
   public void setUp() throws Exception {
-    originalConfigNodeConsensusProtocolClass =
-        ConfigFactory.getConfig().getConfigNodeConsesusProtocolClass();
-    ConfigFactory.getConfig().setConfigNodeConsesusProtocolClass(ConsensusFactory.RATIS_CONSENSUS);
-
-    originalRatisSnapshotTriggerThreshold =
-        ConfigFactory.getConfig().getRatisSnapshotTriggerThreshold();
-    ConfigFactory.getConfig().setRatisSnapshotTriggerThreshold(testRatisSnapshotTriggerThreshold);
-
-    originalTimePartitionInterval = ConfigFactory.getConfig().getTimePartitionInterval();
-    ConfigFactory.getConfig().setTimePartitionInterval(testTimePartitionInterval);
+    EnvFactory.getEnv()
+        .getConfig()
+        .getCommonConfig()
+        .setConfigNodeConsensusProtocolClass(ConsensusFactory.RATIS_CONSENSUS)
+        .setConfigNodeRatisSnapshotTriggerThreshold(testRatisSnapshotTriggerThreshold)
+        .setTimePartitionInterval(testTimePartitionInterval);
 
     // Init 2C2D cluster environment
     EnvFactory.getEnv().initClusterEnvironment(2, 2);
@@ -107,18 +101,11 @@ public class IoTDBConfigNodeSnapshotIT {
 
   @After
   public void tearDown() {
-    EnvFactory.getEnv().cleanAfterClass();
-
-    ConfigFactory.getConfig()
-        .setConfigNodeConsesusProtocolClass(originalConfigNodeConsensusProtocolClass);
-    ConfigFactory.getConfig()
-        .setRatisSnapshotTriggerThreshold(originalRatisSnapshotTriggerThreshold);
-    ConfigFactory.getConfig().setTimePartitionInterval(originalTimePartitionInterval);
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   @Test
-  public void testPartitionInfoSnapshot()
-      throws IOException, IllegalPathException, TException, InterruptedException {
+  public void testPartitionInfoSnapshot() throws Exception {
     final String sg = "root.sg";
     final int storageGroupNum = 10;
     final int seriesPartitionSlotsNum = 10;
@@ -134,9 +121,8 @@ public class IoTDBConfigNodeSnapshotIT {
 
       for (int i = 0; i < storageGroupNum; i++) {
         String storageGroup = sg + i;
-        TSetStorageGroupReq setStorageGroupReq =
-            new TSetStorageGroupReq(new TStorageGroupSchema(storageGroup));
-        TSStatus status = client.setStorageGroup(setStorageGroupReq);
+        TDatabaseSchema storageGroupSchema = new TDatabaseSchema(storageGroup);
+        TSStatus status = client.setDatabase(storageGroupSchema);
         assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), status.getCode());
 
         for (int j = 0; j < seriesPartitionSlotsNum; j++) {
@@ -202,7 +188,7 @@ public class IoTDBConfigNodeSnapshotIT {
       }
 
       assertTriggerInformation(createTriggerReqs, client.getTriggerTable());
-      assertUDFInformation(createFunctionReqs, client.getUDFTable());
+      assertUDFInformation(createFunctionReqs, client.getUDFTable(new TGetUdfTableReq(Model.TREE)));
 
       TShowCQResp showCQResp = client.showCQ();
       assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), showCQResp.getStatus().getCode());
@@ -302,12 +288,16 @@ public class IoTDBConfigNodeSnapshotIT {
 
     TCreateFunctionReq createFunctionReq1 =
         new TCreateFunctionReq("test1", "org.apache.iotdb.udf.UDTFExample", true)
+            .setModel(Model.TREE)
+            .setFunctionType(FunctionType.NONE)
             .setJarName(jarName)
             .setJarFile(jarFile)
             .setJarMD5(jarMD5);
 
     TCreateFunctionReq createFunctionReq2 =
         new TCreateFunctionReq("test2", "org.apache.iotdb.udf.UDTFExample", true)
+            .setModel(Model.TREE)
+            .setFunctionType(FunctionType.NONE)
             .setJarName(jarName)
             .setJarFile(jarFile)
             .setJarMD5(jarMD5);
@@ -326,11 +316,13 @@ public class IoTDBConfigNodeSnapshotIT {
   }
 
   private void assertUDFInformation(List<TCreateFunctionReq> req, TGetUDFTableResp resp) {
+    Map<String, TCreateFunctionReq> nameToReqMap =
+        req.stream().collect(Collectors.toMap(r -> r.getUdfName().toUpperCase(), r -> r));
     for (int i = 0; i < req.size(); i++) {
-      TCreateFunctionReq createFunctionReq = req.get(i);
       UDFInformation udfInformation =
           UDFInformation.deserialize(resp.getAllUDFInformation().get(i));
-
+      assertTrue(nameToReqMap.containsKey(udfInformation.getFunctionName()));
+      TCreateFunctionReq createFunctionReq = nameToReqMap.get(udfInformation.getFunctionName());
       assertEquals(createFunctionReq.getUdfName().toUpperCase(), udfInformation.getFunctionName());
       assertEquals(createFunctionReq.getClassName(), udfInformation.getClassName());
       assertEquals(createFunctionReq.getJarName(), udfInformation.getJarName());
@@ -351,7 +343,7 @@ public class IoTDBConfigNodeSnapshotIT {
             (byte) 0,
             "select s1 into root.backup.d1(s1) from root.sg.d1",
             sql1,
-            "Asia",
+            "UTC",
             "root");
     TCreateCQReq req2 =
         new TCreateCQReq(
@@ -363,11 +355,11 @@ public class IoTDBConfigNodeSnapshotIT {
             (byte) 1,
             "select s1 into root.backup.d2(s1) from root.sg.d2",
             sql2,
-            "Asia",
+            "UTC",
             "root");
 
-    assertEquals(client.createCQ(req1).getCode(), TSStatusCode.SUCCESS_STATUS.getStatusCode());
-    assertEquals(client.createCQ(req2).getCode(), TSStatusCode.SUCCESS_STATUS.getStatusCode());
+    assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), client.createCQ(req1).getCode());
+    assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), client.createCQ(req2).getCode());
 
     Set<TCQEntry> result = new HashSet<>();
     result.add(new TCQEntry("testCq1", sql1, CQState.ACTIVE.getType()));

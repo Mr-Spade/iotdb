@@ -33,25 +33,21 @@ import org.apache.iotdb.consensus.iot.util.TestEntry;
 import org.apache.iotdb.consensus.iot.util.TestStateMachine;
 
 import org.apache.ratis.util.FileUtils;
-import org.apache.tsfile.utils.PublicBAOS;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.DataOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class ReplicateTest {
@@ -60,12 +56,6 @@ public class ReplicateTest {
   private final Logger logger = LoggerFactory.getLogger(ReplicateTest.class);
 
   private final ConsensusGroupId gid = new DataRegionId(1);
-
-  private static final long timeout = TimeUnit.SECONDS.toMillis(300);
-
-  private static final String CONFIGURATION_FILE_NAME = "configuration.dat";
-
-  private static final String CONFIGURATION_TMP_FILE_NAME = "configuration.dat.tmp";
 
   private int basePort = 9000;
 
@@ -77,9 +67,9 @@ public class ReplicateTest {
 
   private final List<File> peersStorage =
       Arrays.asList(
-          new File("target" + java.io.File.separator + "1"),
-          new File("target" + java.io.File.separator + "2"),
-          new File("target" + java.io.File.separator + "3"));
+          new File("target" + File.separator + "1"),
+          new File("target" + File.separator + "2"),
+          new File("target" + File.separator + "3"));
 
   private final ConsensusGroup group = new ConsensusGroup(gid, peers);
   private final List<IoTConsensus> servers = new ArrayList<>();
@@ -102,60 +92,42 @@ public class ReplicateTest {
     }
   }
 
-  public void changeConfiguration(int i) {
-    try (PublicBAOS publicBAOS = new PublicBAOS();
-        DataOutputStream outputStream = new DataOutputStream(publicBAOS)) {
-      outputStream.writeInt(this.peers.size());
-      for (Peer peer : this.peers) {
-        peer.serialize(outputStream);
-      }
-      File storageDir = new File(IoTConsensus.buildPeerDir(peersStorage.get(i), gid));
-      Path tmpConfigurationPath =
-          Paths.get(new File(storageDir, CONFIGURATION_TMP_FILE_NAME).getAbsolutePath());
-      Path configurationPath =
-          Paths.get(new File(storageDir, CONFIGURATION_FILE_NAME).getAbsolutePath());
-      if (!Files.exists(configurationPath) && !Files.exists(tmpConfigurationPath)) {
-        return;
-      }
-      if (!Files.exists(tmpConfigurationPath)) {
-        Files.createDirectories(tmpConfigurationPath.getParent());
-        Files.createFile(tmpConfigurationPath);
-      }
-      Files.write(tmpConfigurationPath, publicBAOS.getBuf());
-      if (Files.exists(configurationPath)) {
-        Files.delete(configurationPath);
-      }
-      Files.move(tmpConfigurationPath, configurationPath);
-    } catch (IOException e) {
-      logger.error("Unexpected error occurs when persisting configuration", e);
-    }
-  }
-
   private void initServer() throws IOException {
-    for (int i = 0; i < peers.size(); i++) {
-      findPortAvailable(i);
-    }
-    for (int i = 0; i < peers.size(); i++) {
-      int finalI = i;
-      changeConfiguration(i);
-      servers.add(
-          (IoTConsensus)
-              ConsensusFactory.getConsensusImpl(
-                      ConsensusFactory.IOT_CONSENSUS,
-                      ConsensusConfig.newBuilder()
-                          .setThisNodeId(peers.get(i).getNodeId())
-                          .setThisNode(peers.get(i).getEndpoint())
-                          .setStorageDir(peersStorage.get(i).getAbsolutePath())
-                          .setConsensusGroupType(TConsensusGroupType.DataRegion)
-                          .build(),
-                      groupId -> stateMachines.get(finalI))
-                  .orElseThrow(
-                      () ->
-                          new IllegalArgumentException(
-                              String.format(
-                                  ConsensusFactory.CONSTRUCT_FAILED_MSG,
-                                  ConsensusFactory.IOT_CONSENSUS))));
-      servers.get(i).start();
+    Assume.assumeTrue(checkPortAvailable());
+    try {
+      for (int i = 0; i < peers.size(); i++) {
+        int finalI = i;
+        servers.add(
+            (IoTConsensus)
+                ConsensusFactory.getConsensusImpl(
+                        ConsensusFactory.IOT_CONSENSUS,
+                        ConsensusConfig.newBuilder()
+                            .setThisNodeId(peers.get(i).getNodeId())
+                            .setThisNode(peers.get(i).getEndpoint())
+                            .setStorageDir(peersStorage.get(i).getAbsolutePath())
+                            .setConsensusGroupType(TConsensusGroupType.DataRegion)
+                            .build(),
+                        groupId -> stateMachines.get(finalI))
+                    .orElseThrow(
+                        () ->
+                            new IllegalArgumentException(
+                                String.format(
+                                    ConsensusFactory.CONSTRUCT_FAILED_MSG,
+                                    ConsensusFactory.IOT_CONSENSUS))));
+        servers.get(i).recordCorrectPeerListBeforeStarting(Collections.singletonMap(gid, peers));
+      }
+      for (int i = 0; i < peers.size(); i++) {
+        servers.get(i).start();
+      }
+    } catch (IOException e) {
+      if (e.getCause() instanceof StartupException) {
+        // just succeed when can not bind socket
+        logger.info("Can not start IoTConsensus because", e);
+        Assume.assumeTrue(false);
+      } else {
+        logger.error("Failed because", e);
+        Assert.fail("Failed because " + e.getMessage());
+      }
     }
   }
 
@@ -212,23 +184,9 @@ public class ReplicateTest {
       stopServer();
       initServer();
 
-      Assert.assertEquals(
-          peers.stream().map(Peer::getNodeId).collect(Collectors.toSet()),
-          servers.get(0).getImpl(gid).getConfiguration().stream()
-              .map(Peer::getNodeId)
-              .collect(Collectors.toSet()));
-
-      Assert.assertEquals(
-          peers.stream().map(Peer::getNodeId).collect(Collectors.toSet()),
-          servers.get(1).getImpl(gid).getConfiguration().stream()
-              .map(Peer::getNodeId)
-              .collect(Collectors.toSet()));
-
-      Assert.assertEquals(
-          peers.stream().map(Peer::getNodeId).collect(Collectors.toSet()),
-          servers.get(2).getImpl(gid).getConfiguration().stream()
-              .map(Peer::getNodeId)
-              .collect(Collectors.toSet()));
+      checkPeerList(servers.get(0).getImpl(gid));
+      checkPeerList(servers.get(1).getImpl(gid));
+      checkPeerList(servers.get(2).getImpl(gid));
 
       Assert.assertEquals(CHECK_POINT_GAP, servers.get(0).getImpl(gid).getSearchIndex());
       Assert.assertEquals(CHECK_POINT_GAP, servers.get(1).getImpl(gid).getSearchIndex());
@@ -289,23 +247,9 @@ public class ReplicateTest {
       initServer();
 
       servers.get(2).createLocalPeer(group.getGroupId(), group.getPeers());
-      Assert.assertEquals(
-          peers.stream().map(Peer::getNodeId).collect(Collectors.toSet()),
-          servers.get(0).getImpl(gid).getConfiguration().stream()
-              .map(Peer::getNodeId)
-              .collect(Collectors.toSet()));
-
-      Assert.assertEquals(
-          peers.stream().map(Peer::getNodeId).collect(Collectors.toSet()),
-          servers.get(1).getImpl(gid).getConfiguration().stream()
-              .map(Peer::getNodeId)
-              .collect(Collectors.toSet()));
-
-      Assert.assertEquals(
-          peers.stream().map(Peer::getNodeId).collect(Collectors.toSet()),
-          servers.get(2).getImpl(gid).getConfiguration().stream()
-              .map(Peer::getNodeId)
-              .collect(Collectors.toSet()));
+      checkPeerList(servers.get(0).getImpl(gid));
+      checkPeerList(servers.get(1).getImpl(gid));
+      checkPeerList(servers.get(2).getImpl(gid));
 
       Assert.assertEquals(CHECK_POINT_GAP, servers.get(0).getImpl(gid).getSearchIndex());
       Assert.assertEquals(CHECK_POINT_GAP, servers.get(1).getImpl(gid).getSearchIndex());
@@ -349,10 +293,6 @@ public class ReplicateTest {
     for (int i = 0; i < CHECK_POINT_GAP; i++) {
       servers.get(0).write(gid, new TestEntry(i, peers.get(0)));
     }
-    List<ConsensusGroupId> ids = servers.get(0).getAllConsensusGroupIdsWithoutStarting();
-
-    Assert.assertEquals(1, ids.size());
-    Assert.assertEquals(gid, ids.get(0));
 
     String regionDir = servers.get(0).getRegionDirFromConsensusGroupId(gid);
     try {
@@ -363,23 +303,21 @@ public class ReplicateTest {
     }
   }
 
-  private void findPortAvailable(int i) {
-    long start = System.currentTimeMillis();
-    while (System.currentTimeMillis() - start < timeout) {
-      try (ServerSocket ignored = new ServerSocket(this.peers.get(i).getEndpoint().port)) {
-        // success
-        return;
+  private boolean checkPortAvailable() {
+    for (Peer peer : this.peers) {
+      try (ServerSocket ignored = new ServerSocket(peer.getEndpoint().port)) {
+        logger.info("check port {} success for node {}", peer.getEndpoint().port, peer.getNodeId());
       } catch (IOException e) {
-        // Port is already in use, wait and retry
-        this.peers.set(i, new Peer(gid, i + 1, new TEndPoint("127.0.0.1", this.basePort)));
-        logger.info("try port {} for node {}.", this.basePort++, i + 1);
-        try {
-          Thread.sleep(50); // Wait for 1 second before retrying
-        } catch (InterruptedException ex) {
-          // Handle the interruption if needed
-        }
+        logger.error("check port {} failed for node {}", peer.getEndpoint().port, peer.getNodeId());
+        return false;
       }
     }
-    Assert.fail(String.format("can not find port for node %d after 300s", i + 1));
+    return true;
+  }
+
+  private void checkPeerList(IoTConsensusServerImpl iotServerImpl) {
+    Assert.assertEquals(
+        peers.stream().map(Peer::getNodeId).collect(Collectors.toSet()),
+        iotServerImpl.getConfiguration().stream().map(Peer::getNodeId).collect(Collectors.toSet()));
   }
 }

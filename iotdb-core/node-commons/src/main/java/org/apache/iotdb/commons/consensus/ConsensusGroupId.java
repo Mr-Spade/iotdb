@@ -25,7 +25,7 @@ import org.apache.iotdb.common.rpc.thrift.TConsensusGroupType;
 import java.util.Objects;
 
 /** We abstract this class to hide word `ConsensusGroup` for IoTDB StorageEngine/SchemaEngine. */
-public abstract class ConsensusGroupId {
+public abstract class ConsensusGroupId implements Comparable<ConsensusGroupId> {
 
   protected int id;
 
@@ -92,9 +92,43 @@ public abstract class ConsensusGroupId {
       return groupId;
     }
 
+    public static ConsensusGroupId createFromString(String groupIdString) {
+      ConsensusGroupId groupId;
+      if (groupIdString.startsWith(TConsensusGroupType.DataRegion.name())) {
+        groupId =
+            new DataRegionId(
+                Integer.parseInt(
+                    groupIdString.substring(
+                        TConsensusGroupType.DataRegion.name().length() + 1,
+                        groupIdString.length() - 1)));
+      } else if (groupIdString.startsWith(TConsensusGroupType.SchemaRegion.name())) {
+        groupId =
+            new SchemaRegionId(
+                Integer.parseInt(
+                    groupIdString.substring(
+                        TConsensusGroupType.SchemaRegion.name().length() + 1,
+                        groupIdString.length() - 1)));
+      } else if (groupIdString.startsWith(TConsensusGroupType.ConfigRegion.name())) {
+        groupId =
+            new ConfigRegionId(
+                Integer.parseInt(
+                    groupIdString.substring(
+                        TConsensusGroupType.ConfigRegion.name().length() + 1,
+                        groupIdString.length() - 1)));
+      } else {
+        throw new IllegalArgumentException("Unrecognized ConsensusGroupId: " + groupIdString);
+      }
+      return groupId;
+    }
+
     public static ConsensusGroupId createFromTConsensusGroupId(
         TConsensusGroupId tConsensusGroupId) {
       return create(tConsensusGroupId.getType().getValue(), tConsensusGroupId.getId());
     }
+  }
+
+  @Override
+  public int compareTo(ConsensusGroupId o) {
+    return Integer.compare(id, o.id);
   }
 }

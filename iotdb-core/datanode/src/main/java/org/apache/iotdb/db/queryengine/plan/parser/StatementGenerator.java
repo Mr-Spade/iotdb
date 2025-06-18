@@ -22,7 +22,9 @@ package org.apache.iotdb.db.queryengine.plan.parser;
 import org.apache.iotdb.common.rpc.thrift.TAggregationType;
 import org.apache.iotdb.commons.exception.IllegalPathException;
 import org.apache.iotdb.commons.exception.MetadataException;
+import org.apache.iotdb.commons.path.MeasurementPath;
 import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.commons.schema.table.column.TsTableColumnCategory;
 import org.apache.iotdb.commons.service.metric.PerformanceOverviewMetrics;
 import org.apache.iotdb.db.exception.query.QueryProcessException;
 import org.apache.iotdb.db.qp.sql.IoTDBSqlParser;
@@ -68,6 +70,7 @@ import org.apache.iotdb.db.schemaengine.template.TemplateQueryType;
 import org.apache.iotdb.db.utils.QueryDataSetUtils;
 import org.apache.iotdb.db.utils.TimestampPrecisionUtils;
 import org.apache.iotdb.db.utils.constant.SqlConstant;
+import org.apache.iotdb.mpp.rpc.thrift.TFetchTimeseriesReq;
 import org.apache.iotdb.service.rpc.thrift.TSAggregationQueryReq;
 import org.apache.iotdb.service.rpc.thrift.TSCreateAlignedTimeseriesReq;
 import org.apache.iotdb.service.rpc.thrift.TSCreateMultiTimeseriesReq;
@@ -95,6 +98,7 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.atn.PredictionMode;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.apache.tsfile.common.constant.TsFileConstant;
+import org.apache.tsfile.enums.ColumnCategory;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.file.metadata.enums.CompressionType;
 import org.apache.tsfile.file.metadata.enums.TSEncoding;
@@ -112,6 +116,7 @@ import java.util.Map;
 
 /** Convert SQL and RPC requests to {@link Statement}. */
 public class StatementGenerator {
+
   private static final PerformanceOverviewMetrics PERFORMANCE_OVERVIEW_METRICS =
       PerformanceOverviewMetrics.getInstance();
 
@@ -281,6 +286,22 @@ public class StatementGenerator {
     insertStatement.setMeasurements(insertRecordReq.getMeasurements().toArray(new String[0]));
     insertStatement.setAligned(insertRecordReq.isAligned);
     insertStatement.fillValues(insertRecordReq.values);
+    if (insertRecordReq.isSetIsWriteToTable()) {
+      insertStatement.setWriteToTable(insertRecordReq.isIsWriteToTable());
+      if (!insertRecordReq.isSetColumnCategoryies()
+          || insertRecordReq.getColumnCategoryiesSize() != insertRecordReq.getMeasurementsSize()) {
+        throw new IllegalArgumentException(
+            "Missing or invalid column categories for table " + "insertion");
+      }
+      TsTableColumnCategory[] columnCategories =
+          new TsTableColumnCategory[insertRecordReq.getColumnCategoryies().size()];
+      for (int i = 0; i < columnCategories.length; i++) {
+        columnCategories[i] =
+            TsTableColumnCategory.fromTsFileColumnCategory(
+                ColumnCategory.values()[insertRecordReq.getColumnCategoryies().get(i).intValue()]);
+      }
+      insertStatement.setColumnCategories(columnCategories);
+    }
     PERFORMANCE_OVERVIEW_METRICS.recordParseCost(System.nanoTime() - startTime);
     return insertStatement;
   }
@@ -334,6 +355,22 @@ public class StatementGenerator {
     }
     insertStatement.setDataTypes(dataTypes);
     insertStatement.setAligned(insertTabletReq.isAligned);
+    insertStatement.setWriteToTable(insertTabletReq.isWriteToTable());
+    if (insertTabletReq.isWriteToTable()) {
+      if (!insertTabletReq.isSetColumnCategories()
+          || insertTabletReq.getColumnCategoriesSize() != insertTabletReq.getMeasurementsSize()) {
+        throw new IllegalArgumentException(
+            "Missing or invalid column categories for table " + "insertion");
+      }
+      TsTableColumnCategory[] columnCategories =
+          new TsTableColumnCategory[insertTabletReq.columnCategories.size()];
+      for (int i = 0; i < columnCategories.length; i++) {
+        columnCategories[i] =
+            TsTableColumnCategory.fromTsFileColumnCategory(
+                ColumnCategory.values()[insertTabletReq.columnCategories.get(i).intValue()]);
+      }
+      insertStatement.setColumnCategories(columnCategories);
+    }
     PERFORMANCE_OVERVIEW_METRICS.recordParseCost(System.nanoTime() - startTime);
     return insertStatement;
   }
@@ -442,7 +479,10 @@ public class StatementGenerator {
     insertStatement.setDevicePath(DEVICE_PATH_CACHE.getPartialPath(req.prefixPath));
     List<InsertRowStatement> insertRowStatementList = new ArrayList<>();
     // req.timestamps sorted on session side
-    TimestampPrecisionUtils.checkTimestampPrecision(req.timestamps.get(req.timestamps.size() - 1));
+    if (req.timestamps.size() != 0) {
+      TimestampPrecisionUtils.checkTimestampPrecision(
+          req.timestamps.get(req.timestamps.size() - 1));
+    }
     for (int i = 0; i < req.timestamps.size(); i++) {
       InsertRowStatement statement = new InsertRowStatement();
       statement.setDevicePath(insertStatement.getDevicePath());
@@ -490,11 +530,11 @@ public class StatementGenerator {
     return insertStatement;
   }
 
-  public static DatabaseSchemaStatement createStatement(String database)
+  public static DatabaseSchemaStatement createStatement(final String database)
       throws IllegalPathException {
-    long startTime = System.nanoTime();
+    final long startTime = System.nanoTime();
     // construct create database statement
-    DatabaseSchemaStatement statement =
+    final DatabaseSchemaStatement statement =
         new DatabaseSchemaStatement(DatabaseSchemaStatement.DatabaseSchemaStatementType.CREATE);
     statement.setDatabasePath(parseDatabaseRawString(database));
     PERFORMANCE_OVERVIEW_METRICS.recordParseCost(System.nanoTime() - startTime);
@@ -506,7 +546,7 @@ public class StatementGenerator {
     final long startTime = System.nanoTime();
     // construct create timeseries statement
     CreateTimeSeriesStatement statement = new CreateTimeSeriesStatement();
-    statement.setPath(new PartialPath(req.path));
+    statement.setPath(new MeasurementPath(req.path));
     statement.setDataType(TSDataType.deserialize((byte) req.dataType));
     statement.setEncoding(TSEncoding.deserialize((byte) req.encoding));
     statement.setCompressor(CompressionType.deserialize((byte) req.compressor));
@@ -521,9 +561,9 @@ public class StatementGenerator {
   public static CreateAlignedTimeSeriesStatement createStatement(TSCreateAlignedTimeseriesReq req)
       throws IllegalPathException {
     final long startTime = System.nanoTime();
-    // construct create aligned timeseries statement
+    // construct create aligned time series statement
     CreateAlignedTimeSeriesStatement statement = new CreateAlignedTimeSeriesStatement();
-    statement.setDevicePath(new PartialPath(req.prefixPath));
+    statement.setDevicePath(DEVICE_PATH_CACHE.getPartialPath(req.prefixPath));
     List<TSDataType> dataTypes = new ArrayList<>();
     for (Integer dataType : req.dataTypes) {
       dataTypes.add(TSDataType.deserialize(dataType.byteValue()));
@@ -551,9 +591,9 @@ public class StatementGenerator {
       throws IllegalPathException {
     final long startTime = System.nanoTime();
     // construct create multi timeseries statement
-    List<PartialPath> paths = new ArrayList<>();
+    List<MeasurementPath> paths = new ArrayList<>();
     for (String path : req.paths) {
-      paths.add(new PartialPath(path));
+      paths.add(new MeasurementPath(path));
     }
     List<TSDataType> dataTypes = new ArrayList<>();
     for (Integer dataType : req.dataTypes) {
@@ -596,9 +636,9 @@ public class StatementGenerator {
       throws IllegalPathException {
     final long startTime = System.nanoTime();
     DeleteDataStatement statement = new DeleteDataStatement();
-    List<PartialPath> pathList = new ArrayList<>();
+    List<MeasurementPath> pathList = new ArrayList<>();
     for (String path : req.getPaths()) {
-      pathList.add(new PartialPath(path));
+      pathList.add(new MeasurementPath(path));
     }
     statement.setPathList(pathList);
     statement.setDeleteStartTime(req.getStartTime());
@@ -849,12 +889,17 @@ public class StatementGenerator {
     insertRowStatement.setMeasurements(newMeasurements.toArray(new String[0]));
   }
 
-  private static PartialPath parseDatabaseRawString(String database) throws IllegalPathException {
-    PartialPath databasePath = new PartialPath(database);
+  private static PartialPath parseDatabaseRawString(final String database)
+      throws IllegalPathException {
+    final PartialPath databasePath = new PartialPath(database);
     if (databasePath.getNodeLength() < 2) {
       throw new IllegalPathException(database);
     }
     MetaFormatUtils.checkDatabase(database);
     return databasePath;
+  }
+
+  public static Statement createStatement(TFetchTimeseriesReq fetchTimeseriesReq, ZoneId zoneId) {
+    return invokeParser(fetchTimeseriesReq.getQueryBody(), zoneId);
   }
 }

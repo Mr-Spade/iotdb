@@ -18,21 +18,24 @@
  */
 package org.apache.iotdb.session.it;
 
-import org.apache.iotdb.commons.conf.IoTDBConstant;
+import org.apache.iotdb.db.protocol.thrift.OperationType;
+import org.apache.iotdb.isession.ISession;
+import org.apache.iotdb.isession.SessionDataSet;
+import org.apache.iotdb.isession.template.Template;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
 import org.apache.iotdb.rpc.StatementExecutionException;
-import org.apache.iotdb.session.ISession;
-import org.apache.iotdb.session.SessionDataSet;
-import org.apache.iotdb.tsfile.file.metadata.enums.CompressionType;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSEncoding;
-import org.apache.iotdb.tsfile.utils.Binary;
-import org.apache.iotdb.tsfile.write.record.Tablet;
-import org.apache.iotdb.tsfile.write.schema.MeasurementSchema;
+import org.apache.iotdb.rpc.TSStatusCode;
+import org.apache.iotdb.session.template.MeasurementNode;
 
+import org.apache.tsfile.enums.TSDataType;
+import org.apache.tsfile.file.metadata.enums.CompressionType;
+import org.apache.tsfile.file.metadata.enums.TSEncoding;
+import org.apache.tsfile.write.record.Tablet;
+import org.apache.tsfile.write.schema.IMeasurementSchema;
+import org.apache.tsfile.write.schema.MeasurementSchema;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -44,6 +47,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -54,13 +58,12 @@ public class IoTDBSessionSyntaxConventionIT {
 
   @Before
   public void setUp() throws Exception {
-    System.setProperty(IoTDBConstant.IOTDB_CONF, "src/test/resources/");
-    EnvFactory.getEnv().initBeforeTest();
+    EnvFactory.getEnv().initClusterEnvironment();
   }
 
   @After
   public void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterTest();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   @Test
@@ -109,6 +112,7 @@ public class IoTDBSessionSyntaxConventionIT {
       measurements.add("`a“（Φ）”b`");
       measurements.add("`a>b`");
       measurements.add("`\\\"a`");
+      measurements.add("`aaa`");
       List<String> values = new ArrayList<>();
 
       for (int i = 0; i < measurements.size(); i++) {
@@ -125,6 +129,7 @@ public class IoTDBSessionSyntaxConventionIT {
       assertTrue(session.checkTimeseriesExists("root.sg1.d1.`a“（Φ）”b`"));
       assertTrue(session.checkTimeseriesExists("root.sg1.d1.`a>b`"));
       assertTrue(session.checkTimeseriesExists("root.sg1.d1.`\\\"a`"));
+      assertTrue(session.checkTimeseriesExists("root.sg1.d1.aaa"));
     } catch (Exception e) {
       e.printStackTrace();
       fail(e.getMessage());
@@ -252,28 +257,20 @@ public class IoTDBSessionSyntaxConventionIT {
   @Test
   public void insertTabletWithIllegalMeasurementTest() {
     String deviceId = "root.sg1.d1";
-    List<MeasurementSchema> schemaList = new ArrayList<>();
+    List<IMeasurementSchema> schemaList = new ArrayList<>();
     schemaList.add(new MeasurementSchema("wrong`", TSDataType.INT64, TSEncoding.RLE));
     schemaList.add(new MeasurementSchema("s2", TSDataType.DOUBLE, TSEncoding.RLE));
     schemaList.add(new MeasurementSchema("s3", TSDataType.TEXT, TSEncoding.PLAIN));
     schemaList.add(new MeasurementSchema("s4", TSDataType.INT64, TSEncoding.PLAIN));
 
     Tablet tablet = new Tablet(deviceId, schemaList, 10);
-
-    long[] timestamps = tablet.timestamps;
-    Object[] values = tablet.values;
-
     for (long time = 0; time < 10; time++) {
-      int row = tablet.rowSize++;
-      timestamps[row] = time;
-      long[] sensor = (long[]) values[0];
-      sensor[row] = time;
-      double[] sensor2 = (double[]) values[1];
-      sensor2[row] = 0.1 + time;
-      Binary[] sensor3 = (Binary[]) values[2];
-      sensor3[row] = Binary.valueOf("ha" + time);
-      long[] sensor4 = (long[]) values[3];
-      sensor4[row] = time;
+      int row = tablet.getRowSize();
+      tablet.addTimestamp(row, time);
+      tablet.addValue(row, 0, time);
+      tablet.addValue(row, 1, 0.1d + time);
+      tablet.addValue(row, 2, "ha" + time);
+      tablet.addValue(row, 3, time);
     }
 
     try (ISession session = EnvFactory.getEnv().getSessionConnection()) {
@@ -422,6 +419,35 @@ public class IoTDBSessionSyntaxConventionIT {
       }
       SessionDataSet dataSet = session.executeQueryStatement("show timeseries root");
       assertFalse(dataSet.hasNext());
+    } catch (Exception e) {
+      e.printStackTrace();
+      fail(e.getMessage());
+    }
+  }
+
+  @Test
+  public void createSchemaTemplateWithIllegalMeasurementNameTest() {
+    try (ISession session = EnvFactory.getEnv().getSessionConnection()) {
+
+      Template template = new Template("null_t", true);
+      MeasurementNode mNode =
+          new MeasurementNode(null, TSDataType.FLOAT, TSEncoding.GORILLA, CompressionType.LZ4);
+      template.addToTemplate(mNode);
+
+      try {
+        session.createSchemaTemplate(template);
+        fail();
+      } catch (StatementExecutionException e) {
+        TSStatusCode statusCode =
+            TSStatusCode.representOf(TSStatusCode.METADATA_ERROR.getStatusCode());
+        String message =
+            String.format(
+                "[%s] Exception occurred: %s failed. %s",
+                statusCode,
+                OperationType.CREATE_SCHEMA_TEMPLATE,
+                "The name of a measurement in schema template shall not be null.");
+        assertEquals(TSStatusCode.METADATA_ERROR.getStatusCode() + ": " + message, e.getMessage());
+      }
     } catch (Exception e) {
       e.printStackTrace();
       fail(e.getMessage());

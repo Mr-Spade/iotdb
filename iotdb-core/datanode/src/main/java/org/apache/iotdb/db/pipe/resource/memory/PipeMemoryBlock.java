@@ -19,7 +19,7 @@
 
 package org.apache.iotdb.db.pipe.resource.memory;
 
-import org.apache.iotdb.db.pipe.resource.PipeResourceManager;
+import org.apache.iotdb.db.pipe.resource.PipeDataNodeResourceManager;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,7 +35,7 @@ public class PipeMemoryBlock implements AutoCloseable {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(PipeMemoryBlock.class);
 
-  private final PipeMemoryManager pipeMemoryManager = PipeResourceManager.memory();
+  private final PipeMemoryManager pipeMemoryManager = PipeDataNodeResourceManager.memory();
 
   private final ReentrantLock lock = new ReentrantLock();
 
@@ -48,7 +48,7 @@ public class PipeMemoryBlock implements AutoCloseable {
 
   private volatile boolean isReleased = false;
 
-  public PipeMemoryBlock(long memoryUsageInBytes) {
+  public PipeMemoryBlock(final long memoryUsageInBytes) {
     this.memoryUsageInBytes.set(memoryUsageInBytes);
   }
 
@@ -56,26 +56,26 @@ public class PipeMemoryBlock implements AutoCloseable {
     return memoryUsageInBytes.get();
   }
 
-  public void setMemoryUsageInBytes(long memoryUsageInBytes) {
+  public void setMemoryUsageInBytes(final long memoryUsageInBytes) {
     this.memoryUsageInBytes.set(memoryUsageInBytes);
   }
 
-  public PipeMemoryBlock setShrinkMethod(LongUnaryOperator shrinkMethod) {
+  public PipeMemoryBlock setShrinkMethod(final LongUnaryOperator shrinkMethod) {
     this.shrinkMethod.set(shrinkMethod);
     return this;
   }
 
-  public PipeMemoryBlock setShrinkCallback(BiConsumer<Long, Long> shrinkCallback) {
+  public PipeMemoryBlock setShrinkCallback(final BiConsumer<Long, Long> shrinkCallback) {
     this.shrinkCallback.set(shrinkCallback);
     return this;
   }
 
-  public PipeMemoryBlock setExpandMethod(LongUnaryOperator extendMethod) {
+  public PipeMemoryBlock setExpandMethod(final LongUnaryOperator extendMethod) {
     this.expandMethod.set(extendMethod);
     return this;
   }
 
-  public PipeMemoryBlock setExpandCallback(BiConsumer<Long, Long> expandCallback) {
+  public PipeMemoryBlock setExpandCallback(final BiConsumer<Long, Long> expandCallback) {
     this.expandCallback.set(expandCallback);
     return this;
   }
@@ -161,7 +161,7 @@ public class PipeMemoryBlock implements AutoCloseable {
   @Override
   public String toString() {
     return "PipeMemoryBlock{"
-        + "memoryUsageInBytes="
+        + "usedMemoryInBytes="
         + memoryUsageInBytes.get()
         + ", isReleased="
         + isReleased
@@ -170,20 +170,32 @@ public class PipeMemoryBlock implements AutoCloseable {
 
   @Override
   public void close() {
+    boolean isInterrupted = false;
+
     while (true) {
       try {
         if (lock.tryLock(50, TimeUnit.MICROSECONDS)) {
           try {
             pipeMemoryManager.release(this);
+            if (isInterrupted) {
+              LOGGER.warn("{} is released after thread interruption.", this);
+            }
             break;
           } finally {
             lock.unlock();
           }
         }
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
+      } catch (final InterruptedException e) {
+        // Each time the close task is run, it means that the interrupt status left by the previous
+        // tryLock does not need to be retained. Otherwise, it will lead to an infinite loop.
+        isInterrupted = true;
         LOGGER.warn("Interrupted while waiting for the lock.", e);
       }
+    }
+
+    // Restore the interrupt status of the current thread
+    if (isInterrupted) {
+      Thread.currentThread().interrupt();
     }
   }
 }

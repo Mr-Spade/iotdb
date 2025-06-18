@@ -19,7 +19,9 @@
 
 package org.apache.iotdb.db.queryengine.execution.operator.source;
 
+import org.apache.iotdb.db.protocol.session.IClientSession;
 import org.apache.iotdb.db.queryengine.common.header.DatasetHeaderFactory;
+import org.apache.iotdb.db.queryengine.execution.MemoryEstimationHelper;
 import org.apache.iotdb.db.queryengine.execution.operator.OperatorContext;
 import org.apache.iotdb.db.queryengine.plan.Coordinator;
 import org.apache.iotdb.db.queryengine.plan.execution.IQueryExecution;
@@ -33,6 +35,7 @@ import org.apache.tsfile.read.common.block.TsBlock;
 import org.apache.tsfile.read.common.block.TsBlockBuilder;
 import org.apache.tsfile.read.common.block.column.TimeColumnBuilder;
 import org.apache.tsfile.utils.BytesUtils;
+import org.apache.tsfile.utils.RamUsageEstimator;
 
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -50,6 +53,9 @@ public class ShowQueriesOperator implements SourceOperator {
 
   private static final int DEFAULT_MAX_TSBLOCK_SIZE_IN_BYTES =
       TSFileDescriptor.getInstance().getConfig().getMaxTsBlockSizeInBytes();
+
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(ShowQueriesOperator.class);
 
   public ShowQueriesOperator(
       OperatorContext operatorContext, PlanNodeId sourceId, Coordinator coordinator) {
@@ -126,18 +132,27 @@ public class ShowQueriesOperator implements SourceOperator {
       int dataNodeId = Integer.parseInt(splits[splits.length - 1]);
 
       for (IQueryExecution queryExecution : queryExecutions) {
-        timeColumnBuilder.writeLong(
-            TimestampPrecisionUtils.convertToCurrPrecision(
-                queryExecution.getStartExecutionTime(), TimeUnit.MILLISECONDS));
-        columnBuilders[0].writeBinary(BytesUtils.valueOf(queryExecution.getQueryId()));
-        columnBuilders[1].writeInt(dataNodeId);
-        columnBuilders[2].writeFloat(
-            (float) (currTime - queryExecution.getStartExecutionTime()) / 1000);
-        columnBuilders[3].writeBinary(
-            BytesUtils.valueOf(queryExecution.getExecuteSQL().orElse("UNKNOWN")));
-        builder.declarePosition();
+        if (queryExecution.getSQLDialect().equals(IClientSession.SqlDialect.TREE)) {
+          timeColumnBuilder.writeLong(
+              TimestampPrecisionUtils.convertToCurrPrecision(
+                  queryExecution.getStartExecutionTime(), TimeUnit.MILLISECONDS));
+          columnBuilders[0].writeBinary(BytesUtils.valueOf(queryExecution.getQueryId()));
+          columnBuilders[1].writeInt(dataNodeId);
+          columnBuilders[2].writeFloat(
+              (float) (currTime - queryExecution.getStartExecutionTime()) / 1000);
+          columnBuilders[3].writeBinary(
+              BytesUtils.valueOf(queryExecution.getExecuteSQL().orElse("UNKNOWN")));
+          builder.declarePosition();
+        }
       }
     }
     return builder.build();
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE
+        + MemoryEstimationHelper.getEstimatedSizeOfAccountableObject(operatorContext)
+        + MemoryEstimationHelper.getEstimatedSizeOfAccountableObject(sourceId);
   }
 }

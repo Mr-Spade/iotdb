@@ -33,6 +33,7 @@ import org.apache.tsfile.utils.ReadWriteForEncodingUtils;
 import org.apache.tsfile.utils.ReadWriteIOUtils;
 import org.apache.tsfile.write.TsFileWriter;
 import org.apache.tsfile.write.record.Tablet;
+import org.apache.tsfile.write.schema.IMeasurementSchema;
 import org.apache.tsfile.write.schema.MeasurementSchema;
 import org.apache.tsfile.write.schema.Schema;
 import org.junit.Test;
@@ -84,7 +85,7 @@ public class TsFileSelfCheckToolTest {
       // the number of values to include in the tablet
       int sensorNum = 10;
 
-      List<MeasurementSchema> measurementSchemas = new ArrayList<>();
+      List<IMeasurementSchema> measurementSchemas = new ArrayList<>();
       // add measurements into file schema (all with INT64 data type)
       for (int i = 0; i < sensorNum; i++) {
         MeasurementSchema measurementSchema =
@@ -101,28 +102,24 @@ public class TsFileSelfCheckToolTest {
         // construct the tablet
         Tablet tablet = new Tablet(device, measurementSchemas);
 
-        long[] timestamps = tablet.timestamps;
-        Object[] values = tablet.values;
-
         long timestamp = 1;
         long value = 1000000L;
 
         for (int r = 0; r < rowNum; r++, value++) {
-          int row = tablet.rowSize++;
-          timestamps[row] = timestamp++;
+          int row = tablet.getRowSize();
+          tablet.addTimestamp(row, timestamp++);
           for (int i = 0; i < sensorNum; i++) {
-            long[] sensor = (long[]) values[i];
-            sensor[row] = value;
+            tablet.addValue(row, i, value);
           }
           // write Tablet to TsFile
-          if (tablet.rowSize == tablet.getMaxRowNumber()) {
-            tsFileWriter.write(tablet);
+          if (tablet.getRowSize() == tablet.getMaxRowNumber()) {
+            tsFileWriter.writeTree(tablet);
             tablet.reset();
           }
         }
         // write Tablet to TsFile
-        if (tablet.rowSize != 0) {
-          tsFileWriter.write(tablet);
+        if (tablet.getRowSize() != 0) {
+          tsFileWriter.writeTree(tablet);
           tablet.reset();
         }
       }
@@ -198,7 +195,7 @@ public class TsFileSelfCheckToolTest {
       // ChunkMetadata, the Statistics of ChunkMetadata here uses the Statistics of
       // TimeseriesMetadata.
       // Therefore, Chunk's Statistics error will be reported.
-      assertEquals("Chunk exists statistics mistakes at position 22", e.getMessage());
+      assertEquals("Chunk exists statistics mistakes at position 23", e.getMessage());
     }
     tearDown(filePath);
   }
@@ -216,7 +213,7 @@ public class TsFileSelfCheckToolTest {
     byte[] serialArr = bo.toByteArray();
     // timeseriesMetadata begins at 878364
     // randomly modify timeseriesMetadata region
-    raf.seek(965844);
+    raf.seek(966123);
     raf.write(serialArr, 0, serialArr.length);
     bo.close();
     raf.close();

@@ -20,12 +20,15 @@
 package org.apache.iotdb.db.storageengine.dataregion.compaction.cross;
 
 import org.apache.iotdb.commons.exception.MetadataException;
+import org.apache.iotdb.db.conf.IoTDBConfig;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.exception.StorageEngineException;
+import org.apache.iotdb.db.service.metrics.FileMetrics;
 import org.apache.iotdb.db.storageengine.dataregion.DataRegion;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.AbstractCompactionTest;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.AbstractCompactionTask;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.InsertionCrossSpaceCompactionTask;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.CompactionScheduleContext;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.CompactionWorker;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.comparator.DefaultCompactionTaskComparatorImpl;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.selector.impl.RewriteCrossSpaceCompactionSelector;
@@ -49,6 +52,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Phaser;
@@ -68,6 +73,7 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     enableInsertionCrossSpaceCompaction =
         IoTDBDescriptor.getInstance().getConfig().isEnableCrossSpaceCompaction();
     IoTDBDescriptor.getInstance().getConfig().setEnableCrossSpaceCompaction(true);
+    TsFileResourceManager.getInstance().clear();
   }
 
   @After
@@ -76,6 +82,7 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
         .getConfig()
         .setEnableCrossSpaceCompaction(enableInsertionCrossSpaceCompaction);
     super.tearDown();
+    TsFileResourceManager.getInstance().clear();
   }
 
   @Test
@@ -94,7 +101,8 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     unseqResource1.setStatusForTest(TsFileResourceStatus.NORMAL);
 
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+        new RewriteCrossSpaceCompactionSelector(
+            COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     seqResources.add(seqResource1);
     seqResources.add(seqResource2);
     unseqResources.add(unseqResource1);
@@ -122,6 +130,9 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     long timestamp = TsFileNameGenerator.getTsFileName(targetFile.getTsFile().getName()).getTime();
     Assert.assertEquals(2, timestamp);
     Assert.assertTrue(tsFileManager.getTsFileList(false).isEmpty());
+    Assert.assertEquals(
+        tsFileManager.size(true) + tsFileManager.size(false),
+        TsFileResourceManager.getInstance().getPriorityQueueSize());
   }
 
   @Test
@@ -136,7 +147,8 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     unseqResource1.setStatusForTest(TsFileResourceStatus.NORMAL);
 
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+        new RewriteCrossSpaceCompactionSelector(
+            COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     seqResources.add(seqResource1);
     unseqResources.add(unseqResource1);
     tsFileManager.addAll(seqResources, true);
@@ -162,6 +174,9 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     TsFileResource targetFile = tsFileManager.getTsFileList(true).get(1);
     long timestamp = TsFileNameGenerator.getTsFileName(targetFile.getTsFile().getName()).getTime();
     Assert.assertEquals(2, timestamp);
+    Assert.assertEquals(
+        tsFileManager.size(true) + tsFileManager.size(false),
+        TsFileResourceManager.getInstance().getPriorityQueueSize());
   }
 
   @Test
@@ -176,7 +191,8 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     unseqResource1.setStatusForTest(TsFileResourceStatus.NORMAL);
 
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+        new RewriteCrossSpaceCompactionSelector(
+            COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     seqResources.add(seqResource1);
     unseqResources.add(unseqResource1);
     tsFileManager.addAll(seqResources, true);
@@ -202,6 +218,9 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     TsFileResource targetFile = tsFileManager.getTsFileList(true).get(0);
     long timestamp = TsFileNameGenerator.getTsFileName(targetFile.getTsFile().getName()).getTime();
     Assert.assertEquals(0, timestamp);
+    Assert.assertEquals(
+        tsFileManager.size(true) + tsFileManager.size(false),
+        TsFileResourceManager.getInstance().getPriorityQueueSize());
   }
 
   @Test
@@ -220,7 +239,8 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     unseqResource1.setStatusForTest(TsFileResourceStatus.NORMAL);
 
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+        new RewriteCrossSpaceCompactionSelector(
+            COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     seqResources.add(seqResource1);
     seqResources.add(seqResource2);
     unseqResources.add(unseqResource1);
@@ -248,6 +268,9 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     long timestamp = TsFileNameGenerator.getTsFileName(targetFile.getTsFile().getName()).getTime();
     Assert.assertEquals(4, timestamp);
     Assert.assertTrue(tsFileManager.getTsFileList(false).isEmpty());
+    Assert.assertEquals(
+        tsFileManager.size(true) + tsFileManager.size(false),
+        TsFileResourceManager.getInstance().getPriorityQueueSize());
   }
 
   @Test
@@ -258,7 +281,8 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     unseqResource1.setStatusForTest(TsFileResourceStatus.NORMAL);
 
     RewriteCrossSpaceCompactionSelector selector =
-        new RewriteCrossSpaceCompactionSelector(COMPACTION_TEST_SG, "0", 0, tsFileManager);
+        new RewriteCrossSpaceCompactionSelector(
+            COMPACTION_TEST_SG, "0", 0, tsFileManager, new CompactionScheduleContext());
     unseqResources.add(unseqResource1);
     tsFileManager.addAll(seqResources, true);
     tsFileManager.addAll(unseqResources, false);
@@ -282,6 +306,9 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     TsFileResource targetFile = tsFileManager.getTsFileList(true).get(0);
     long timestamp = TsFileNameGenerator.getTsFileName(targetFile.getTsFile().getName()).getTime();
     Assert.assertEquals(2, timestamp);
+    Assert.assertEquals(
+        tsFileManager.size(true) + tsFileManager.size(false),
+        TsFileResourceManager.getInstance().getPriorityQueueSize());
   }
 
   @Test
@@ -331,6 +358,9 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     TsFileResource targetFile2 = tsFileManager.getTsFileList(true).get(2);
     timestamp = TsFileNameGenerator.getTsFileName(targetFile2.getTsFile().getName()).getTime();
     Assert.assertEquals(6, timestamp);
+    Assert.assertEquals(
+        tsFileManager.size(true) + tsFileManager.size(false),
+        TsFileResourceManager.getInstance().getPriorityQueueSize());
   }
 
   @Test
@@ -369,6 +399,9 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     TsFileResource targetFile3 = tsFileManager.getTsFileList(true).get(2);
     timestamp = TsFileNameGenerator.getTsFileName(targetFile3.getTsFile().getName()).getTime();
     Assert.assertEquals(4, timestamp);
+    Assert.assertEquals(
+        tsFileManager.size(true) + tsFileManager.size(false),
+        TsFileResourceManager.getInstance().getPriorityQueueSize());
   }
 
   @Test
@@ -414,10 +447,13 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     TsFileResource targetFile2 = tsFileManager.getTsFileList(true).get(1);
     timestamp = TsFileNameGenerator.getTsFileName(targetFile2.getTsFile().getName()).getTime();
     Assert.assertEquals(2, timestamp);
+    Assert.assertEquals(
+        tsFileManager.size(true) + tsFileManager.size(false),
+        TsFileResourceManager.getInstance().getPriorityQueueSize());
   }
 
   @Test
-  public void testInsertionCompactionScheduleWithMultiTimePartitions()
+  public void testInsertionCompactionScheduleWithMultiTimePartitions1()
       throws IOException, InterruptedException {
     TsFileResource unseqResource1 =
         generateSingleNonAlignedSeriesFileWithDevices(
@@ -464,6 +500,119 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     TsFileResource targetFile3 = tsFileManager.getOrCreateSequenceListByTimePartition(2808).get(0);
     timestamp = TsFileNameGenerator.getTsFileName(targetFile3.getTsFile().getName()).getTime();
     Assert.assertEquals(4, timestamp);
+    Assert.assertEquals(
+        tsFileManager.size(true) + tsFileManager.size(false),
+        TsFileResourceManager.getInstance().getPriorityQueueSize());
+  }
+
+  @Test
+  public void testInsertionCompactionScheduleWithMultiTimePartitions2()
+      throws IOException, InterruptedException {
+    IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
+    int innerCompactionCandidateFileNum = config.getInnerCompactionCandidateFileNum();
+    config.setInnerCompactionCandidateFileNum(2);
+    try {
+      TsFileResource unseqResource1 =
+          generateSingleNonAlignedSeriesFileWithDevices(
+              "2-2-0-0.tsfile", new String[] {"d1"}, new TimeRange[] {new TimeRange(1, 4)}, false);
+      unseqResource1.setStatusForTest(TsFileResourceStatus.NORMAL);
+
+      TsFileResource unseqResource2 =
+          generateSingleNonAlignedSeriesFileWithDevices(
+              "3-3-0-0.tsfile", new String[] {"d1"}, new TimeRange[] {new TimeRange(6, 9)}, false);
+      unseqResource2.setStatusForTest(TsFileResourceStatus.NORMAL);
+      createTimePartitionDirIfNotExist(2808L);
+      TsFileResource unseqResource3 =
+          generateSingleNonAlignedSeriesFileWithDevicesWithTimePartition(
+              "4-4-0-0.tsfile",
+              new String[] {"d1"},
+              new TimeRange[] {new TimeRange(1698301490305L, 1698301490405L)},
+              2808L,
+              true);
+      TsFileResource unseqResource4 =
+          generateSingleNonAlignedSeriesFileWithDevicesWithTimePartition(
+              "5-5-0-0.tsfile",
+              new String[] {"d1"},
+              new TimeRange[] {new TimeRange(1698301490306L, 1698301490406L)},
+              2808L,
+              true);
+      unseqResource3.setStatusForTest(TsFileResourceStatus.NORMAL);
+      unseqResources.add(unseqResource1);
+      unseqResources.add(unseqResource2);
+      seqResources.add(unseqResource3);
+      seqResources.add(unseqResource4);
+
+      DataRegionForCompactionTest dataRegion = createDataRegion();
+      TsFileManager tsFileManager = dataRegion.getTsFileManager();
+      TsFileResourceManager.getInstance().registerSealedTsFileResource(unseqResource1);
+      TsFileResourceManager.getInstance().registerSealedTsFileResource(unseqResource2);
+      TsFileResourceManager.getInstance().registerSealedTsFileResource(unseqResource3);
+      TsFileResourceManager.getInstance().registerSealedTsFileResource(unseqResource4);
+      tsFileManager.getOrCreateUnsequenceListByTimePartition(0).keepOrderInsert(unseqResource1);
+      tsFileManager.getOrCreateUnsequenceListByTimePartition(0).keepOrderInsert(unseqResource2);
+      tsFileManager.getOrCreateSequenceListByTimePartition(2808).keepOrderInsert(unseqResource3);
+      tsFileManager.getOrCreateSequenceListByTimePartition(2808).keepOrderInsert(unseqResource4);
+      // 2 insertion task + 1 inner task
+      Assert.assertEquals(3, dataRegion.executeCompaction());
+    } finally {
+      config.setInnerCompactionCandidateFileNum(innerCompactionCandidateFileNum);
+    }
+  }
+
+  @Test
+  public void testInsertionCompactionUpdateFileMetrics() throws IOException {
+    TsFileResource unseqResource1 =
+        generateSingleNonAlignedSeriesFileWithDevices(
+            "2-2-0-0.tsfile", new String[] {"d1"}, new TimeRange[] {new TimeRange(1, 4)}, false);
+    FileMetrics.getInstance()
+        .addTsFile(
+            unseqResource1.getDatabaseName(),
+            unseqResource1.getDataRegionId(),
+            unseqResource1.getTsFileSize(),
+            false,
+            unseqResource1.getTsFile().getName());
+
+    long seqFileNumBeforeCompaction = FileMetrics.getInstance().getFileCount(true);
+    long unseqFileNumBeforeCompaction = FileMetrics.getInstance().getFileCount(false);
+
+    InsertionCrossCompactionTaskResource taskResource = new InsertionCrossCompactionTaskResource();
+    taskResource.setToInsertUnSeqFile(unseqResource1);
+    InsertionCrossSpaceCompactionTask task =
+        new InsertionCrossSpaceCompactionTask(null, 0, tsFileManager, taskResource, 0);
+    Assert.assertTrue(task.start());
+    Assert.assertEquals(
+        seqFileNumBeforeCompaction + 1, FileMetrics.getInstance().getFileCount(true));
+    Assert.assertEquals(
+        unseqFileNumBeforeCompaction - 1, FileMetrics.getInstance().getFileCount(false));
+
+    TsFileResource unseqResource2 =
+        generateSingleNonAlignedSeriesFileWithDevices(
+            "3-3-0-0.tsfile", new String[] {"d1"}, new TimeRange[] {new TimeRange(5, 6)}, false);
+    FileMetrics.getInstance()
+        .addTsFile(
+            unseqResource2.getDatabaseName(),
+            unseqResource2.getDataRegionId(),
+            unseqResource2.getTsFileSize(),
+            false,
+            unseqResource2.getTsFile().getName());
+
+    seqFileNumBeforeCompaction = FileMetrics.getInstance().getFileCount(true);
+    unseqFileNumBeforeCompaction = FileMetrics.getInstance().getFileCount(false);
+
+    taskResource = new InsertionCrossCompactionTaskResource();
+    taskResource.setToInsertUnSeqFile(unseqResource2);
+    task = new InsertionCrossSpaceCompactionTask(null, 0, tsFileManager, taskResource, 0);
+    // .resource file not found
+    Files.deleteIfExists(
+        Paths.get(unseqResource2.getTsFilePath() + TsFileResource.RESOURCE_SUFFIX));
+    // rollback
+    Assert.assertFalse(task.start());
+    Assert.assertEquals(seqFileNumBeforeCompaction, FileMetrics.getInstance().getFileCount(true));
+    Assert.assertEquals(
+        unseqFileNumBeforeCompaction, FileMetrics.getInstance().getFileCount(false));
+    Assert.assertEquals(
+        tsFileManager.size(true) + tsFileManager.size(false),
+        TsFileResourceManager.getInstance().getPriorityQueueSize());
   }
 
   public TsFileResource generateSingleNonAlignedSeriesFileWithDevices(
@@ -512,8 +661,10 @@ public class InsertionCrossSpaceCompactionTest extends AbstractCompactionTest {
     }
 
     public int executeInsertionCompaction() throws InterruptedException {
-      return super.executeInsertionCompaction(
-          new ArrayList<>(this.getTsFileManager().getTimePartitions()));
+      CompactionScheduleContext context = new CompactionScheduleContext();
+      super.executeInsertionCompaction(
+          new ArrayList<>(this.getTsFileManager().getTimePartitions()), context);
+      return context.getSubmitCompactionTaskNum();
     }
   }
 }

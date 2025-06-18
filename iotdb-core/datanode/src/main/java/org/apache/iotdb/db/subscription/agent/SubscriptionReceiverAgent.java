@@ -20,6 +20,7 @@
 package org.apache.iotdb.db.subscription.agent;
 
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
+import org.apache.iotdb.commons.subscription.config.SubscriptionConfig;
 import org.apache.iotdb.db.subscription.receiver.SubscriptionReceiver;
 import org.apache.iotdb.db.subscription.receiver.SubscriptionReceiverV1;
 import org.apache.iotdb.rpc.RpcUtils;
@@ -51,7 +52,7 @@ public class SubscriptionReceiverAgent {
         PipeSubscribeRequestVersion.VERSION_1.getVersion(), SubscriptionReceiverV1::new);
   }
 
-  public TPipeSubscribeResp handle(TPipeSubscribeReq req) {
+  public TPipeSubscribeResp handle(final TPipeSubscribeReq req) {
     final byte reqVersion = req.getVersion();
     if (RECEIVER_CONSTRUCTORS.containsKey(reqVersion)) {
       return getReceiver(reqVersion).handle(req);
@@ -69,7 +70,19 @@ public class SubscriptionReceiverAgent {
     }
   }
 
-  private SubscriptionReceiver getReceiver(byte reqVersion) {
+  public long remainingMs() {
+    return remainingMs(PipeSubscribeRequestVersion.VERSION_1.getVersion()); // default to VERSION_1
+  }
+
+  public long remainingMs(final byte reqVersion) {
+    if (RECEIVER_CONSTRUCTORS.containsKey(reqVersion)) {
+      return getReceiver(reqVersion).remainingMs();
+    } else {
+      return SubscriptionConfig.getInstance().getSubscriptionDefaultTimeoutInMs();
+    }
+  }
+
+  private SubscriptionReceiver getReceiver(final byte reqVersion) {
     if (receiverThreadLocal.get() == null) {
       return setAndGetReceiver(reqVersion);
     }
@@ -88,7 +101,7 @@ public class SubscriptionReceiverAgent {
     return receiverThreadLocal.get();
   }
 
-  private SubscriptionReceiver setAndGetReceiver(byte reqVersion) {
+  private SubscriptionReceiver setAndGetReceiver(final byte reqVersion) {
     if (RECEIVER_CONSTRUCTORS.containsKey(reqVersion)) {
       receiverThreadLocal.set(RECEIVER_CONSTRUCTORS.get(reqVersion).get());
     } else {

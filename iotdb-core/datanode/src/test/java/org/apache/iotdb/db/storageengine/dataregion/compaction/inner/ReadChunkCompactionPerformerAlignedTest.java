@@ -19,11 +19,14 @@
 
 package org.apache.iotdb.db.storageengine.dataregion.compaction.inner;
 
-import org.apache.iotdb.commons.path.AlignedPath;
+import org.apache.iotdb.commons.path.AlignedFullPath;
+import org.apache.iotdb.commons.path.IFullPath;
+import org.apache.iotdb.commons.path.MeasurementPath;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.storageengine.buffer.ChunkCache;
 import org.apache.iotdb.db.storageengine.buffer.TimeSeriesMetadataCache;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.TestUtilsForAlignedSeries;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.constant.CompactionTaskType;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.performer.ICompactionPerformer;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.performer.impl.ReadChunkCompactionPerformer;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.CompactionTaskSummary;
@@ -31,7 +34,7 @@ import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.Com
 import org.apache.iotdb.db.storageengine.dataregion.compaction.utils.CompactionCheckerUtils;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.utils.CompactionConfigRestorer;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.utils.CompactionFileGeneratorUtils;
-import org.apache.iotdb.db.storageengine.dataregion.modification.Deletion;
+import org.apache.iotdb.db.storageengine.dataregion.modification.TreeDeletionEntry;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResourceStatus;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.generator.TsFileNameGenerator;
@@ -41,7 +44,7 @@ import org.apache.iotdb.db.utils.constant.TestConstant;
 import org.apache.commons.io.FileUtils;
 import org.apache.tsfile.common.conf.TSFileConfig;
 import org.apache.tsfile.enums.TSDataType;
-import org.apache.tsfile.file.metadata.PlainDeviceID;
+import org.apache.tsfile.file.metadata.IDeviceID;
 import org.apache.tsfile.read.TimeValuePair;
 import org.apache.tsfile.utils.Binary;
 import org.apache.tsfile.utils.Pair;
@@ -132,32 +135,32 @@ public class ReadChunkCompactionPerformerAlignedTest {
     }
     TsFileResource targetResource =
         TsFileNameGenerator.getInnerCompactionTargetFileResource(resources, true);
-    List<PartialPath> fullPaths = new ArrayList<>();
+    List<IFullPath> fullPaths = new ArrayList<>();
     List<IMeasurementSchema> iMeasurementSchemas = new ArrayList<>();
     List<String> measurementIds = new ArrayList<>();
     schemas.forEach(
         (e) -> {
-          measurementIds.add(e.getMeasurementId());
+          measurementIds.add(e.getMeasurementName());
         });
     for (String device : devices) {
       iMeasurementSchemas.addAll(schemas);
-      fullPaths.add(new AlignedPath(device, measurementIds, schemas));
+      fullPaths.add(
+          new AlignedFullPath(
+              IDeviceID.Factory.DEFAULT_FACTORY.create(device), measurementIds, schemas));
     }
-    Map<PartialPath, List<TimeValuePair>> originData =
-        CompactionCheckerUtils.getDataByQuery(
-            fullPaths, iMeasurementSchemas, resources, new ArrayList<>());
+    Map<IFullPath, List<TimeValuePair>> originData =
+        CompactionCheckerUtils.getDataByQuery(fullPaths, resources, new ArrayList<>());
     performer.setSourceFiles(resources);
     performer.setTargetFiles(Collections.singletonList(targetResource));
     performer.setSummary(new CompactionTaskSummary());
     performer.perform();
-    CompactionUtils.moveTargetFile(Collections.singletonList(targetResource), true, storageGroup);
-    CompactionUtils.moveTargetFile(Collections.singletonList(targetResource), true, storageGroup);
-    Map<PartialPath, List<TimeValuePair>> compactedData =
+    CompactionUtils.moveTargetFile(
+        Collections.singletonList(targetResource), CompactionTaskType.INNER_SEQ, storageGroup);
+    CompactionUtils.moveTargetFile(
+        Collections.singletonList(targetResource), CompactionTaskType.INNER_SEQ, storageGroup);
+    Map<IFullPath, List<TimeValuePair>> compactedData =
         CompactionCheckerUtils.getDataByQuery(
-            fullPaths,
-            iMeasurementSchemas,
-            Collections.singletonList(targetResource),
-            new ArrayList<>());
+            fullPaths, Collections.singletonList(targetResource), new ArrayList<>());
     CompactionCheckerUtils.validDataByValueList(originData, compactedData);
   }
 
@@ -206,31 +209,30 @@ public class ReadChunkCompactionPerformerAlignedTest {
     }
     TsFileResource targetResource =
         TsFileNameGenerator.getInnerCompactionTargetFileResource(resources, true);
-    List<PartialPath> fullPaths = new ArrayList<>();
+    List<IFullPath> fullPaths = new ArrayList<>();
     List<IMeasurementSchema> iMeasurementSchemas = new ArrayList<>();
     List<String> measurementIds = new ArrayList<>();
     schemas.forEach(
         (e) -> {
-          measurementIds.add(e.getMeasurementId());
+          measurementIds.add(e.getMeasurementName());
         });
     for (String device : devices) {
       iMeasurementSchemas.addAll(schemas);
-      fullPaths.add(new AlignedPath(device, measurementIds, schemas));
+      fullPaths.add(
+          new AlignedFullPath(
+              IDeviceID.Factory.DEFAULT_FACTORY.create(device), measurementIds, schemas));
     }
-    Map<PartialPath, List<TimeValuePair>> originData =
-        CompactionCheckerUtils.getDataByQuery(
-            fullPaths, iMeasurementSchemas, resources, new ArrayList<>());
+    Map<IFullPath, List<TimeValuePair>> originData =
+        CompactionCheckerUtils.getDataByQuery(fullPaths, resources, new ArrayList<>());
     performer.setSourceFiles(resources);
     performer.setTargetFiles(Collections.singletonList(targetResource));
     performer.setSummary(new CompactionTaskSummary());
     performer.perform();
-    CompactionUtils.moveTargetFile(Collections.singletonList(targetResource), true, storageGroup);
-    Map<PartialPath, List<TimeValuePair>> compactedData =
+    CompactionUtils.moveTargetFile(
+        Collections.singletonList(targetResource), CompactionTaskType.INNER_SEQ, storageGroup);
+    Map<IFullPath, List<TimeValuePair>> compactedData =
         CompactionCheckerUtils.getDataByQuery(
-            fullPaths,
-            iMeasurementSchemas,
-            Collections.singletonList(targetResource),
-            new ArrayList<>());
+            fullPaths, Collections.singletonList(targetResource), new ArrayList<>());
     CompactionCheckerUtils.validDataByValueList(originData, compactedData);
   }
 
@@ -273,31 +275,30 @@ public class ReadChunkCompactionPerformerAlignedTest {
     }
     TsFileResource targetResource =
         TsFileNameGenerator.getInnerCompactionTargetFileResource(resources, true);
-    List<PartialPath> fullPaths = new ArrayList<>();
+    List<IFullPath> fullPaths = new ArrayList<>();
     List<IMeasurementSchema> iMeasurementSchemas = new ArrayList<>();
     List<String> measurementIds = new ArrayList<>();
     schemas.forEach(
         (e) -> {
-          measurementIds.add(e.getMeasurementId());
+          measurementIds.add(e.getMeasurementName());
         });
     for (String device : devices) {
       iMeasurementSchemas.addAll(schemas);
-      fullPaths.add(new AlignedPath(device, measurementIds, schemas));
+      fullPaths.add(
+          new AlignedFullPath(
+              IDeviceID.Factory.DEFAULT_FACTORY.create(device), measurementIds, schemas));
     }
-    Map<PartialPath, List<TimeValuePair>> originData =
-        CompactionCheckerUtils.getDataByQuery(
-            fullPaths, iMeasurementSchemas, resources, new ArrayList<>());
+    Map<IFullPath, List<TimeValuePair>> originData =
+        CompactionCheckerUtils.getDataByQuery(fullPaths, resources, new ArrayList<>());
     performer.setSourceFiles(resources);
     performer.setTargetFiles(Collections.singletonList(targetResource));
     performer.setSummary(new CompactionTaskSummary());
     performer.perform();
-    CompactionUtils.moveTargetFile(Collections.singletonList(targetResource), true, storageGroup);
-    Map<PartialPath, List<TimeValuePair>> compactedData =
+    CompactionUtils.moveTargetFile(
+        Collections.singletonList(targetResource), CompactionTaskType.INNER_SEQ, storageGroup);
+    Map<IFullPath, List<TimeValuePair>> compactedData =
         CompactionCheckerUtils.getDataByQuery(
-            fullPaths,
-            iMeasurementSchemas,
-            Collections.singletonList(targetResource),
-            new ArrayList<>());
+            fullPaths, Collections.singletonList(targetResource), new ArrayList<>());
     CompactionCheckerUtils.validDataByValueList(originData, compactedData);
   }
 
@@ -343,31 +344,30 @@ public class ReadChunkCompactionPerformerAlignedTest {
     }
     TsFileResource targetResource =
         TsFileNameGenerator.getInnerCompactionTargetFileResource(resources, true);
-    List<PartialPath> fullPaths = new ArrayList<>();
+    List<IFullPath> fullPaths = new ArrayList<>();
     List<IMeasurementSchema> iMeasurementSchemas = new ArrayList<>();
     List<String> measurementIds = new ArrayList<>();
     schemas.forEach(
         (e) -> {
-          measurementIds.add(e.getMeasurementId());
+          measurementIds.add(e.getMeasurementName());
         });
     for (String device : devices) {
       iMeasurementSchemas.addAll(schemas);
-      fullPaths.add(new AlignedPath(device, measurementIds, schemas));
+      fullPaths.add(
+          new AlignedFullPath(
+              IDeviceID.Factory.DEFAULT_FACTORY.create(device), measurementIds, schemas));
     }
-    Map<PartialPath, List<TimeValuePair>> originData =
-        CompactionCheckerUtils.getDataByQuery(
-            fullPaths, iMeasurementSchemas, resources, new ArrayList<>());
+    Map<IFullPath, List<TimeValuePair>> originData =
+        CompactionCheckerUtils.getDataByQuery(fullPaths, resources, new ArrayList<>());
     performer.setSourceFiles(resources);
     performer.setTargetFiles(Collections.singletonList(targetResource));
     performer.setSummary(new CompactionTaskSummary());
     performer.perform();
-    CompactionUtils.moveTargetFile(Collections.singletonList(targetResource), true, storageGroup);
-    Map<PartialPath, List<TimeValuePair>> compactedData =
+    CompactionUtils.moveTargetFile(
+        Collections.singletonList(targetResource), CompactionTaskType.INNER_SEQ, storageGroup);
+    Map<IFullPath, List<TimeValuePair>> compactedData =
         CompactionCheckerUtils.getDataByQuery(
-            fullPaths,
-            iMeasurementSchemas,
-            Collections.singletonList(targetResource),
-            new ArrayList<>());
+            fullPaths, Collections.singletonList(targetResource), new ArrayList<>());
     CompactionCheckerUtils.validDataByValueList(originData, compactedData);
   }
 
@@ -411,31 +411,30 @@ public class ReadChunkCompactionPerformerAlignedTest {
     }
     TsFileResource targetResource =
         TsFileNameGenerator.getInnerCompactionTargetFileResource(resources, true);
-    List<PartialPath> fullPaths = new ArrayList<>();
+    List<IFullPath> fullPaths = new ArrayList<>();
     List<IMeasurementSchema> iMeasurementSchemas = new ArrayList<>();
     List<String> measurementIds = new ArrayList<>();
     schemas.forEach(
         (e) -> {
-          measurementIds.add(e.getMeasurementId());
+          measurementIds.add(e.getMeasurementName());
         });
     for (String device : devices) {
       iMeasurementSchemas.addAll(schemas);
-      fullPaths.add(new AlignedPath(device, measurementIds, schemas));
+      fullPaths.add(
+          new AlignedFullPath(
+              IDeviceID.Factory.DEFAULT_FACTORY.create(device), measurementIds, schemas));
     }
-    Map<PartialPath, List<TimeValuePair>> originData =
-        CompactionCheckerUtils.getDataByQuery(
-            fullPaths, iMeasurementSchemas, resources, new ArrayList<>());
+    Map<IFullPath, List<TimeValuePair>> originData =
+        CompactionCheckerUtils.getDataByQuery(fullPaths, resources, new ArrayList<>());
     performer.setSourceFiles(resources);
     performer.setTargetFiles(Collections.singletonList(targetResource));
     performer.setSummary(new CompactionTaskSummary());
     performer.perform();
-    CompactionUtils.moveTargetFile(Collections.singletonList(targetResource), true, storageGroup);
-    Map<PartialPath, List<TimeValuePair>> compactedData =
+    CompactionUtils.moveTargetFile(
+        Collections.singletonList(targetResource), CompactionTaskType.INNER_SEQ, storageGroup);
+    Map<IFullPath, List<TimeValuePair>> compactedData =
         CompactionCheckerUtils.getDataByQuery(
-            fullPaths,
-            iMeasurementSchemas,
-            Collections.singletonList(targetResource),
-            new ArrayList<>());
+            fullPaths, Collections.singletonList(targetResource), new ArrayList<>());
     CompactionCheckerUtils.validDataByValueList(originData, compactedData);
   }
 
@@ -481,31 +480,30 @@ public class ReadChunkCompactionPerformerAlignedTest {
     }
     TsFileResource targetResource =
         TsFileNameGenerator.getInnerCompactionTargetFileResource(resources, true);
-    List<PartialPath> fullPaths = new ArrayList<>();
+    List<IFullPath> fullPaths = new ArrayList<>();
     List<IMeasurementSchema> iMeasurementSchemas = new ArrayList<>();
     List<String> measurementIds = new ArrayList<>();
     schemas.forEach(
         (e) -> {
-          measurementIds.add(e.getMeasurementId());
+          measurementIds.add(e.getMeasurementName());
         });
     for (String device : devices) {
       iMeasurementSchemas.addAll(schemas);
-      fullPaths.add(new AlignedPath(device, measurementIds, schemas));
+      fullPaths.add(
+          new AlignedFullPath(
+              IDeviceID.Factory.DEFAULT_FACTORY.create(device), measurementIds, schemas));
     }
-    Map<PartialPath, List<TimeValuePair>> originData =
-        CompactionCheckerUtils.getDataByQuery(
-            fullPaths, iMeasurementSchemas, resources, new ArrayList<>());
+    Map<IFullPath, List<TimeValuePair>> originData =
+        CompactionCheckerUtils.getDataByQuery(fullPaths, resources, new ArrayList<>());
     performer.setSourceFiles(resources);
     performer.setTargetFiles(Collections.singletonList(targetResource));
     performer.setSummary(new CompactionTaskSummary());
     performer.perform();
-    CompactionUtils.moveTargetFile(Collections.singletonList(targetResource), true, storageGroup);
-    Map<PartialPath, List<TimeValuePair>> compactedData =
+    CompactionUtils.moveTargetFile(
+        Collections.singletonList(targetResource), CompactionTaskType.INNER_SEQ, storageGroup);
+    Map<IFullPath, List<TimeValuePair>> compactedData =
         CompactionCheckerUtils.getDataByQuery(
-            fullPaths,
-            iMeasurementSchemas,
-            Collections.singletonList(targetResource),
-            new ArrayList<>());
+            fullPaths, Collections.singletonList(targetResource), new ArrayList<>());
     CompactionCheckerUtils.validDataByValueList(originData, compactedData);
   }
 
@@ -552,31 +550,30 @@ public class ReadChunkCompactionPerformerAlignedTest {
     }
     TsFileResource targetResource =
         TsFileNameGenerator.getInnerCompactionTargetFileResource(resources, true);
-    List<PartialPath> fullPaths = new ArrayList<>();
+    List<IFullPath> fullPaths = new ArrayList<>();
     List<IMeasurementSchema> iMeasurementSchemas = new ArrayList<>();
     List<String> measurementIds = new ArrayList<>();
     schemas.forEach(
         (e) -> {
-          measurementIds.add(e.getMeasurementId());
+          measurementIds.add(e.getMeasurementName());
         });
     for (String device : devices) {
       iMeasurementSchemas.addAll(schemas);
-      fullPaths.add(new AlignedPath(device, measurementIds, schemas));
+      fullPaths.add(
+          new AlignedFullPath(
+              IDeviceID.Factory.DEFAULT_FACTORY.create(device), measurementIds, schemas));
     }
-    Map<PartialPath, List<TimeValuePair>> originData =
-        CompactionCheckerUtils.getDataByQuery(
-            fullPaths, iMeasurementSchemas, resources, new ArrayList<>());
+    Map<IFullPath, List<TimeValuePair>> originData =
+        CompactionCheckerUtils.getDataByQuery(fullPaths, resources, new ArrayList<>());
     performer.setSourceFiles(resources);
     performer.setTargetFiles(Collections.singletonList(targetResource));
     performer.setSummary(new CompactionTaskSummary());
     performer.perform();
-    CompactionUtils.moveTargetFile(Collections.singletonList(targetResource), true, storageGroup);
-    Map<PartialPath, List<TimeValuePair>> compactedData =
+    CompactionUtils.moveTargetFile(
+        Collections.singletonList(targetResource), CompactionTaskType.INNER_SEQ, storageGroup);
+    Map<IFullPath, List<TimeValuePair>> compactedData =
         CompactionCheckerUtils.getDataByQuery(
-            fullPaths,
-            iMeasurementSchemas,
-            Collections.singletonList(targetResource),
-            new ArrayList<>());
+            fullPaths, Collections.singletonList(targetResource), new ArrayList<>());
     CompactionCheckerUtils.validDataByValueList(originData, compactedData);
   }
 
@@ -634,31 +631,30 @@ public class ReadChunkCompactionPerformerAlignedTest {
     resources.add(resource);
     TsFileResource targetResource =
         TsFileNameGenerator.getInnerCompactionTargetFileResource(resources, true);
-    List<PartialPath> fullPaths = new ArrayList<>();
+    List<IFullPath> fullPaths = new ArrayList<>();
     List<IMeasurementSchema> iMeasurementSchemas = new ArrayList<>();
     List<String> measurementIds = new ArrayList<>();
     schemas.forEach(
         (e) -> {
-          measurementIds.add(e.getMeasurementId());
+          measurementIds.add(e.getMeasurementName());
         });
     for (String device : devices) {
       iMeasurementSchemas.addAll(schemas);
-      fullPaths.add(new AlignedPath(device, measurementIds, schemas));
+      fullPaths.add(
+          new AlignedFullPath(
+              IDeviceID.Factory.DEFAULT_FACTORY.create(device), measurementIds, schemas));
     }
-    Map<PartialPath, List<TimeValuePair>> originData =
-        CompactionCheckerUtils.getDataByQuery(
-            fullPaths, iMeasurementSchemas, resources, new ArrayList<>());
+    Map<IFullPath, List<TimeValuePair>> originData =
+        CompactionCheckerUtils.getDataByQuery(fullPaths, resources, new ArrayList<>());
     performer.setSourceFiles(resources);
     performer.setTargetFiles(Collections.singletonList(targetResource));
     performer.setSummary(new CompactionTaskSummary());
     performer.perform();
-    CompactionUtils.moveTargetFile(Collections.singletonList(targetResource), true, storageGroup);
-    Map<PartialPath, List<TimeValuePair>> compactedData =
+    CompactionUtils.moveTargetFile(
+        Collections.singletonList(targetResource), CompactionTaskType.INNER_SEQ, storageGroup);
+    Map<IFullPath, List<TimeValuePair>> compactedData =
         CompactionCheckerUtils.getDataByQuery(
-            fullPaths,
-            iMeasurementSchemas,
-            Collections.singletonList(targetResource),
-            new ArrayList<>());
+            fullPaths, Collections.singletonList(targetResource), new ArrayList<>());
     CompactionCheckerUtils.validDataByValueList(originData, compactedData);
   }
 
@@ -702,15 +698,15 @@ public class ReadChunkCompactionPerformerAlignedTest {
             .add(new TimeValuePair(j, values[5]));
         alignedChunkWriter.write(j, values);
       }
-      writer.startChunkGroup(new PlainDeviceID("root.sg.d1"));
+      writer.startChunkGroup(IDeviceID.Factory.DEFAULT_FACTORY.create("root.sg.d1"));
       alignedChunkWriter.writeToFileWriter(writer);
       writer.endChunkGroup();
       writer.endFile();
       TsFileResource resource = new TsFileResource(writer.getFile(), TsFileResourceStatus.NORMAL);
       resource
-          .getModFile()
-          .write(new Deletion(new PartialPath("root.sg.d1.*"), i * 100, i * 100 + 20));
-      resource.getModFile().close();
+          .getModFileForWrite()
+          .write(new TreeDeletionEntry(new MeasurementPath("root.sg.d1.*"), i * 100, i * 100 + 20));
+      resource.getModFileForWrite().close();
       int finalI = i;
       originData.forEach(
           (x, y) ->

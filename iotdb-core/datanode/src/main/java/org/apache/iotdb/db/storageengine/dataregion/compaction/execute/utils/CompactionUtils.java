@@ -21,12 +21,24 @@ package org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils;
 
 import org.apache.iotdb.commons.conf.CommonDescriptor;
 import org.apache.iotdb.commons.conf.IoTDBConstant;
+import org.apache.iotdb.commons.exception.IllegalPathException;
+import org.apache.iotdb.commons.path.MeasurementPath;
 import org.apache.iotdb.commons.service.metric.MetricService;
 import org.apache.iotdb.commons.service.metric.enums.Tag;
+import org.apache.iotdb.commons.utils.TestOnly;
+import org.apache.iotdb.db.service.metrics.CompactionMetrics;
 import org.apache.iotdb.db.service.metrics.FileMetrics;
-import org.apache.iotdb.db.storageengine.dataregion.modification.Modification;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.constant.CompactionTaskType;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.CompactionTaskManager;
+import org.apache.iotdb.db.storageengine.dataregion.modification.DeletionPredicate;
+import org.apache.iotdb.db.storageengine.dataregion.modification.IDPredicate.FullExactMatch;
+import org.apache.iotdb.db.storageengine.dataregion.modification.ModEntry;
+import org.apache.iotdb.db.storageengine.dataregion.modification.ModFileManagement;
 import org.apache.iotdb.db.storageengine.dataregion.modification.ModificationFile;
+import org.apache.iotdb.db.storageengine.dataregion.modification.TableDeletionEntry;
+import org.apache.iotdb.db.storageengine.dataregion.modification.TreeDeletionEntry;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
+import org.apache.iotdb.db.storageengine.dataregion.tsfile.timeindex.ArrayDeviceTimeIndex;
 import org.apache.iotdb.metrics.utils.MetricLevel;
 import org.apache.iotdb.metrics.utils.SystemMetric;
 
@@ -34,17 +46,19 @@ import org.apache.tsfile.common.constant.TsFileConstant;
 import org.apache.tsfile.file.metadata.ChunkMetadata;
 import org.apache.tsfile.file.metadata.IDeviceID;
 import org.apache.tsfile.fileSystem.FSFactoryProducer;
+import org.apache.tsfile.read.common.TimeRange;
 import org.apache.tsfile.write.writer.TsFileIOWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * This tool can be used to perform inner space or cross space compaction of aligned and non aligned
@@ -64,18 +78,29 @@ public class CompactionUtils {
    * @throws IOException if io errors occurred
    */
   public static void moveTargetFile(
-      List<TsFileResource> targetResources, boolean isInnerSpace, String fullStorageGroupName)
+      List<TsFileResource> targetResources, CompactionTaskType type, String fullStorageGroupName)
       throws IOException {
-    String fileSuffix;
-    if (isInnerSpace) {
-      fileSuffix = IoTDBConstant.INNER_COMPACTION_TMP_FILE_SUFFIX;
-    } else {
-      fileSuffix = IoTDBConstant.CROSS_COMPACTION_TMP_FILE_SUFFIX;
-    }
+    String fileSuffix = getTmpFileSuffix(type);
     for (TsFileResource targetResource : targetResources) {
       if (targetResource != null) {
         moveOneTargetFile(targetResource, fileSuffix, fullStorageGroupName);
       }
+    }
+  }
+
+  public static String getTmpFileSuffix(CompactionTaskType type) {
+    switch (type) {
+      case INNER_UNSEQ:
+      case INNER_SEQ:
+      case REPAIR:
+        return IoTDBConstant.INNER_COMPACTION_TMP_FILE_SUFFIX;
+      case CROSS:
+        return IoTDBConstant.CROSS_COMPACTION_TMP_FILE_SUFFIX;
+      case SETTLE:
+        return IoTDBConstant.SETTLE_SUFFIX;
+      default:
+        logger.error("Current task type {} does not have tmp file suffix.", type);
+        return "";
     }
   }
 
@@ -114,10 +139,16 @@ public class CompactionUtils {
       List<TsFileResource> unseqResources,
       List<TsFileResource> targetResources)
       throws IOException {
-    Set<Modification> modifications = new HashSet<>();
+    if (TsFileResource.useSharedModFile) {
+      // when using the shared mod file, modifications generated during compaction will be
+      // directly written into shared mod file, so there is no need to concern the sources
+      return;
+    }
+
+    Set<ModEntry> modifications = new HashSet<>();
     // get compaction mods from all source unseq files
     for (TsFileResource unseqFile : unseqResources) {
-      modifications.addAll(ModificationFile.getCompactionMods(unseqFile).getModifications());
+      modifications.addAll(ModificationFile.readAllCompactionModifications(unseqFile.getTsFile()));
     }
 
     // write target mods file
@@ -126,15 +157,55 @@ public class CompactionUtils {
       if (targetResource == null) {
         continue;
       }
-      Set<Modification> seqModifications =
-          new HashSet<>(ModificationFile.getCompactionMods(seqResources.get(i)).getModifications());
+      Set<ModEntry> seqModifications =
+          new HashSet<>(
+              ModificationFile.readAllCompactionModifications(seqResources.get(i).getTsFile()));
       modifications.addAll(seqModifications);
       updateOneTargetMods(targetResource, modifications);
-      if (!modifications.isEmpty()) {
-        FileMetrics.getInstance().increaseModFileNum(1);
-        FileMetrics.getInstance().increaseModFileSize(targetResource.getModFile().getSize());
-      }
       modifications.removeAll(seqModifications);
+    }
+  }
+
+  @SafeVarargs
+  public static void prepareCompactionModFiles(
+      List<TsFileResource> targets, List<TsFileResource>... sourceLists) throws IOException {
+    if (!TsFileResource.useSharedModFile) {
+      Set<ModificationFile> compactionModFileSet =
+          targets.stream()
+              .map(
+                  tsFileResource -> {
+                    try {
+                      return tsFileResource.getModFileForWrite();
+                    } catch (IOException e) {
+                      logger.error("Can not get mod file of {}", tsFileResource, e);
+                      return null;
+                    }
+                  })
+              .filter(Objects::nonNull)
+              .collect(Collectors.toSet());
+      for (List<TsFileResource> sourceList : sourceLists) {
+        for (TsFileResource tsFileResource : sourceList) {
+          tsFileResource.getModFileForWrite().setCascadeFile(compactionModFileSet);
+        }
+      }
+      return;
+    }
+    TsFileResource firstSource = sourceLists[0].get(0);
+    TsFileResource firstTarget = targets.get(0);
+    ModFileManagement modFileManagement = firstSource.getModFileManagement();
+    ModificationFile modificationFile = modFileManagement.allocateFor(firstTarget);
+    for (TsFileResource tsFileResource : targets) {
+      tsFileResource.setModFileManagement(modFileManagement);
+      modFileManagement.addReference(tsFileResource, modificationFile);
+      tsFileResource.setSharedModFile(modificationFile, false);
+    }
+    for (List<TsFileResource> sources : sourceLists) {
+      for (TsFileResource tsFileResource : sources) {
+        // lock so that the compaction mod file will not be omitted by deletion
+        tsFileResource.writeLock();
+        tsFileResource.setCompactionModFile(modificationFile);
+        tsFileResource.writeUnlock();
+      }
     }
   }
 
@@ -146,28 +217,50 @@ public class CompactionUtils {
    */
   public static void combineModsInInnerCompaction(
       Collection<TsFileResource> sourceFiles, TsFileResource targetTsFile) throws IOException {
-    Set<Modification> modifications = new HashSet<>();
+    if (TsFileResource.useSharedModFile) {
+      return;
+    }
+    Set<ModEntry> modifications = new HashSet<>();
     for (TsFileResource mergeTsFile : sourceFiles) {
-      try (ModificationFile sourceCompactionModificationFile =
-          ModificationFile.getCompactionMods(mergeTsFile)) {
-        modifications.addAll(sourceCompactionModificationFile.getModifications());
+      try (ModificationFile sourceCompactionModificationFile = mergeTsFile.getCompactionModFile()) {
+        modifications.addAll(sourceCompactionModificationFile.getAllMods());
       }
     }
     updateOneTargetMods(targetTsFile, modifications);
-    if (!modifications.isEmpty()) {
-      FileMetrics.getInstance().increaseModFileNum(1);
-      FileMetrics.getInstance().increaseModFileSize(targetTsFile.getModFile().getSize());
+  }
+
+  public static void combineModsInInnerCompaction(
+      Collection<TsFileResource> sourceFiles, List<TsFileResource> targetTsFiles)
+      throws IOException {
+    if (TsFileResource.useSharedModFile) {
+      return;
+    }
+    Set<ModEntry> modifications = new HashSet<>();
+    for (TsFileResource mergeTsFile : sourceFiles) {
+      try (ModificationFile sourceCompactionModificationFile = mergeTsFile.getCompactionModFile()) {
+        modifications.addAll(sourceCompactionModificationFile.getAllMods());
+      }
+    }
+    for (TsFileResource targetTsFile : targetTsFiles) {
+      updateOneTargetMods(targetTsFile, modifications);
     }
   }
 
-  private static void updateOneTargetMods(
-      TsFileResource targetFile, Set<Modification> modifications) throws IOException {
+  public static void addFilesToFileMetrics(TsFileResource resource) {
+    FileMetrics.getInstance()
+        .addTsFile(
+            resource.getDatabaseName(),
+            resource.getDataRegionId(),
+            resource.getTsFile().length(),
+            resource.isSeq(),
+            resource.getTsFile().getName());
+  }
+
+  private static void updateOneTargetMods(TsFileResource targetFile, Set<ModEntry> modifications)
+      throws IOException {
     if (!modifications.isEmpty()) {
-      try (ModificationFile modificationFile = ModificationFile.getNormalMods(targetFile)) {
-        for (Modification modification : modifications) {
-          // we have to set modification offset to MAX_VALUE, as the offset of source chunk may
-          // change after compaction
-          modification.setFileOffset(Long.MAX_VALUE);
+      try (ModificationFile modificationFile = targetFile.getModFileForWrite()) {
+        for (ModEntry modification : modifications) {
           modificationFile.write(modification);
         }
       }
@@ -179,16 +272,10 @@ public class CompactionUtils {
       List<TsFileResource> selectedUnSeqTsFileResourceList)
       throws IOException {
     for (TsFileResource seqFile : selectedSeqTsFileResourceList) {
-      ModificationFile modificationFile = seqFile.getCompactionModFile();
-      if (modificationFile.exists()) {
-        modificationFile.remove();
-      }
+      seqFile.removeCompactionModFile();
     }
     for (TsFileResource unseqFile : selectedUnSeqTsFileResourceList) {
-      ModificationFile modificationFile = unseqFile.getCompactionModFile();
-      if (modificationFile.exists()) {
-        modificationFile.remove();
-      }
+      unseqFile.removeCompactionModFile();
     }
   }
 
@@ -211,22 +298,12 @@ public class CompactionUtils {
    *
    * @throws IOException if io errors occurred
    */
+  @TestOnly
   public static void deleteModificationForSourceFile(
       Collection<TsFileResource> sourceFiles, String storageGroupName) throws IOException {
     logger.info("{} [Compaction] Start to delete modifications of source files", storageGroupName);
     for (TsFileResource tsFileResource : sourceFiles) {
-      ModificationFile compactionModificationFile =
-          ModificationFile.getCompactionMods(tsFileResource);
-      if (compactionModificationFile.exists()) {
-        compactionModificationFile.remove();
-      }
-
-      ModificationFile normalModification = ModificationFile.getNormalMods(tsFileResource);
-      if (normalModification.exists()) {
-        FileMetrics.getInstance().decreaseModFileNum(1);
-        FileMetrics.getInstance().decreaseModFileSize(tsFileResource.getModFile().getSize());
-        normalModification.remove();
-      }
+      tsFileResource.removeModFile();
     }
   }
 
@@ -247,16 +324,26 @@ public class CompactionUtils {
     }
   }
 
-  public static void updateProgressIndex(
+  public static void updateProgressIndexAndMark(
       List<TsFileResource> targetResources,
       List<TsFileResource> seqResources,
       List<TsFileResource> unseqResources) {
     for (TsFileResource targetResource : targetResources) {
       for (TsFileResource unseqResource : unseqResources) {
         targetResource.updateProgressIndex(unseqResource.getMaxProgressIndexAfterClose());
+        targetResource.setGeneratedByPipe(
+            unseqResource.isGeneratedByPipe() && targetResource.isGeneratedByPipe());
+        targetResource.setGeneratedByPipeConsensus(
+            unseqResource.isGeneratedByPipeConsensus()
+                && targetResource.isGeneratedByPipeConsensus());
       }
       for (TsFileResource seqResource : seqResources) {
         targetResource.updateProgressIndex(seqResource.getMaxProgressIndexAfterClose());
+        targetResource.setGeneratedByPipe(
+            seqResource.isGeneratedByPipe() && targetResource.isGeneratedByPipe());
+        targetResource.setGeneratedByPipeConsensus(
+            seqResource.isGeneratedByPipeConsensus()
+                && targetResource.isGeneratedByPipeConsensus());
       }
     }
   }
@@ -289,18 +376,20 @@ public class CompactionUtils {
 
   public static void deleteSourceTsFileAndUpdateFileMetrics(
       List<TsFileResource> resources, boolean seq) {
-    List<TsFileResource> removeResources = new ArrayList<>();
     for (TsFileResource resource : resources) {
-      if (!resource.remove()) {
-        logger.warn(
-            "[Compaction] delete file failed, file path is {}",
-            resource.getTsFile().getAbsolutePath());
-      } else {
-        logger.info("[Compaction] delete file: {}", resource.getTsFile().getAbsolutePath());
-        removeResources.add(resource);
-      }
+      deleteTsFileResourceWithoutLock(resource);
     }
     FileMetrics.getInstance().deleteTsFile(seq, resources);
+  }
+
+  public static void deleteTsFileResourceWithoutLock(TsFileResource resource) {
+    if (!resource.remove()) {
+      logger.warn(
+          "[Compaction] delete file failed, file path is {}",
+          resource.getTsFile().getAbsolutePath());
+    } else {
+      logger.info("[Compaction] delete file: {}", resource.getTsFile().getAbsolutePath());
+    }
   }
 
   public static boolean isDiskHasSpace() {
@@ -330,5 +419,33 @@ public class CompactionUtils {
           > CommonDescriptor.getInstance().getConfig().getDiskSpaceWarningThreshold() + redundancy;
     }
     return true;
+  }
+
+  public static ArrayDeviceTimeIndex buildDeviceTimeIndex(TsFileResource resource)
+      throws IOException {
+    long resourceFileSize =
+        new File(resource.getTsFilePath() + TsFileResource.RESOURCE_SUFFIX).length();
+    CompactionTaskManager.getInstance().getCompactionReadOperationRateLimiter().acquire(1);
+    CompactionMetrics.getInstance().recordDeserializeResourceInfo(resourceFileSize);
+    while (resourceFileSize > 0) {
+      int readSize = (int) Math.min(resourceFileSize, Integer.MAX_VALUE);
+      CompactionTaskManager.getInstance().getCompactionReadRateLimiter().acquire(readSize);
+      resourceFileSize -= readSize;
+    }
+    return resource.buildDeviceTimeIndex();
+  }
+
+  public static ModEntry convertTtlToDeletion(IDeviceID deviceID, long timeLowerBound)
+      throws IllegalPathException {
+    if (!deviceID.isTableModel()) {
+      return new TreeDeletionEntry(
+          new MeasurementPath(deviceID, IoTDBConstant.ONE_LEVEL_PATH_WILDCARD),
+          Long.MIN_VALUE,
+          timeLowerBound);
+    } else {
+      return new TableDeletionEntry(
+          new DeletionPredicate(deviceID.getTableName(), new FullExactMatch(deviceID)),
+          new TimeRange(Long.MIN_VALUE, timeLowerBound));
+    }
   }
 }

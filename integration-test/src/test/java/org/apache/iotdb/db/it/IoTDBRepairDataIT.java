@@ -25,7 +25,7 @@ import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
 
 import org.apache.tsfile.enums.TSDataType;
-import org.apache.tsfile.file.metadata.PlainDeviceID;
+import org.apache.tsfile.file.metadata.IDeviceID;
 import org.apache.tsfile.write.chunk.ChunkWriterImpl;
 import org.apache.tsfile.write.schema.MeasurementSchema;
 import org.apache.tsfile.write.writer.TsFileIOWriter;
@@ -60,7 +60,7 @@ public class IoTDBRepairDataIT {
 
   @AfterClass
   public static void tearDown() throws Exception {
-    EnvFactory.getEnv().initClusterEnvironment();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   @Test
@@ -70,8 +70,7 @@ public class IoTDBRepairDataIT {
       statement.execute("CREATE DATABASE root.tesgsg");
       statement.execute("CREATE TIMESERIES root.testsg.d1.s1 WITH DATATYPE=INT32, ENCODING=PLAIN");
       File tsfile = generateUnsortedFile();
-      statement.execute(
-          String.format("load \"%s\" verify=false", tsfile.getParentFile().getAbsolutePath()));
+      statement.execute(String.format("load \"%s\"", tsfile.getParentFile().getAbsolutePath()));
 
       Assert.assertFalse(validate(statement));
       statement.execute("START REPAIR DATA");
@@ -99,7 +98,7 @@ public class IoTDBRepairDataIT {
     Files.createFile(tsfile.toPath());
 
     try (TsFileIOWriter writer = new TsFileIOWriter(tsfile)) {
-      writer.startChunkGroup(new PlainDeviceID("root.testsg.d1"));
+      writer.startChunkGroup(IDeviceID.Factory.DEFAULT_FACTORY.create("root.testsg.d1"));
       ChunkWriterImpl chunkWriter =
           new ChunkWriterImpl(new MeasurementSchema("s1", TSDataType.INT32));
       chunkWriter.write(2, 1);

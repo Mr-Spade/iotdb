@@ -16,13 +16,15 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.db.it;
 
-import org.apache.iotdb.db.mpp.common.header.ColumnHeaderConstant;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
+import org.apache.iotdb.itbase.constant.BuiltinScalarFunctionEnum;
 import org.apache.iotdb.itbase.constant.BuiltinTimeSeriesGeneratingFunctionEnum;
 import org.apache.iotdb.itbase.constant.TestConstant;
 import org.apache.iotdb.rpc.TSStatusCode;
@@ -49,12 +51,12 @@ public class IoTDBSyntaxConventionStringLiteralIT {
 
   @Before
   public void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeTest();
+    EnvFactory.getEnv().initClusterEnvironment();
   }
 
   @After
   public void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterTest();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   /** Legal cases of using StringLiteral with single quote in insert and select clause. */
@@ -178,7 +180,7 @@ public class IoTDBSyntaxConventionStringLiteralIT {
     String errorMsg =
         TSStatusCode.SQL_PARSE_ERROR.getStatusCode()
             + ": Error occurred while parsing SQL to physical plan: "
-            + "line 1:45 no viable alternative at input '(1, string'";
+            + "line 1:45 mismatched input 'string' expecting {FALSE, NAN, NOW, NULL, TRUE, '-', '+', '/', '.', STRING_LITERAL, BINARY_LITERAL, DATETIME_LITERAL, INTEGER_LITERAL, EXPONENT_NUM_PART}";
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
       statement.execute("CREATE TIMESERIES root.sg1.d1.s1 TEXT");
@@ -197,7 +199,7 @@ public class IoTDBSyntaxConventionStringLiteralIT {
     String errorMsg1 =
         TSStatusCode.SQL_PARSE_ERROR.getStatusCode()
             + ": Error occurred while parsing SQL to physical plan: "
-            + "line 1:45 no viable alternative at input '(1, `string`'";
+            + "line 1:45 mismatched input '`string`' expecting {FALSE, NAN, NOW, NULL, TRUE, '-', '+', '/', '.', STRING_LITERAL, BINARY_LITERAL, DATETIME_LITERAL, INTEGER_LITERAL, EXPONENT_NUM_PART}";
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
       // wrap STRING_LITERAL with ``
@@ -210,7 +212,7 @@ public class IoTDBSyntaxConventionStringLiteralIT {
     String errorMsg2 =
         TSStatusCode.SQL_PARSE_ERROR.getStatusCode()
             + ": Error occurred while parsing SQL to physical plan: "
-            + "line 1:53 token recognition error at: '')'";
+            + "line 1:47 extraneous input 'string' expecting {',', ')'}";
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
       // single ' in ''
@@ -223,7 +225,7 @@ public class IoTDBSyntaxConventionStringLiteralIT {
     String errorMsg3 =
         TSStatusCode.SQL_PARSE_ERROR.getStatusCode()
             + ": Error occurred while parsing SQL to physical plan: "
-            + "line 1:53 token recognition error at: '\")'";
+            + "line 1:47 extraneous input 'string' expecting {',', ')'}";
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
       // single " in ""
@@ -254,8 +256,7 @@ public class IoTDBSyntaxConventionStringLiteralIT {
 
     String errorMsg1 =
         TSStatusCode.SQL_PARSE_ERROR.getStatusCode()
-            + ": Error occurred while parsing SQL to physical plan: "
-            + "line 1:7 mismatched input 'path' expecting STRING_LITERAL";
+            + ": Error occurred while parsing SQL to physical plan: line 1:7 no viable alternative at input 'REMOVE path'";
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
       statement.execute("REMOVE path");
@@ -321,7 +322,7 @@ public class IoTDBSyntaxConventionStringLiteralIT {
 
       // executed correctly
       try (ResultSet resultSet = statement.executeQuery("show functions")) {
-        assertEquals(3, resultSet.getMetaData().getColumnCount());
+        assertEquals(4, resultSet.getMetaData().getColumnCount());
         int count = 0;
         while (resultSet.next()) {
           StringBuilder stringBuilder = new StringBuilder();
@@ -334,7 +335,11 @@ public class IoTDBSyntaxConventionStringLiteralIT {
           }
           ++count;
         }
-        Assert.assertEquals(1 + BuiltinTimeSeriesGeneratingFunctionEnum.values().length, count);
+        Assert.assertEquals(
+            1
+                + BuiltinTimeSeriesGeneratingFunctionEnum.values().length
+                + BuiltinScalarFunctionEnum.values().length,
+            count);
       }
       statement.execute("drop function udf");
 
@@ -605,10 +610,10 @@ public class IoTDBSyntaxConventionStringLiteralIT {
   //      // create trigger, trigger class name should be STRING_LITERAL
   //      statement.execute(
   //          "create trigger trigger_1 before insert on root.vehicle.d1.s1 "
-  //              + "as 'org.apache.iotdb.db.engine.trigger.example.Accumulator'");
+  //              + "as 'org.apache.iotdb.db.storageengine.trigger.example.Accumulator'");
   //      statement.execute(
   //          "create trigger trigger_2 after insert on root.vehicle.d1.s2 "
-  //              + "as 'org.apache.iotdb.db.engine.trigger.example.Counter'");
+  //              + "as 'org.apache.iotdb.db.storageengine.trigger.example.Counter'");
   //
   //      // show
   //      resultSet = statement.executeQuery("show triggers");
@@ -624,7 +629,7 @@ public class IoTDBSyntaxConventionStringLiteralIT {
   //
   //      statement.execute(
   //          "create trigger trigger_1 before insert on root.vehicle.d1.s3 "
-  //              + "as org.apache.iotdb.db.engine.trigger.example.Accumulator");
+  //              + "as org.apache.iotdb.db.storageengine.trigger.example.Accumulator");
   //      fail();
   //    } catch (SQLException e) {
   //      Assert.assertEquals(errorMsg, e.getMessage());
@@ -637,14 +642,14 @@ public class IoTDBSyntaxConventionStringLiteralIT {
   //        TSStatusCode.SQL_PARSE_ERROR.getStatusCode() + ": Error occurred while parsing SQL to
   // physical plan: "
   //            + "line 1:64 mismatched input
-  // '`org.apache.iotdb.db.engine.trigger.example.Accumulator`' "
+  // '`org.apache.iotdb.db.storageengine.trigger.example.Accumulator`' "
   //            + "expecting {AS, '.'}";
   //    try (Connection connection = EnvFactory.getEnv().getConnection();
   //        Statement statement = connection.createStatement()) {
   //      statement.execute("CREATE TIMESERIES root.vehicle.d1.s1 FLOAT");
   //      statement.execute(
   //          "create trigger trigger_1 before insert on root.vehicle.d1.s1 "
-  //              + "as `org.apache.iotdb.db.engine.trigger.example.Accumulator`");
+  //              + "as `org.apache.iotdb.db.storageengine.trigger.example.Accumulator`");
   //      fail();
   //    } catch (SQLException e) {
   //      Assert.assertEquals(errorMsg, e.getMessage());
@@ -665,27 +670,33 @@ public class IoTDBSyntaxConventionStringLiteralIT {
   //      // trigger attribute should be STRING_LITERAL
   //      statement.execute(
   //          "create trigger trigger_1 before insert on root.vehicle.d1.s1 "
-  //              + "as 'org.apache.iotdb.db.engine.trigger.example.Accumulator' with ('k1'='v1')");
+  //              + "as 'org.apache.iotdb.db.storageengine.trigger.example.Accumulator' with
+  // ('k1'='v1')");
   //
   //      statement.execute(
   //          "create trigger trigger_2 before insert on root.vehicle.d1.s2 "
-  //              + "as 'org.apache.iotdb.db.engine.trigger.example.Accumulator' with (k1='v1')");
+  //              + "as 'org.apache.iotdb.db.storageengine.trigger.example.Accumulator' with
+  // (k1='v1')");
   //
   //      statement.execute(
   //          "create trigger trigger_3 before insert on root.vehicle.d1.s3 "
-  //              + "as 'org.apache.iotdb.db.engine.trigger.example.Accumulator' with ('k1'=v1)");
+  //              + "as 'org.apache.iotdb.db.storageengine.trigger.example.Accumulator' with
+  // ('k1'=v1)");
   //
   //      statement.execute(
   //          "create trigger trigger_4 before insert on root.vehicle.d1.s4 "
-  //              + "as 'org.apache.iotdb.db.engine.trigger.example.Accumulator' with (k1=v1)");
+  //              + "as 'org.apache.iotdb.db.storageengine.trigger.example.Accumulator' with
+  // (k1=v1)");
   //
   //      statement.execute(
   //          "create trigger trigger_5 before insert on root.vehicle.d1.s5 "
-  //              + "as 'org.apache.iotdb.db.engine.trigger.example.Accumulator' with (`k1`=`v1`)");
+  //              + "as 'org.apache.iotdb.db.storageengine.trigger.example.Accumulator' with
+  // (`k1`=`v1`)");
   //
   //      statement.execute(
   //          "create trigger trigger_6 before insert on root.vehicle.d1.s6 "
-  //              + "as 'org.apache.iotdb.db.engine.trigger.example.Accumulator' with (`k1`=v1)");
+  //              + "as 'org.apache.iotdb.db.storageengine.trigger.example.Accumulator' with
+  // (`k1`=v1)");
   //
   //      boolean hasResult = statement.execute("show triggers");
   //      assertTrue(hasResult);

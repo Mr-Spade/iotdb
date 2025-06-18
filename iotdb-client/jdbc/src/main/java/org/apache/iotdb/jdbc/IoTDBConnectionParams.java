@@ -21,7 +21,13 @@ package org.apache.iotdb.jdbc;
 
 import org.apache.iotdb.rpc.RpcUtils;
 
+import org.apache.tsfile.common.conf.TSFileConfig;
+
+import java.nio.charset.Charset;
 import java.time.ZoneId;
+import java.util.Optional;
+
+import static org.apache.iotdb.jdbc.Constant.TREE;
 
 public class IoTDBConnectionParams {
 
@@ -40,10 +46,15 @@ public class IoTDBConnectionParams {
   private int networkTimeout = Config.DEFAULT_CONNECTION_TIMEOUT_MS;
 
   private String timeZone = ZoneId.systemDefault().toString();
+  private Charset charset = TSFileConfig.STRING_CHARSET;
 
   private boolean useSSL = false;
   private String trustStore;
   private String trustStorePwd;
+
+  private String sqlDialect = TREE;
+
+  private String db;
 
   public IoTDBConnectionParams(String url) {
     this.jdbcUriString = url;
@@ -141,6 +152,14 @@ public class IoTDBConnectionParams {
     return this.timeZone;
   }
 
+  public void setCharset(String charsetName) {
+    this.charset = Charset.forName(charsetName);
+  }
+
+  public Charset getCharset() {
+    return charset;
+  }
+
   public boolean isUseSSL() {
     return useSSL;
   }
@@ -163,5 +182,21 @@ public class IoTDBConnectionParams {
 
   public void setTrustStorePwd(String trustStorePwd) {
     this.trustStorePwd = trustStorePwd;
+  }
+
+  public String getSqlDialect() {
+    return sqlDialect;
+  }
+
+  public void setSqlDialect(String sqlDialect) {
+    this.sqlDialect = sqlDialect;
+  }
+
+  public Optional<String> getDb() {
+    return Optional.ofNullable(db);
+  }
+
+  public void setDb(String db) {
+    this.db = db;
   }
 }

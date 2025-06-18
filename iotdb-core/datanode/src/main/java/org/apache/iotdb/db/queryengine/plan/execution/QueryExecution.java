@@ -22,11 +22,13 @@ import org.apache.iotdb.common.rpc.thrift.TEndPoint;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.conf.IoTDBConstant;
 import org.apache.iotdb.commons.exception.IoTDBException;
+import org.apache.iotdb.commons.exception.IoTDBRuntimeException;
 import org.apache.iotdb.commons.service.metric.PerformanceOverviewMetrics;
 import org.apache.iotdb.db.conf.IoTDBConfig;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.exception.query.KilledByOthersException;
 import org.apache.iotdb.db.exception.query.QueryTimeoutRuntimeException;
+import org.apache.iotdb.db.protocol.session.IClientSession;
 import org.apache.iotdb.db.queryengine.common.FragmentInstanceId;
 import org.apache.iotdb.db.queryengine.common.MPPQueryContext;
 import org.apache.iotdb.db.queryengine.common.header.DatasetHeader;
@@ -58,6 +60,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
@@ -70,7 +73,8 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Throwables.throwIfUnchecked;
 import static org.apache.iotdb.db.queryengine.common.DataNodeEndPoints.isSameNode;
 import static org.apache.iotdb.db.queryengine.metric.QueryExecutionMetricSet.WAIT_FOR_RESULT;
-import static org.apache.iotdb.db.queryengine.metric.QueryPlanCostMetricSet.DISTRIBUTION_PLANNER;
+import static org.apache.iotdb.db.utils.ErrorHandlingUtils.getRootCause;
+import static org.apache.iotdb.rpc.TSStatusCode.DATE_OUT_OF_RANGE;
 
 /**
  * QueryExecution stores all the status of a query which is being prepared or running inside the MPP
@@ -129,8 +133,6 @@ public class QueryExecution implements IQueryExecution {
             if (!state.isDone()) {
               return;
             }
-            // TODO: (xingtanzjr) If the query is in abnormal state, the releaseResource() should be
-            // invoked
             if (state == QueryState.FAILED
                 || state == QueryState.ABORTED
                 || state == QueryState.CANCELED) {
@@ -150,11 +152,12 @@ public class QueryExecution implements IQueryExecution {
     T get() throws IoTDBException;
   }
 
+  @Override
   public void start() {
     final long startTime = System.nanoTime();
     if (skipExecute()) {
       LOGGER.debug("[SkipExecute]");
-      if (context.getQueryType() == QueryType.WRITE && analysis.isFailed()) {
+      if (analysis.isFailed()) {
         stateMachine.transitionToFailed(analysis.getFailStatus());
       } else {
         constructResultForMemorySource();
@@ -166,11 +169,20 @@ public class QueryExecution implements IQueryExecution {
     // check timeout for query first
     checkTimeOutForQuery();
     doLogicalPlan();
-    doDistributedPlan();
 
-    // update timeout after finishing plan stage
-    context.setTimeOut(
-        context.getTimeOut() - (System.currentTimeMillis() - context.getStartTime()));
+    if (skipExecute()) {
+      // TODO move this judgement to analyze state?
+      LOGGER.debug("[SkipExecute After LogicalPlan]");
+      if (analysis.isFailed()) {
+        stateMachine.transitionToFailed(analysis.getFailStatus());
+      } else {
+        constructResultForMemorySource();
+        stateMachine.transitionToRunning();
+      }
+      return;
+    }
+
+    doDistributedPlan();
 
     stateMachine.transitionToPlanned();
     if (context.getQueryType() == QueryType.READ) {
@@ -178,6 +190,9 @@ public class QueryExecution implements IQueryExecution {
     }
     PERFORMANCE_OVERVIEW_METRICS.recordPlanCost(System.nanoTime() - startTime);
     schedule();
+
+    // The last batch of memory reserved by the front end
+    context.reserveMemoryForFrontEndImmediately();
 
     // friendly for gc
     logicalPlan.clearUselessMemory();
@@ -247,16 +262,7 @@ public class QueryExecution implements IQueryExecution {
 
   // Analyze the statement in QueryContext. Generate the analysis this query need
   private IAnalysis analyze(MPPQueryContext context) {
-    final long startTime = System.nanoTime();
-    IAnalysis result;
-    try {
-      result = planner.analyze(context);
-    } finally {
-      long analyzeCost = System.nanoTime() - startTime;
-      context.setAnalyzeCost(analyzeCost);
-      PERFORMANCE_OVERVIEW_METRICS.recordAnalyzeCost(analyzeCost);
-    }
-    return result;
+    return planner.analyze(context);
   }
 
   private void schedule() {
@@ -278,14 +284,7 @@ public class QueryExecution implements IQueryExecution {
 
   // Generate the distributed plan and split it into fragments
   public void doDistributedPlan() {
-    long startTime = System.nanoTime();
-    this.distributedPlan = planner.doDistributionPlan(analysis, logicalPlan);
-
-    if (analysis.isQuery()) {
-      long distributionPlanCost = System.nanoTime() - startTime;
-      context.setDistributionPlanCost(distributionPlanCost);
-      QUERY_PLAN_COST_METRIC_SET.recordPlanCost(DISTRIBUTION_PLANNER, distributionPlanCost);
-    }
+    this.distributedPlan = planner.doDistributionPlan(analysis, logicalPlan, context);
 
     // if is this Statement is ShowQueryStatement, set its instances to the highest priority, so
     // that the sub-tasks of the ShowQueries instances could be executed first.
@@ -293,7 +292,7 @@ public class QueryExecution implements IQueryExecution {
       distributedPlan.getInstances().forEach(instance -> instance.setHighestPriority(true));
     }
 
-    if (isQuery() && LOGGER.isDebugEnabled()) {
+    if (LOGGER.isDebugEnabled() && isQuery()) {
       LOGGER.debug(
           "distribution plan done. Fragment instance count is {}, details is: \n {}",
           distributedPlan.getInstances().size(),
@@ -314,6 +313,7 @@ public class QueryExecution implements IQueryExecution {
   }
 
   // Stop the workers for this query
+  @Override
   public void stop(Throwable t) {
     // only stop once
     if (stopped.compareAndSet(false, true) && this.scheduler != null) {
@@ -322,6 +322,7 @@ public class QueryExecution implements IQueryExecution {
   }
 
   // Stop the query and clean up all the resources this query occupied
+  @Override
   public void stopAndCleanup() {
     stop(null);
     releaseResource();
@@ -362,11 +363,13 @@ public class QueryExecution implements IQueryExecution {
           .deRegisterFragmentInstanceFromMemoryPool(
               fragmentInstanceId.queryId,
               FragmentInstanceId.createFragmentInstanceIdFromTFragmentInstanceId(
-                  fragmentInstanceId));
+                  fragmentInstanceId),
+              true);
     }
   }
 
   // Stop the query and clean up all the resources this query occupied
+  @Override
   public void stopAndCleanup(Throwable t) {
     stop(t);
     releaseResource(t);
@@ -410,6 +413,12 @@ public class QueryExecution implements IQueryExecution {
             throw new IoTDBException(
                 stateMachine.getFailureStatus().getMessage(), stateMachine.getFailureStatus().code);
           } else {
+            Throwable rootCause = stateMachine.getFailureException();
+            if (rootCause instanceof IoTDBRuntimeException) {
+              throw (IoTDBRuntimeException) rootCause;
+            } else if (rootCause instanceof IoTDBException) {
+              throw (IoTDBException) rootCause;
+            }
             throw new IoTDBException(
                 stateMachine.getFailureMessage(),
                 TSStatusCode.EXECUTE_STATEMENT_ERROR.getStatusCode());
@@ -451,12 +460,21 @@ public class QueryExecution implements IQueryExecution {
   }
 
   private void dealWithException(Throwable t) throws IoTDBException {
+    t = getRootCause(t);
     stateMachine.transitionToFailed(t);
     if (stateMachine.getFailureStatus() != null) {
       throw new IoTDBException(
           stateMachine.getFailureStatus().getMessage(), stateMachine.getFailureStatus().code);
     } else if (stateMachine.getFailureException() != null) {
       Throwable rootCause = stateMachine.getFailureException();
+      if (rootCause instanceof IoTDBRuntimeException) {
+        throw (IoTDBRuntimeException) rootCause;
+      } else if (rootCause instanceof IoTDBException) {
+        throw (IoTDBException) rootCause;
+      } else if (rootCause instanceof DateTimeParseException) {
+        throw new IoTDBRuntimeException(
+            rootCause.getMessage(), DATE_OUT_OF_RANGE.getStatusCode(), true);
+      }
       throw new IoTDBException(rootCause, TSStatusCode.EXECUTE_STATEMENT_ERROR.getStatusCode());
     } else {
       throwIfUnchecked(t);
@@ -507,6 +525,7 @@ public class QueryExecution implements IQueryExecution {
    *
    * @return ExecutionStatus. Contains the QueryId and the TSStatus.
    */
+  @Override
   public ExecutionResult getStatus() {
     // Although we monitor the state to transition to RUNNING, the future will return if any
     // Terminated state is triggered
@@ -601,6 +620,7 @@ public class QueryExecution implements IQueryExecution {
 
     // If RETRYING is triggered by this QueryExecution, the stateMachine.getFailureStatus() is also
     // not null. We should only return the failure status when QueryExecution is in Done state.
+    // a partial insert also returns an error code but the QueryState is FINISHED
     if (state.isDone() && stateMachine.getFailureStatus() != null) {
       tsstatus = stateMachine.getFailureStatus();
     }
@@ -610,9 +630,8 @@ public class QueryExecution implements IQueryExecution {
     // info to client
     if (!CONFIG.isEnable13DataInsertAdapt()
         || IoTDBConstant.ClientVersion.V_1_0.equals(context.getSession().getVersion())) {
-      planner.setRedirectInfo(analysis, CONFIG.getAddressAndPort(), tsstatus, statusCode);
+      planner.setRedirectInfo(analysis, CONFIG.getAddressAndPort(), tsstatus);
     }
-
     return new ExecutionResult(context.getQueryId(), tsstatus);
   }
 
@@ -623,6 +642,11 @@ public class QueryExecution implements IQueryExecution {
   @Override
   public boolean isQuery() {
     return context.getQueryType() == QueryType.READ;
+  }
+
+  @Override
+  public boolean isUserQuery() {
+    return context.isUserQuery();
   }
 
   @Override
@@ -655,10 +679,21 @@ public class QueryExecution implements IQueryExecution {
     return analysis.getStatementType();
   }
 
+  @Override
+  public IClientSession.SqlDialect getSQLDialect() {
+    return context.getSession().getSqlDialect();
+  }
+
+  @Override
+  public String getUser() {
+    return context.getSession().getUserName();
+  }
+
   public MPPQueryContext getContext() {
     return context;
   }
 
+  @Override
   public String toString() {
     return String.format("QueryExecution[%s]", context.getQueryId());
   }

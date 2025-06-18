@@ -22,6 +22,7 @@ package org.apache.iotdb.db.queryengine.plan.planner.plan.node;
 import org.apache.iotdb.commons.exception.runtime.SerializationRunTimeException;
 import org.apache.iotdb.consensus.common.request.IConsensusRequest;
 import org.apache.iotdb.db.queryengine.plan.analyze.TypeProvider;
+import org.apache.iotdb.db.queryengine.plan.relational.planner.Symbol;
 
 import org.apache.tsfile.utils.PublicBAOS;
 import org.apache.tsfile.utils.ReadWriteIOUtils;
@@ -49,6 +50,8 @@ public abstract class PlanNode implements IConsensusRequest {
   protected PlanNodeId id;
 
   protected boolean isGeneratedByPipe = false;
+
+  protected PlanNode() {}
 
   protected PlanNode(PlanNodeId id) {
     requireNonNull(id, "id is null");
@@ -179,6 +182,7 @@ public abstract class PlanNode implements IConsensusRequest {
     try (PublicBAOS byteArrayOutputStream = new PublicBAOS();
         DataOutputStream outputStream = new DataOutputStream(byteArrayOutputStream)) {
       serialize(outputStream);
+
       return ByteBuffer.wrap(byteArrayOutputStream.getBuf(), 0, byteArrayOutputStream.size());
     } catch (IOException e) {
       LOGGER.error("Unexpected error occurs when serializing writePlanNode.", e);
@@ -205,5 +209,14 @@ public abstract class PlanNode implements IConsensusRequest {
   @Override
   public int hashCode() {
     return Objects.hash(id);
+  }
+
+  // =========================== Used for Table Model ============================
+  public List<Symbol> getOutputSymbols() {
+    throw new UnsupportedOperationException("This planNode does not support getOutputSymbols().");
+  }
+
+  public PlanNode replaceChildren(List<PlanNode> newChildren) {
+    throw new UnsupportedOperationException();
   }
 }

@@ -1,17 +1,20 @@
 /*
- * Copyright © 2021 iotdb-quality developer group (iotdb-quality@protonmail.com)
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package org.apache.iotdb.library.series;
@@ -32,7 +35,7 @@ import org.apache.commons.lang3.tuple.Pair;
 /** This function searches for consecutive subsequences of given length of input sereis. */
 public class UDTFConsecutiveWindows implements UDTF {
   private ConsecutiveUtil consUtil;
-  private static final int maxLen = 128;
+  private static final int MAX_LEN = 128;
   private long len;
 
   @Override
@@ -41,19 +44,22 @@ public class UDTFConsecutiveWindows implements UDTF {
         .validate(
             x -> (long) x > 0,
             "gap should be a time period whose unit is ms, s, m, h.",
-            Util.parseTime(validator.getParameters().getStringOrDefault("gap", "1ms")))
+            Util.parseTime(
+                validator.getParameters().getStringOrDefault("gap", "1ms"),
+                validator.getParameters()))
         .validate(
             x -> (long) x > 0,
             "length should be a time period whose unit is ms, s, m, h.",
-            Util.parseTime(validator.getParameters().getString("length")));
+            Util.parseTime(
+                validator.getParameters().getString("length"), validator.getParameters()));
   }
 
   @Override
   public void beforeStart(UDFParameters parameters, UDTFConfigurations configurations)
       throws Exception {
     configurations.setAccessStrategy(new RowByRowAccessStrategy()).setOutputDataType(Type.INT32);
-    long gap = Util.parseTime(parameters.getStringOrDefault("gap", "0ms"));
-    len = Util.parseTime(parameters.getString("length"));
+    long gap = Util.parseTime(parameters.getStringOrDefault("gap", "0ms"), parameters);
+    len = Util.parseTime(parameters.getString("length"), parameters);
     int count = gap == 0 ? 0 : (int) (len / gap + 1);
     consUtil = new ConsecutiveUtil(-gap, -gap, gap);
     consUtil.setCount(count);
@@ -62,7 +68,7 @@ public class UDTFConsecutiveWindows implements UDTF {
   @Override
   public void transform(Row row, PointCollector collector) throws Exception {
     if (consUtil.getGap() == 0) {
-      if (consUtil.getWindow().size() < maxLen) { // window is not full
+      if (consUtil.getWindow().size() < MAX_LEN) { // window is not full
         consUtil.getWindow().add(Pair.of(row.getTime(), consUtil.check(row)));
       } else {
         consUtil.calculateGap();

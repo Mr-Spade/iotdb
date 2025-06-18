@@ -19,6 +19,8 @@
 
 package org.apache.iotdb.db.storageengine.dataregion.compaction.selector.utils;
 
+import org.apache.iotdb.commons.utils.TestOnly;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.CompactionScheduleContext;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResourceStatus;
 
@@ -26,6 +28,7 @@ import org.apache.tsfile.file.metadata.IDeviceID;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -40,19 +43,33 @@ public class CrossSpaceCompactionCandidate {
   private int nextUnseqFileIndex;
   private CrossCompactionTaskResourceSplit nextSplit;
   private long ttlLowerBound = Long.MIN_VALUE;
+  private CompactionScheduleContext context = null;
 
+  @TestOnly
   public CrossSpaceCompactionCandidate(
       List<TsFileResource> seqFiles, List<TsFileResource> unseqFiles) {
-    init(seqFiles, unseqFiles);
+    init(seqFiles, unseqFiles, new CompactionScheduleContext());
   }
 
   public CrossSpaceCompactionCandidate(
       List<TsFileResource> seqFiles, List<TsFileResource> unseqFiles, long ttlLowerBound) {
-    this.ttlLowerBound = ttlLowerBound;
-    init(seqFiles, unseqFiles);
+    this(seqFiles, unseqFiles, ttlLowerBound, new CompactionScheduleContext());
   }
 
-  private void init(List<TsFileResource> seqFiles, List<TsFileResource> unseqFiles) {
+  public CrossSpaceCompactionCandidate(
+      List<TsFileResource> seqFiles,
+      List<TsFileResource> unseqFiles,
+      long ttlLowerBound,
+      CompactionScheduleContext context) {
+    this.ttlLowerBound = ttlLowerBound;
+    init(seqFiles, unseqFiles, context);
+  }
+
+  private void init(
+      List<TsFileResource> seqFiles,
+      List<TsFileResource> unseqFiles,
+      CompactionScheduleContext context) {
+    this.context = context;
     this.seqFiles = copySeqResource(seqFiles);
     // it is necessary that unseqFiles are all available
     this.unseqFiles = filterUnseqResource(unseqFiles);
@@ -81,7 +98,8 @@ public class CrossSpaceCompactionCandidate {
       // unseq file resource has been deleted due to TTL and cannot upgrade to DEVICE_TIME_INDEX
       return false;
     }
-    for (DeviceInfo unseqDeviceInfo : unseqFile.getDevices()) {
+    for (Iterator<DeviceInfo> it = unseqFile.getDeviceInfoIterator(); it.hasNext(); ) {
+      DeviceInfo unseqDeviceInfo = it.next();
       IDeviceID deviceId = unseqDeviceInfo.deviceId;
       boolean atLeastOneSeqFileSelected = false;
       // The `previousSeqFile` means the seqFile which contains the device and its endTime is just
@@ -157,7 +175,7 @@ public class CrossSpaceCompactionCandidate {
   private List<TsFileResourceCandidate> copySeqResource(List<TsFileResource> seqFiles) {
     List<TsFileResourceCandidate> ret = new ArrayList<>();
     for (TsFileResource resource : seqFiles) {
-      ret.add(new TsFileResourceCandidate(resource));
+      ret.add(new TsFileResourceCandidate(resource, context));
     }
     return ret;
   }
@@ -174,7 +192,7 @@ public class CrossSpaceCompactionCandidate {
       if (resource.getStatus() != TsFileResourceStatus.NORMAL) {
         break;
       } else if (resource.stillLives(ttlLowerBound)) {
-        ret.add(new TsFileResourceCandidate(resource));
+        ret.add(new TsFileResourceCandidate(resource, context));
       }
     }
     return ret;

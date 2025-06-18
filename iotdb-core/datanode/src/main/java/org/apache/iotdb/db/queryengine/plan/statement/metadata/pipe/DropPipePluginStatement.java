@@ -35,16 +35,37 @@ import java.util.List;
 
 public class DropPipePluginStatement extends Statement implements IConfigStatement {
 
-  private final String pluginName;
+  private String pluginName;
+  private boolean ifExistsCondition;
+  private boolean isTableModel;
 
-  public DropPipePluginStatement(String pluginName) {
+  public DropPipePluginStatement() {
     super();
     statementType = StatementType.DROP_PIPEPLUGIN;
-    this.pluginName = pluginName;
   }
 
   public String getPluginName() {
     return pluginName;
+  }
+
+  public boolean hasIfExistsCondition() {
+    return ifExistsCondition;
+  }
+
+  public boolean isTableModel() {
+    return isTableModel;
+  }
+
+  public void setPluginName(final String pluginName) {
+    this.pluginName = pluginName;
+  }
+
+  public void setIfExists(final boolean ifExistsCondition) {
+    this.ifExistsCondition = ifExistsCondition;
+  }
+
+  public void setTableModel(final boolean tableModel) {
+    this.isTableModel = tableModel;
   }
 
   @Override
@@ -58,17 +79,17 @@ public class DropPipePluginStatement extends Statement implements IConfigStateme
   }
 
   @Override
-  public <R, C> R accept(StatementVisitor<R, C> visitor, C context) {
+  public <R, C> R accept(final StatementVisitor<R, C> visitor, final C context) {
     return visitor.visitDropPipePlugin(this, context);
   }
 
   @Override
-  public TSStatus checkPermissionBeforeProcess(String userName) {
+  public TSStatus checkPermissionBeforeProcess(final String userName) {
     if (AuthorityChecker.SUPER_USER.equals(userName)) {
       return new TSStatus(TSStatusCode.SUCCESS_STATUS.getStatusCode());
     }
     return AuthorityChecker.getTSStatus(
-        AuthorityChecker.checkSystemPermission(userName, PrivilegeType.USE_PIPE.ordinal()),
+        AuthorityChecker.checkSystemPermission(userName, PrivilegeType.USE_PIPE),
         PrivilegeType.USE_PIPE);
   }
 }

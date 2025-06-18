@@ -21,30 +21,29 @@ package org.apache.iotdb.db.pipe.resource.wal.hardlink;
 
 import org.apache.iotdb.commons.conf.IoTDBConstant;
 import org.apache.iotdb.commons.pipe.config.PipeConfig;
+import org.apache.iotdb.commons.utils.FileUtils;
 import org.apache.iotdb.commons.utils.TestOnly;
 import org.apache.iotdb.db.pipe.resource.wal.PipeWALResourceManager;
 import org.apache.iotdb.db.storageengine.dataregion.wal.utils.WALEntryHandler;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.FileSystems;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 
 public class PipeWALHardlinkResourceManager extends PipeWALResourceManager {
 
   @Override
-  protected void pinInternal(long memtableId, WALEntryHandler walEntryHandler) {
+  protected void pinInternal(final long memTableId, final WALEntryHandler walEntryHandler) {
     memtableIdToPipeWALResourceMap
-        .computeIfAbsent(memtableId, id -> new PipeWALHardlinkResource(walEntryHandler, this))
+        .computeIfAbsent(memTableId, id -> new PipeWALHardlinkResource(walEntryHandler, this))
         .pin();
   }
 
   @Override
-  protected void unpinInternal(long memtableId, WALEntryHandler walEntryHandler) {
-    memtableIdToPipeWALResourceMap.get(memtableId).unpin();
+  protected void unpinInternal(final long memTableId, final WALEntryHandler walEntryHandler) {
+    memtableIdToPipeWALResourceMap.get(memTableId).unpin();
   }
 
   //////////////////////////// hardlink related ////////////////////////////
@@ -64,7 +63,7 @@ public class PipeWALHardlinkResourceManager extends PipeWALResourceManager {
    * @return the hardlink
    * @throws IOException when create hardlink failed
    */
-  public synchronized File increaseFileReference(File file) throws IOException {
+  public synchronized File increaseFileReference(final File file) throws IOException {
     // if the file is already a hardlink, just increase reference count and return it
     if (increaseReferenceIfExists(file.getPath())) {
       return file;
@@ -80,20 +79,20 @@ public class PipeWALHardlinkResourceManager extends PipeWALResourceManager {
     // if the file is a wal, and there is no related hardlink in pipe dir, create a hardlink to pipe
     // dir, maintain a reference count for the hardlink, and return the hardlink.
     hardlinkToReferenceMap.put(hardlink.getPath(), 1);
-    return createHardlink(file, hardlink);
+    return FileUtils.createHardLink(file, hardlink);
   }
 
-  private boolean increaseReferenceIfExists(String path) {
+  private boolean increaseReferenceIfExists(final String path) {
     hardlinkToReferenceMap.computeIfPresent(path, (k, v) -> v + 1);
     return hardlinkToReferenceMap.containsKey(path);
   }
 
   // TODO: Check me! Make sure the file is not a hardlink.
   // TODO: IF user specify a wal by config, will the method work?
-  private static File getHardlinkInPipeWALDir(File file) throws IOException {
+  private static File getHardlinkInPipeWALDir(final File file) throws IOException {
     try {
       return new File(getPipeWALDirPath(file), getRelativeFilePath(file));
-    } catch (Exception e) {
+    } catch (final Exception e) {
       throw new IOException(
           String.format(
               "failed to get hardlink in pipe dir " + "for file %s, it is not a wal",
@@ -128,20 +127,6 @@ public class PipeWALHardlinkResourceManager extends PipeWALResourceManager {
     return builder.toString();
   }
 
-  private static File createHardlink(File sourceFile, File hardlink) throws IOException {
-    if (!hardlink.getParentFile().exists() && !hardlink.getParentFile().mkdirs()) {
-      throw new IOException(
-          String.format(
-              "failed to create hardlink %s for file %s: failed to create parent dir %s",
-              hardlink.getPath(), sourceFile.getPath(), hardlink.getParentFile().getPath()));
-    }
-
-    final Path sourcePath = FileSystems.getDefault().getPath(sourceFile.getAbsolutePath());
-    final Path linkPath = FileSystems.getDefault().getPath(hardlink.getAbsolutePath());
-    Files.createLink(linkPath, sourcePath);
-    return hardlink;
-  }
-
   /**
    * given a hardlink, decrease its reference count, if the reference count is 0, delete the file.
    * if the given file is not a hardlink, do nothing.
@@ -149,7 +134,7 @@ public class PipeWALHardlinkResourceManager extends PipeWALResourceManager {
    * @param hardlink the hardlinked file
    * @throws IOException when delete file failed
    */
-  public synchronized void decreaseFileReference(File hardlink) throws IOException {
+  public synchronized void decreaseFileReference(final File hardlink) throws IOException {
     final Integer updatedReference =
         hardlinkToReferenceMap.computeIfPresent(
             hardlink.getPath(), (file, reference) -> reference - 1);
@@ -161,7 +146,7 @@ public class PipeWALHardlinkResourceManager extends PipeWALResourceManager {
   }
 
   @TestOnly
-  public synchronized int getFileReferenceCount(File hardlink) {
+  public synchronized int getFileReferenceCount(final File hardlink) {
     return hardlinkToReferenceMap.getOrDefault(hardlink.getPath(), 0);
   }
 }

@@ -26,15 +26,18 @@ import org.apache.iotdb.db.queryengine.plan.analyze.PredicateUtils;
 import org.apache.iotdb.db.queryengine.plan.analyze.QueryType;
 import org.apache.iotdb.db.queryengine.plan.analyze.TypeProvider;
 import org.apache.iotdb.db.queryengine.plan.analyze.lock.SchemaLockType;
+import org.apache.iotdb.db.queryengine.plan.planner.memory.MemoryReservationManager;
+import org.apache.iotdb.db.queryengine.plan.planner.memory.NotThreadSafeMemoryReservationManager;
 import org.apache.iotdb.db.queryengine.statistics.QueryPlanStatistics;
 
 import org.apache.tsfile.read.filter.basic.Filter;
 
 import java.time.ZoneId;
-import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * This class is used to record the context of a query including QueryId, query statement, session
@@ -69,15 +72,23 @@ public class MPPQueryContext {
 
   private Filter globalTimeFilter;
 
-  private Map<SchemaLockType, Integer> acquiredLockNumMap = new HashMap<>();
+  private final Set<SchemaLockType> acquiredLocks = new HashSet<>();
 
   private boolean isExplainAnalyze = false;
 
   QueryPlanStatistics queryPlanStatistics = null;
 
+  // To avoid query front-end from consuming too much memory, it needs to reserve memory when
+  // constructing some Expression and PlanNode.
+  private final MemoryReservationManager memoryReservationManager;
+
+  private boolean userQuery = false;
+
   public MPPQueryContext(QueryId queryId) {
     this.queryId = queryId;
     this.endPointBlackList = new LinkedList<>();
+    this.memoryReservationManager =
+        new NotThreadSafeMemoryReservationManager(queryId, this.getClass().getName());
   }
 
   // TODO too many callers just pass a null SessionInfo which should be forbidden
@@ -113,6 +124,7 @@ public class MPPQueryContext {
 
   public void prepareForRetry() {
     this.initResultNodeContext();
+    this.releaseAllMemoryReservedForFrontEnd();
   }
 
   private void initResultNodeContext() {
@@ -191,21 +203,23 @@ public class MPPQueryContext {
     return sql;
   }
 
-  public Map<SchemaLockType, Integer> getAcquiredLockNumMap() {
-    return acquiredLockNumMap;
+  public Set<SchemaLockType> getAcquiredLocks() {
+    return acquiredLocks;
   }
 
-  public void addAcquiredLockNum(SchemaLockType lockType) {
-    if (acquiredLockNumMap.containsKey(lockType)) {
-      acquiredLockNumMap.put(lockType, acquiredLockNumMap.get(lockType) + 1);
-    } else {
-      acquiredLockNumMap.put(lockType, 1);
-    }
+  public boolean addAcquiredLock(final SchemaLockType lockType) {
+    return acquiredLocks.add(lockType);
   }
 
+  // used for tree model
   public void generateGlobalTimeFilter(Analysis analysis) {
     this.globalTimeFilter =
         PredicateUtils.convertPredicateToTimeFilter(analysis.getGlobalTimePredicate());
+  }
+
+  // used for table model
+  public void setGlobalTimeFilter(Filter globalTimeFilter) {
+    this.globalTimeFilter = globalTimeFilter;
   }
 
   public Filter getGlobalTimeFilter() {
@@ -234,10 +248,16 @@ public class MPPQueryContext {
   }
 
   public long getFetchPartitionCost() {
+    if (queryPlanStatistics == null) {
+      return 0;
+    }
     return queryPlanStatistics.getFetchPartitionCost();
   }
 
   public long getFetchSchemaCost() {
+    if (queryPlanStatistics == null) {
+      return 0;
+    }
     return queryPlanStatistics.getFetchSchemaCost();
   }
 
@@ -247,6 +267,17 @@ public class MPPQueryContext {
 
   public long getLogicalOptimizationCost() {
     return queryPlanStatistics.getLogicalOptimizationCost();
+  }
+
+  public void recordDispatchCost(long dispatchCost) {
+    if (queryPlanStatistics == null) {
+      queryPlanStatistics = new QueryPlanStatistics();
+    }
+    queryPlanStatistics.recordDispatchCost(dispatchCost);
+  }
+
+  public long getDispatchCost() {
+    return queryPlanStatistics.getDispatchCost();
   }
 
   public void setAnalyzeCost(long analyzeCost) {
@@ -289,5 +320,41 @@ public class MPPQueryContext {
       queryPlanStatistics = new QueryPlanStatistics();
     }
     queryPlanStatistics.setLogicalOptimizationCost(logicalOptimizeCost);
+  }
+
+  // region =========== FE memory related, make sure its not called concurrently ===========
+
+  /**
+   * This method does not require concurrency control because the query plan is generated in a
+   * single-threaded manner.
+   */
+  public void reserveMemoryForFrontEnd(final long bytes) {
+    this.memoryReservationManager.reserveMemoryCumulatively(bytes);
+  }
+
+  public void reserveMemoryForFrontEndImmediately() {
+    this.memoryReservationManager.reserveMemoryImmediately();
+  }
+
+  public void releaseAllMemoryReservedForFrontEnd() {
+    this.memoryReservationManager.releaseAllReservedMemory();
+  }
+
+  public void releaseMemoryReservedForFrontEnd(final long bytes) {
+    this.memoryReservationManager.releaseMemoryCumulatively(bytes);
+  }
+
+  // endregion
+
+  public Optional<String> getDatabaseName() {
+    return session.getDatabaseName();
+  }
+
+  public boolean isUserQuery() {
+    return userQuery;
+  }
+
+  public void setUserQuery(boolean userQuery) {
+    this.userQuery = userQuery;
   }
 }

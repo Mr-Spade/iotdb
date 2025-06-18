@@ -22,6 +22,7 @@ package org.apache.iotdb.db.queryengine.plan.analyze.schema;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.auth.entity.PrivilegeType;
 import org.apache.iotdb.commons.exception.IoTDBException;
+import org.apache.iotdb.commons.exception.IoTDBRuntimeException;
 import org.apache.iotdb.commons.exception.MetadataException;
 import org.apache.iotdb.commons.path.MeasurementPath;
 import org.apache.iotdb.commons.path.PartialPath;
@@ -35,9 +36,8 @@ import org.apache.iotdb.db.queryengine.common.MPPQueryContext;
 import org.apache.iotdb.db.queryengine.common.schematree.ClusterSchemaTree;
 import org.apache.iotdb.db.queryengine.plan.Coordinator;
 import org.apache.iotdb.db.queryengine.plan.analyze.ClusterPartitionFetcher;
-import org.apache.iotdb.db.queryengine.plan.analyze.QueryType;
 import org.apache.iotdb.db.queryengine.plan.execution.ExecutionResult;
-import org.apache.iotdb.db.queryengine.plan.planner.plan.node.metedata.write.MeasurementGroup;
+import org.apache.iotdb.db.queryengine.plan.planner.plan.node.metadata.write.MeasurementGroup;
 import org.apache.iotdb.db.queryengine.plan.statement.Statement;
 import org.apache.iotdb.db.queryengine.plan.statement.internal.InternalBatchActivateTemplateStatement;
 import org.apache.iotdb.db.queryengine.plan.statement.internal.InternalCreateMultiTimeSeriesStatement;
@@ -91,9 +91,9 @@ class AutoCreateSchemaExecutor {
         "",
         ClusterPartitionFetcher.getInstance(),
         schemaFetcher,
-        context == null || context.getQueryType().equals(QueryType.WRITE)
-            ? config.getQueryTimeoutThreshold()
-            : context.getTimeOut());
+        // Never timeout for write statement
+        Long.MAX_VALUE,
+        false);
   }
 
   // Auto create the missing measurements and merge them into given schemaTree
@@ -203,11 +203,10 @@ class AutoCreateSchemaExecutor {
       if (!AuthorityChecker.SUPER_USER.equals(userName)) {
         TSStatus status =
             AuthorityChecker.getTSStatus(
-                AuthorityChecker.checkSystemPermission(
-                    userName, PrivilegeType.EXTEND_TEMPLATE.ordinal()),
+                AuthorityChecker.checkSystemPermission(userName, PrivilegeType.EXTEND_TEMPLATE),
                 PrivilegeType.EXTEND_TEMPLATE);
         if (status.getCode() != TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
-          throw new RuntimeException(new IoTDBException(status.getMessage(), status.getCode()));
+          throw new IoTDBRuntimeException(status.getMessage(), status.getCode());
         }
       }
     } finally {
@@ -225,11 +224,10 @@ class AutoCreateSchemaExecutor {
       if (!AuthorityChecker.SUPER_USER.equals(userName)) {
         TSStatus status =
             AuthorityChecker.getTSStatus(
-                AuthorityChecker.checkSystemPermission(
-                    userName, PrivilegeType.EXTEND_TEMPLATE.ordinal()),
+                AuthorityChecker.checkSystemPermission(userName, PrivilegeType.EXTEND_TEMPLATE),
                 PrivilegeType.EXTEND_TEMPLATE);
         if (status.getCode() != TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
-          throw new RuntimeException(new IoTDBException(status.getMessage(), status.getCode()));
+          throw new IoTDBRuntimeException(status.getMessage(), status.getCode());
         }
       }
     } finally {
@@ -488,9 +486,10 @@ class AutoCreateSchemaExecutor {
       }
 
       schemaTree.appendSingleMeasurement(
-          devicePath.concatNode(measurements.get(i)),
+          devicePath.concatAsMeasurementPath(measurements.get(i)),
           new MeasurementSchema(
               measurements.get(i), tsDataTypes.get(i), encodings.get(i), compressors.get(i)),
+          null,
           null,
           null,
           isAligned);
@@ -499,38 +498,41 @@ class AutoCreateSchemaExecutor {
 
   // Auto create timeseries and return the existing timeseries info
   private List<MeasurementPath> executeInternalCreateTimeseriesStatement(
-      Statement statement, MPPQueryContext context) {
-    TSStatus status =
+      final Statement statement, final MPPQueryContext context) {
+    final TSStatus status =
         AuthorityChecker.checkAuthority(statement, context.getSession().getUserName());
     if (status.getCode() != TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
-      throw new RuntimeException(new IoTDBException(status.getMessage(), status.getCode()));
+      throw new IoTDBRuntimeException(status.getMessage(), status.getCode());
     }
 
     ExecutionResult executionResult = executeStatement(statement, context);
 
-    int statusCode = executionResult.status.getCode();
+    final int statusCode = executionResult.status.getCode();
     if (statusCode == TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
       return Collections.emptyList();
     }
 
     if (statusCode != TSStatusCode.MULTIPLE_ERROR.getStatusCode()) {
-      throw new RuntimeException(
-          new IoTDBException(executionResult.status.getMessage(), statusCode));
+      throw new IoTDBRuntimeException(executionResult.status.getMessage(), statusCode);
     }
 
-    Set<String> failedCreationSet = new HashSet<>();
-    List<MeasurementPath> alreadyExistingMeasurements = new ArrayList<>();
-    for (TSStatus subStatus : executionResult.status.subStatus) {
+    final Set<TSStatus> failedCreationSet = new HashSet<>();
+    final List<MeasurementPath> alreadyExistingMeasurements = new ArrayList<>();
+    for (final TSStatus subStatus : executionResult.status.subStatus) {
       if (subStatus.code == TSStatusCode.TIMESERIES_ALREADY_EXIST.getStatusCode()) {
         alreadyExistingMeasurements.add(
             MeasurementPath.parseDataFromString(subStatus.getMessage()));
       } else {
-        failedCreationSet.add(subStatus.message);
+        failedCreationSet.add(subStatus);
       }
     }
 
     if (!failedCreationSet.isEmpty()) {
-      throw new SemanticException(new MetadataException(String.join("; ", failedCreationSet)));
+      throw new SemanticException(
+          new MetadataException(
+              failedCreationSet.stream()
+                  .map(TSStatus::toString)
+                  .collect(Collectors.joining("; "))));
     }
 
     return alreadyExistingMeasurements;
@@ -541,7 +543,7 @@ class AutoCreateSchemaExecutor {
     TSStatus status =
         AuthorityChecker.checkAuthority(statement, context.getSession().getUserName());
     if (status.getCode() != TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
-      throw new RuntimeException(new IoTDBException(status.getMessage(), status.getCode()));
+      throw new IoTDBRuntimeException(status.getMessage(), status.getCode());
     }
     ExecutionResult executionResult = executeStatement(statement, context);
     status = executionResult.status;
@@ -559,7 +561,7 @@ class AutoCreateSchemaExecutor {
     TSStatus status =
         AuthorityChecker.checkAuthority(statement, context.getSession().getUserName());
     if (status.getCode() != TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
-      throw new RuntimeException(new IoTDBException(status.getMessage(), status.getCode()));
+      throw new IoTDBRuntimeException(status.getMessage(), status.getCode());
     }
     ExecutionResult executionResult = executeStatement(statement, context);
     status = executionResult.status;
@@ -612,12 +614,13 @@ class AutoCreateSchemaExecutor {
           continue;
         }
         schemaTree.appendSingleMeasurement(
-            entry.getKey().concatNode(measurementGroup.getMeasurements().get(i)),
+            entry.getKey().concatAsMeasurementPath(measurementGroup.getMeasurements().get(i)),
             new MeasurementSchema(
                 measurementGroup.getMeasurements().get(i),
                 measurementGroup.getDataTypes().get(i),
                 measurementGroup.getEncodings().get(i),
                 measurementGroup.getCompressors().get(i)),
+            null,
             null,
             null,
             entry.getValue().left);

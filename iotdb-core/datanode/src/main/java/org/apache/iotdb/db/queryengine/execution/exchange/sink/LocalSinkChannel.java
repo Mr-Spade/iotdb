@@ -27,10 +27,12 @@ import org.apache.iotdb.mpp.rpc.thrift.TFragmentInstanceId;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.commons.lang3.Validate;
 import org.apache.tsfile.read.common.block.TsBlock;
+import org.apache.tsfile.utils.RamUsageEstimator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
 
 import static com.google.common.util.concurrent.Futures.immediateVoidFuture;
 import static com.google.common.util.concurrent.Futures.nonCancellationPropagating;
@@ -55,6 +57,11 @@ public class LocalSinkChannel implements ISinkChannel {
 
   private static final DataExchangeCostMetricSet DATA_EXCHANGE_COST_METRIC_SET =
       DataExchangeCostMetricSet.getInstance();
+
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(LocalSinkChannel.class)
+          + +RamUsageEstimator.shallowSizeOfInstance(TFragmentInstanceId.class)
+          + RamUsageEstimator.shallowSizeOfInstance(SharedTsBlockQueue.class);
 
   public LocalSinkChannel(SharedTsBlockQueue queue, SinkListener sinkListener) {
     this.sinkListener = Validate.notNull(sinkListener, "sinkListener can not be null.");
@@ -225,9 +232,25 @@ public class LocalSinkChannel implements ISinkChannel {
     return queue;
   }
 
-  private void checkState() {
+  @Override
+  public void checkState() {
     if (aborted) {
-      throw new IllegalStateException("LocalSinkChannel is aborted.");
+      Optional<Throwable> abortedCause = queue.getAbortedCause();
+      if (abortedCause.isPresent()) {
+        throw new IllegalStateException(abortedCause.get());
+      }
+      if (queue.isBlocked().isDone()) {
+        // try throw underlying exception
+        try {
+          queue.isBlocked().get();
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          throw new IllegalStateException(e);
+        } catch (ExecutionException e) {
+          throw new IllegalStateException(e.getCause() == null ? e : e.getCause());
+        }
+      }
+      throw new IllegalStateException("LocalSinkChannel is ABORTED.");
     }
   }
 
@@ -236,6 +259,11 @@ public class LocalSinkChannel implements ISinkChannel {
     if (maxBytesCanReserve < queue.getMaxBytesCanReserve()) {
       queue.setMaxBytesCanReserve(maxBytesCanReserve);
     }
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE;
   }
 
   // region ============ ISinkChannel related ============

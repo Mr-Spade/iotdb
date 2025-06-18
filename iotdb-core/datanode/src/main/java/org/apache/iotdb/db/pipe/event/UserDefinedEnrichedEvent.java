@@ -20,9 +20,10 @@
 package org.apache.iotdb.db.pipe.event;
 
 import org.apache.iotdb.commons.consensus.index.ProgressIndex;
+import org.apache.iotdb.commons.pipe.agent.task.meta.PipeTaskMeta;
+import org.apache.iotdb.commons.pipe.datastructure.pattern.TablePattern;
+import org.apache.iotdb.commons.pipe.datastructure.pattern.TreePattern;
 import org.apache.iotdb.commons.pipe.event.EnrichedEvent;
-import org.apache.iotdb.commons.pipe.pattern.PipePattern;
-import org.apache.iotdb.commons.pipe.task.meta.PipeTaskMeta;
 import org.apache.iotdb.pipe.api.event.Event;
 import org.apache.iotdb.pipe.api.event.UserDefinedEvent;
 
@@ -31,7 +32,7 @@ public class UserDefinedEnrichedEvent extends EnrichedEvent {
   private final UserDefinedEvent userDefinedEvent;
   private final EnrichedEvent enrichedEvent;
 
-  public static Event maybeOf(Event event) {
+  public static Event maybeOf(final Event event) {
     return event instanceof UserDefinedEvent
             && ((UserDefinedEvent) event).getSourceEvent() instanceof EnrichedEvent
         ? new UserDefinedEnrichedEvent(
@@ -39,11 +40,16 @@ public class UserDefinedEnrichedEvent extends EnrichedEvent {
         : event;
   }
 
-  private UserDefinedEnrichedEvent(UserDefinedEvent userDefinedEvent, EnrichedEvent enrichedEvent) {
+  private UserDefinedEnrichedEvent(
+      final UserDefinedEvent userDefinedEvent, final EnrichedEvent enrichedEvent) {
     super(
         enrichedEvent.getPipeName(),
+        enrichedEvent.getCreationTime(),
         enrichedEvent.getPipeTaskMeta(),
-        enrichedEvent.getPipePattern(),
+        enrichedEvent.getTreePattern(),
+        enrichedEvent.getTablePattern(),
+        enrichedEvent.getUserName(),
+        enrichedEvent.isSkipIfNoPrivileges(),
         enrichedEvent.getStartTime(),
         enrichedEvent.getEndTime());
     this.userDefinedEvent = userDefinedEvent;
@@ -55,12 +61,12 @@ public class UserDefinedEnrichedEvent extends EnrichedEvent {
   }
 
   @Override
-  public boolean internallyIncreaseResourceReferenceCount(String holderMessage) {
+  public boolean internallyIncreaseResourceReferenceCount(final String holderMessage) {
     return enrichedEvent.internallyIncreaseResourceReferenceCount(holderMessage);
   }
 
   @Override
-  public boolean internallyDecreaseResourceReferenceCount(String holderMessage) {
+  public boolean internallyDecreaseResourceReferenceCount(final String holderMessage) {
     return enrichedEvent.internallyDecreaseResourceReferenceCount(holderMessage);
   }
 
@@ -71,13 +77,25 @@ public class UserDefinedEnrichedEvent extends EnrichedEvent {
 
   @Override
   public EnrichedEvent shallowCopySelfAndBindPipeTaskMetaForProgressReport(
-      String pipeName,
-      PipeTaskMeta pipeTaskMeta,
-      PipePattern pattern,
-      long startTime,
-      long endTime) {
+      final String pipeName,
+      final long creationTime,
+      final PipeTaskMeta pipeTaskMeta,
+      final TreePattern treePattern,
+      final TablePattern tablePattern,
+      final String userName,
+      final boolean skipIfNoPrivileges,
+      final long startTime,
+      final long endTime) {
     return enrichedEvent.shallowCopySelfAndBindPipeTaskMetaForProgressReport(
-        pipeName, pipeTaskMeta, pattern, startTime, endTime);
+        pipeName,
+        creationTime,
+        pipeTaskMeta,
+        treePattern,
+        tablePattern,
+        userName,
+        skipIfNoPrivileges,
+        startTime,
+        endTime);
   }
 
   @Override
@@ -88,5 +106,10 @@ public class UserDefinedEnrichedEvent extends EnrichedEvent {
   @Override
   public boolean mayEventTimeOverlappedWithTimeRange() {
     return enrichedEvent.mayEventTimeOverlappedWithTimeRange();
+  }
+
+  @Override
+  public boolean mayEventPathsOverlappedWithPattern() {
+    return enrichedEvent.mayEventPathsOverlappedWithPattern();
   }
 }

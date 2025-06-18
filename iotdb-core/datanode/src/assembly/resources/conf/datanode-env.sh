@@ -21,6 +21,7 @@
 # You can set DataNode memory size, example '2G' or '2048M'
 MEMORY_SIZE=
 
+
 # You can put your env variable here
 # export JAVA_HOME=$JAVA_HOME
 
@@ -143,6 +144,48 @@ calculate_memory_sizes()
 }
 
 
+# find first dir of dn_data_dirs from properties file
+get_first_data_dir() {
+    local config_file="$1"
+    local data_dir_value=""
+
+    data_dir_value=`sed '/^dn_data_dirs=/!d;s/.*=//' ${IOTDB_CONF}/${config_file} | tail -n 1`
+
+    if [ -z "$data_dir_value" ]; then
+        echo ""
+        return 0
+    fi
+
+    if [[ "$data_dir_value" == *";"* ]]; then
+        data_dir_value=$(echo "$data_dir_value" | cut -d';' -f1)
+    fi
+    if [[ "$data_dir_value" == *","* ]]; then
+        data_dir_value=$(echo "$data_dir_value" | cut -d',' -f1)
+    fi
+
+    # trim the dir
+    data_dir_value=$(echo "$data_dir_value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+    if [[ "$data_dir_value" == /* ]]; then
+        echo "$data_dir_value"
+    else
+        echo "$IOTDB_HOME/$data_dir_value"
+    fi
+}
+
+if [ -f "${IOTDB_CONF}/iotdb-system.properties" ]; then
+  	heap_dump_dir=$(get_first_data_dir "iotdb-system.properties")
+else
+  	heap_dump_dir=$(get_first_data_dir "iotdb-datanode.properties")
+fi
+
+if [ -z "$heap_dump_dir" ]; then
+  	heap_dump_dir="$IOTDB_HOME/data/datanode/data"
+fi
+if [ ! -d "$heap_dump_dir" ]; then
+  	mkdir -p "$heap_dump_dir"
+fi
+
 # find java in JAVA_HOME
 if [ -n "$JAVA_HOME" ]; then
     for java in "$JAVA_HOME"/bin/amd64/java "$JAVA_HOME"/bin/java; do
@@ -166,12 +209,12 @@ jvmver=`echo "$java_ver_output" | grep '[openjdk|java] version' | awk -F'"' 'NR=
 JVM_VERSION=${jvmver%_*}
 JVM_PATCH_VERSION=${jvmver#*_}
 if [ "$JVM_VERSION" \< "1.8" ] ; then
-    echo "IoTDB requires Java 8u40 or later."
+    echo "IoTDB requires Java 8u92 or later."
     exit 1;
 fi
 
-if [ "$JVM_VERSION" \< "1.8" ] && [ "$JVM_PATCH_VERSION" -lt 40 ] ; then
-    echo "IoTDB requires Java 8u40 or later."
+if [ "$JVM_VERSION" \< "1.8" ] && [ "$JVM_PATCH_VERSION" -lt 92 ] ; then
+    echo "IoTDB requires Java 8u92 or later."
     exit 1;
 fi
 
@@ -218,13 +261,26 @@ else
     illegal_access_params="$illegal_access_params --add-opens=java.base/java.net=ALL-UNNAMED"
 fi
 
-
 calculate_memory_sizes
 
 # on heap memory size
 #ON_HEAP_MEMORY="2G"
 # off heap memory size
 #OFF_HEAP_MEMORY="512M"
+
+# configure JVM memory with set environment variable of IOTDB_JMX_OPTS
+if [[ "$IOTDB_JMX_OPTS" =~ -Xmx ]];then
+    item_arr=(${IOTDB_JMX_OPTS})
+    for item in ${item_arr[@]};do
+        if [[ -n "$item" ]]; then
+            if [[ "$item" =~ -Xmx ]]; then
+                ON_HEAP_MEMORY=${item#*mx}
+            elif [[ "$item" =~ -XX:MaxDirectMemorySize= ]]; then
+                OFF_HEAP_MEMORY=${item#*=}
+            fi
+        fi
+    done
+fi
 
 
 if [ "${OFF_HEAP_MEMORY%"G"}" != "$OFF_HEAP_MEMORY" ]
@@ -269,10 +325,11 @@ else
   echo "setting local JMX..."
 fi
 
+
 IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -Diotdb.jmx.local=$JMX_LOCAL"
-IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -Xms${ON_HEAP_MEMORY}"
-IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -Xmx${ON_HEAP_MEMORY}"
-IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -XX:MaxDirectMemorySize=${OFF_HEAP_MEMORY}"
+if [[ ! "$CONFIGNODE_JMX_OPTS" =~ -Xms ]]; then  IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -Xms${ON_HEAP_MEMORY}"; fi
+if [[ ! "$CONFIGNODE_JMX_OPTS" =~ -Xmx ]]; then IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -Xmx${ON_HEAP_MEMORY}"; fi
+if [[ ! "$CONFIGNODE_JMX_OPTS" =~ -XX:MaxDirectMemorySize= ]]; then IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -XX:MaxDirectMemorySize=${OFF_HEAP_MEMORY}"; fi
 IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -Djdk.nio.maxCachedBufferSize=${MAX_CACHED_BUFFER_SIZE}"
 IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -XX:+CrashOnOutOfMemoryError"
 IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -XX:+UseAdaptiveSizePolicy"
@@ -300,9 +357,8 @@ IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -XX:+SafepointTimeout"
 # NOTE: it may reduce memory utilization and trigger OOM killer when memory is tight.
 # IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -XX:+AlwaysPreTouch"
 
-# if you want to dump the heap memory while OOM happening, you can use the following command, remember to replace /tmp/heapdump.hprof with your own file path and the folder where this file is located needs to be created in advance
-# IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/tmp/datanode_heapdump.hprof"
-
+# if you want to dump the heap memory while OOM happening, you can use the following command, remember to replace ${heap_dump_dir}/datanode_heapdump.hprof with your own file path and the folder where this file is located needs to be created in advance
+# IOTDB_JMX_OPTS="$IOTDB_JMX_OPTS -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=${heap_dump_dir}/datanode_heapdump.hprof"
 
 echo "DataNode on heap memory size = ${ON_HEAP_MEMORY}B, off heap memory size = ${OFF_HEAP_MEMORY}B"
 echo "If you want to change this configuration, please check conf/datanode-env.sh."

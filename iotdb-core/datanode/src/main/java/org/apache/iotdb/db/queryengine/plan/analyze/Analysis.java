@@ -25,11 +25,14 @@ import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.common.rpc.thrift.TSchemaNode;
 import org.apache.iotdb.common.rpc.thrift.TTimePartitionSlot;
+import org.apache.iotdb.commons.model.ModelInformation;
 import org.apache.iotdb.commons.partition.DataPartition;
 import org.apache.iotdb.commons.partition.SchemaPartition;
 import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.db.queryengine.common.DeviceContext;
 import org.apache.iotdb.db.queryengine.common.MPPQueryContext;
 import org.apache.iotdb.db.queryengine.common.NodeRef;
+import org.apache.iotdb.db.queryengine.common.TimeseriesContext;
 import org.apache.iotdb.db.queryengine.common.header.DatasetHeader;
 import org.apache.iotdb.db.queryengine.common.schematree.ISchemaTree;
 import org.apache.iotdb.db.queryengine.plan.execution.memory.StatementMemorySource;
@@ -38,6 +41,8 @@ import org.apache.iotdb.db.queryengine.plan.execution.memory.StatementMemorySour
 import org.apache.iotdb.db.queryengine.plan.expression.Expression;
 import org.apache.iotdb.db.queryengine.plan.expression.ExpressionType;
 import org.apache.iotdb.db.queryengine.plan.expression.leaf.TimeSeriesOperand;
+import org.apache.iotdb.db.queryengine.plan.planner.plan.TimePredicate;
+import org.apache.iotdb.db.queryengine.plan.planner.plan.TreeModelTimePredicate;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.process.FilterNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.parameter.DeviceViewIntoPathDescriptor;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.parameter.FillDescriptor;
@@ -45,6 +50,7 @@ import org.apache.iotdb.db.queryengine.plan.planner.plan.parameter.GroupByParame
 import org.apache.iotdb.db.queryengine.plan.planner.plan.parameter.GroupByTimeParameter;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.parameter.IntoPathDescriptor;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.parameter.OrderByParameter;
+import org.apache.iotdb.db.queryengine.plan.planner.plan.parameter.model.ModelInferenceDescriptor;
 import org.apache.iotdb.db.queryengine.plan.statement.Statement;
 import org.apache.iotdb.db.queryengine.plan.statement.StatementType;
 import org.apache.iotdb.db.queryengine.plan.statement.component.Ordering;
@@ -55,6 +61,7 @@ import org.apache.iotdb.db.queryengine.plan.statement.sys.ShowQueriesStatement;
 import org.apache.iotdb.db.schemaengine.template.Template;
 
 import org.apache.tsfile.enums.TSDataType;
+import org.apache.tsfile.file.metadata.IDeviceID;
 import org.apache.tsfile.read.common.block.TsBlock;
 import org.apache.tsfile.read.filter.basic.Filter;
 import org.apache.tsfile.utils.Pair;
@@ -76,6 +83,8 @@ public class Analysis implements IAnalysis {
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Common Analysis
   /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  private String databaseName;
 
   // Statement
   private Statement statement;
@@ -144,39 +153,39 @@ public class Analysis implements IAnalysis {
   private List<PartialPath> deviceList;
 
   // map from device name to series/aggregation under this device
-  private Map<String, Set<Expression>> deviceToSourceExpressions;
+  private Map<IDeviceID, Set<Expression>> deviceToSourceExpressions;
 
   // input expressions of aggregations to be calculated
-  private Map<String, Set<Expression>> deviceToSourceTransformExpressions = new HashMap<>();
+  private Map<IDeviceID, Set<Expression>> deviceToSourceTransformExpressions = new HashMap<>();
 
   // map from device name to query filter under this device
-  private Map<String, Expression> deviceToWhereExpression;
+  private Map<IDeviceID, Expression> deviceToWhereExpression;
 
   // all aggregations that need to be calculated
-  private Map<String, Set<Expression>> deviceToAggregationExpressions = new HashMap<>();
+  private Map<IDeviceID, Set<Expression>> deviceToAggregationExpressions = new HashMap<>();
 
   // expression of output column to be calculated
-  private Map<String, Set<Expression>> deviceToSelectExpressions;
+  private Map<IDeviceID, Set<Expression>> deviceToSelectExpressions;
 
   // expression of group by that need to be calculated
-  private Map<String, Expression> deviceToGroupByExpression;
+  private Map<IDeviceID, Expression> deviceToGroupByExpression;
 
   // expression of order by that need to be calculated
-  private Map<String, Set<Expression>> deviceToOrderByExpressions;
+  private Map<IDeviceID, Set<Expression>> deviceToOrderByExpressions;
 
   // the sortItems used in order by push down of align by device
-  private Map<String, List<SortItem>> deviceToSortItems;
+  private Map<IDeviceID, List<SortItem>> deviceToSortItems;
 
   // e.g. [s1,s2,s3] is query, but [s1, s3] exists in device1, then device1 -> [1, 3], s1 is 1 but
   // not 0 because device is the first column
-  private Map<String, List<Integer>> deviceViewInputIndexesMap;
+  private Map<IDeviceID, List<Integer>> deviceViewInputIndexesMap;
 
   private Set<Expression> deviceViewOutputExpressions;
 
-  private Map<String, Set<Expression>> deviceToOutputExpressions = new HashMap<>();
+  private Map<IDeviceID, Set<Expression>> deviceToOutputExpressions = new HashMap<>();
 
   // map from output device name to queried devices
-  private Map<String, String> outputDeviceToQueriedDevicesMap;
+  private Map<IDeviceID, IDeviceID> outputDeviceToQueriedDevicesMap;
 
   // indicates whether DeviceView need special process when rewriteSource in DistributionPlan,
   // you can see SourceRewriter#visitDeviceView to get more information
@@ -190,7 +199,7 @@ public class Analysis implements IAnalysis {
   // indicate is there a value filter
   private boolean hasValueFilter = false;
 
-  // a global time predicate used in `initQueryDataSource` and filter push down
+  // a global time predicate used in `initQueryDataSource` and filter push down?
   private Expression globalTimePredicate;
 
   // expression of output column to be calculated
@@ -232,6 +241,8 @@ public class Analysis implements IAnalysis {
 
   // indicate whether the Nodes produce source data are VirtualSourceNodes
   private boolean isVirtualSource = false;
+
+  private ModelInferenceDescriptor modelInferenceDescriptor;
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // SELECT INTO Analysis
@@ -275,7 +286,7 @@ public class Analysis implements IAnalysis {
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
   // extra message from config node, queries wll be sent to these Running DataNodes
-  private List<TDataNodeLocation> runningDataNodeLocations;
+  private List<TDataNodeLocation> readableDataNodeLocations;
 
   // used for limit and offset push down optimizer, if we select all columns from aligned device, we
   // can use statistics to skip
@@ -292,12 +303,34 @@ public class Analysis implements IAnalysis {
   private Template deviceTemplate;
   // when deviceTemplate is not empty and all expressions in this query are templated measurements,
   // i.e. no aggregation and arithmetic expression
-  private boolean onlyQueryTemplateMeasurements = true;
+  private boolean noWhereAndAggregation = true;
   // if it is wildcard query in templated align by device query
   private boolean templateWildCardQuery;
   // all queried measurementList and schemaList in deviceTemplate.
   private List<String> measurementList;
   private List<IMeasurementSchema> measurementSchemaList;
+
+  // Used for regionScan
+  private Map<PartialPath, DeviceContext> devicePathToContextMap;
+  private Map<PartialPath, Map<PartialPath, List<TimeseriesContext>>> deviceToTimeseriesSchemas;
+
+  public void setDevicePathToContextMap(Map<PartialPath, DeviceContext> devicePathToContextMap) {
+    this.devicePathToContextMap = devicePathToContextMap;
+  }
+
+  public Map<PartialPath, DeviceContext> getDevicePathToContextMap() {
+    return devicePathToContextMap;
+  }
+
+  public void setDeviceToTimeseriesSchemas(
+      Map<PartialPath, Map<PartialPath, List<TimeseriesContext>>> deviceToTimeseriesSchemas) {
+    this.deviceToTimeseriesSchemas = deviceToTimeseriesSchemas;
+  }
+
+  public Map<PartialPath, Map<PartialPath, List<TimeseriesContext>>>
+      getDeviceToTimeseriesSchemas() {
+    return deviceToTimeseriesSchemas;
+  }
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Used in optimizer
@@ -310,12 +343,21 @@ public class Analysis implements IAnalysis {
   }
 
   public List<TRegionReplicaSet> getPartitionInfo(PartialPath seriesPath, Filter timefilter) {
-    return dataPartition.getDataRegionReplicaSetWithTimeFilter(seriesPath.getDevice(), timefilter);
+    return dataPartition.getDataRegionReplicaSetWithTimeFilter(
+        seriesPath.getIDeviceID(), timefilter);
+  }
+
+  public List<TRegionReplicaSet> getPartitionInfoByDevice(
+      PartialPath devicePath, Filter timefilter) {
+    return dataPartition.getDataRegionReplicaSetWithTimeFilter(
+        devicePath.getIDeviceIDAsFullDevice(), timefilter);
   }
 
   public TRegionReplicaSet getPartitionInfo(
       PartialPath seriesPath, TTimePartitionSlot tTimePartitionSlot) {
-    return dataPartition.getDataRegionReplicaSet(seriesPath.getDevice(), tTimePartitionSlot).get(0);
+    return dataPartition
+        .getDataRegionReplicaSet(seriesPath.getIDeviceID(), tTimePartitionSlot)
+        .get(0);
   }
 
   /**
@@ -324,11 +366,11 @@ public class Analysis implements IAnalysis {
    */
   public List<List<TTimePartitionSlot>> getTimePartitionRange(
       PartialPath seriesPath, Filter timefilter) {
-    return dataPartition.getTimePartitionRange(seriesPath.getDevice(), timefilter);
+    return dataPartition.getTimePartitionRange(seriesPath.getIDeviceID(), timefilter);
   }
 
-  public List<TRegionReplicaSet> getPartitionInfo(String deviceName, Filter globalTimeFilter) {
-    return dataPartition.getDataRegionReplicaSetWithTimeFilter(deviceName, globalTimeFilter);
+  public List<TRegionReplicaSet> getPartitionInfo(IDeviceID deviceID, Filter globalTimeFilter) {
+    return dataPartition.getDataRegionReplicaSetWithTimeFilter(deviceID, globalTimeFilter);
   }
 
   public QueryStatement getQueryStatement() {
@@ -338,14 +380,15 @@ public class Analysis implements IAnalysis {
     return (QueryStatement) statement;
   }
 
-  public Statement getStatement() {
+  public Statement getTreeStatement() {
     return statement;
   }
 
-  public void setStatement(Statement statement) {
+  public void setRealStatement(Statement statement) {
     this.statement = statement;
   }
 
+  @Override
   public DataPartition getDataPartitionInfo() {
     return dataPartition;
   }
@@ -354,6 +397,7 @@ public class Analysis implements IAnalysis {
     this.dataPartition = dataPartition;
   }
 
+  @Override
   public SchemaPartition getSchemaPartitionInfo() {
     return schemaPartition;
   }
@@ -370,14 +414,17 @@ public class Analysis implements IAnalysis {
     this.schemaTree = schemaTree;
   }
 
+  @Override
   public List<TEndPoint> getRedirectNodeList() {
     return redirectNodeList;
   }
 
+  @Override
   public void setRedirectNodeList(List<TEndPoint> redirectNodeList) {
     this.redirectNodeList = redirectNodeList;
   }
 
+  @Override
   public void addEndPointToRedirectNodeList(TEndPoint endPoint) {
     if (redirectNodeList == null) {
       redirectNodeList = new ArrayList<>();
@@ -389,8 +436,13 @@ public class Analysis implements IAnalysis {
     return globalTimePredicate;
   }
 
-  public void setGlobalTimePredicate(Expression timeFilter) {
+  public void setGlobalTimePredicate(final Expression timeFilter) {
     this.globalTimePredicate = timeFilter;
+  }
+
+  @Override
+  public TimePredicate getConvertedTimePredicate() {
+    return globalTimePredicate == null ? null : new TreeModelTimePredicate(globalTimePredicate);
   }
 
   @Override
@@ -398,29 +450,29 @@ public class Analysis implements IAnalysis {
     return respDatasetHeader;
   }
 
-  public void setRespDatasetHeader(DatasetHeader respDatasetHeader) {
+  public void setRespDatasetHeader(final DatasetHeader respDatasetHeader) {
     this.respDatasetHeader = respDatasetHeader;
   }
 
-  public TSDataType getType(Expression expression) {
+  public TSDataType getType(final Expression expression) {
     // NULL_Operand needn't check
     if (expression.getExpressionType().equals(ExpressionType.NULL)) {
       return null;
     }
 
-    if (isAllDevicesInOneTemplate()
-        && (isOnlyQueryTemplateMeasurements() || expression instanceof TimeSeriesOperand)) {
+    if (allDevicesInOneTemplate()
+        && (noWhereAndAggregation() || expression instanceof TimeSeriesOperand)) {
       TimeSeriesOperand seriesOperand = (TimeSeriesOperand) expression;
       return deviceTemplate.getSchemaMap().get(seriesOperand.getPath().getMeasurement()).getType();
     }
 
-    TSDataType type = expressionTypes.get(NodeRef.of(expression));
+    final TSDataType type = expressionTypes.get(NodeRef.of(expression));
     checkArgument(type != null, "Expression is not analyzed: %s", expression);
     return type;
   }
 
   @Override
-  public boolean canSkipExecute(MPPQueryContext context) {
+  public boolean canSkipExecute(final MPPQueryContext context) {
     return isFinishQueryAfterAnalyze()
         || (context.getQueryType() == QueryType.READ && !hasDataSource());
   }
@@ -434,10 +486,10 @@ public class Analysis implements IAnalysis {
   }
 
   @Override
-  public TsBlock constructResultForMemorySource(MPPQueryContext context) {
-    StatementMemorySource memorySource =
+  public TsBlock constructResultForMemorySource(final MPPQueryContext context) {
+    final StatementMemorySource memorySource =
         new StatementMemorySourceVisitor()
-            .process(getStatement(), new StatementMemorySourceContext(context, this));
+            .process(getTreeStatement(), new StatementMemorySourceContext(context, this));
     setRespDatasetHeader(memorySource.getDatasetHeader());
     return memorySource.getTsBlock();
   }
@@ -463,7 +515,8 @@ public class Analysis implements IAnalysis {
     return crossGroupByExpressions;
   }
 
-  public void setCrossGroupByExpressions(Map<Expression, Set<Expression>> crossGroupByExpressions) {
+  public void setCrossGroupByExpressions(
+      final Map<Expression, Set<Expression>> crossGroupByExpressions) {
     this.crossGroupByExpressions = crossGroupByExpressions;
   }
 
@@ -471,7 +524,7 @@ public class Analysis implements IAnalysis {
     return fillDescriptor;
   }
 
-  public void setFillDescriptor(FillDescriptor fillDescriptor) {
+  public void setFillDescriptor(final FillDescriptor fillDescriptor) {
     this.fillDescriptor = fillDescriptor;
   }
 
@@ -479,7 +532,7 @@ public class Analysis implements IAnalysis {
     return hasValueFilter;
   }
 
-  public void setHasValueFilter(boolean hasValueFilter) {
+  public void setHasValueFilter(final boolean hasValueFilter) {
     this.hasValueFilter = hasValueFilter;
   }
 
@@ -487,15 +540,15 @@ public class Analysis implements IAnalysis {
     return whereExpression;
   }
 
-  public void setWhereExpression(Expression whereExpression) {
+  public void setWhereExpression(final Expression whereExpression) {
     this.whereExpression = whereExpression;
   }
 
-  public Map<String, Expression> getDeviceToWhereExpression() {
+  public Map<IDeviceID, Expression> getDeviceToWhereExpression() {
     return deviceToWhereExpression;
   }
 
-  public void setDeviceToWhereExpression(Map<String, Expression> deviceToWhereExpression) {
+  public void setDeviceToWhereExpression(final Map<IDeviceID, Expression> deviceToWhereExpression) {
     this.deviceToWhereExpression = deviceToWhereExpression;
   }
 
@@ -549,11 +602,12 @@ public class Analysis implements IAnalysis {
     this.failStatus = status;
   }
 
-  public void setDeviceViewInputIndexesMap(Map<String, List<Integer>> deviceViewInputIndexesMap) {
+  public void setDeviceViewInputIndexesMap(
+      Map<IDeviceID, List<Integer>> deviceViewInputIndexesMap) {
     this.deviceViewInputIndexesMap = deviceViewInputIndexesMap;
   }
 
-  public Map<String, List<Integer>> getDeviceViewInputIndexesMap() {
+  public Map<IDeviceID, List<Integer>> getDeviceViewInputIndexesMap() {
     return deviceViewInputIndexesMap;
   }
 
@@ -589,37 +643,39 @@ public class Analysis implements IAnalysis {
     this.selectExpressions = selectExpressions;
   }
 
-  public Map<String, Set<Expression>> getDeviceToSourceExpressions() {
+  public Map<IDeviceID, Set<Expression>> getDeviceToSourceExpressions() {
     return deviceToSourceExpressions;
   }
 
-  public void setDeviceToSourceExpressions(Map<String, Set<Expression>> deviceToSourceExpressions) {
+  public void setDeviceToSourceExpressions(
+      Map<IDeviceID, Set<Expression>> deviceToSourceExpressions) {
     this.deviceToSourceExpressions = deviceToSourceExpressions;
   }
 
-  public Map<String, Set<Expression>> getDeviceToSourceTransformExpressions() {
+  public Map<IDeviceID, Set<Expression>> getDeviceToSourceTransformExpressions() {
     return deviceToSourceTransformExpressions;
   }
 
   public void setDeviceToSourceTransformExpressions(
-      Map<String, Set<Expression>> deviceToSourceTransformExpressions) {
+      Map<IDeviceID, Set<Expression>> deviceToSourceTransformExpressions) {
     this.deviceToSourceTransformExpressions = deviceToSourceTransformExpressions;
   }
 
-  public Map<String, Set<Expression>> getDeviceToAggregationExpressions() {
+  public Map<IDeviceID, Set<Expression>> getDeviceToAggregationExpressions() {
     return deviceToAggregationExpressions;
   }
 
   public void setDeviceToAggregationExpressions(
-      Map<String, Set<Expression>> deviceToAggregationExpressions) {
+      Map<IDeviceID, Set<Expression>> deviceToAggregationExpressions) {
     this.deviceToAggregationExpressions = deviceToAggregationExpressions;
   }
 
-  public Map<String, Set<Expression>> getDeviceToSelectExpressions() {
+  public Map<IDeviceID, Set<Expression>> getDeviceToSelectExpressions() {
     return deviceToSelectExpressions;
   }
 
-  public void setDeviceToSelectExpressions(Map<String, Set<Expression>> deviceToSelectExpressions) {
+  public void setDeviceToSelectExpressions(
+      Map<IDeviceID, Set<Expression>> deviceToSelectExpressions) {
     this.deviceToSelectExpressions = deviceToSelectExpressions;
   }
 
@@ -631,11 +687,11 @@ public class Analysis implements IAnalysis {
     this.groupByExpression = groupByExpression;
   }
 
-  public Map<String, Expression> getDeviceToGroupByExpression() {
+  public Map<IDeviceID, Expression> getDeviceToGroupByExpression() {
     return deviceToGroupByExpression;
   }
 
-  public void setDeviceToGroupByExpression(Map<String, Expression> deviceToGroupByExpression) {
+  public void setDeviceToGroupByExpression(Map<IDeviceID, Expression> deviceToGroupByExpression) {
     this.deviceToGroupByExpression = deviceToGroupByExpression;
   }
 
@@ -749,12 +805,12 @@ public class Analysis implements IAnalysis {
     this.tagValuesToGroupedTimeseriesOperands = tagValuesToGroupedTimeseriesOperands;
   }
 
-  public List<TDataNodeLocation> getRunningDataNodeLocations() {
-    return runningDataNodeLocations;
+  public List<TDataNodeLocation> getReadableDataNodeLocations() {
+    return readableDataNodeLocations;
   }
 
-  public void setRunningDataNodeLocations(List<TDataNodeLocation> runningDataNodeLocations) {
-    this.runningDataNodeLocations = runningDataNodeLocations;
+  public void setReadableDataNodeLocations(List<TDataNodeLocation> readableDataNodeLocations) {
+    this.readableDataNodeLocations = readableDataNodeLocations;
   }
 
   public boolean isVirtualSource() {
@@ -777,12 +833,12 @@ public class Analysis implements IAnalysis {
     return orderByExpressions;
   }
 
-  public Map<String, Set<Expression>> getDeviceToOrderByExpressions() {
+  public Map<IDeviceID, Set<Expression>> getDeviceToOrderByExpressions() {
     return deviceToOrderByExpressions;
   }
 
   public void setDeviceToOrderByExpressions(
-      Map<String, Set<Expression>> deviceToOrderByExpressions) {
+      Map<IDeviceID, Set<Expression>> deviceToOrderByExpressions) {
     this.deviceToOrderByExpressions = deviceToOrderByExpressions;
   }
 
@@ -794,11 +850,11 @@ public class Analysis implements IAnalysis {
     return hasSortNode;
   }
 
-  public Map<String, List<SortItem>> getDeviceToSortItems() {
+  public Map<IDeviceID, List<SortItem>> getDeviceToSortItems() {
     return deviceToSortItems;
   }
 
-  public void setDeviceToSortItems(Map<String, List<SortItem>> deviceToSortItems) {
+  public void setDeviceToSortItems(Map<IDeviceID, List<SortItem>> deviceToSortItems) {
     this.deviceToSortItems = deviceToSortItems;
   }
 
@@ -847,20 +903,36 @@ public class Analysis implements IAnalysis {
     this.lastQueryNonWritableViewSourceExpressionMap = lastQueryNonWritableViewSourceExpressionMap;
   }
 
-  public Map<String, String> getOutputDeviceToQueriedDevicesMap() {
+  public ModelInferenceDescriptor getModelInferenceDescriptor() {
+    return modelInferenceDescriptor;
+  }
+
+  public ModelInformation getModelInformation() {
+    if (modelInferenceDescriptor == null) {
+      return null;
+    }
+    return modelInferenceDescriptor.getModelInformation();
+  }
+
+  public void setModelInferenceDescriptor(ModelInferenceDescriptor modelInferenceDescriptor) {
+    this.modelInferenceDescriptor = modelInferenceDescriptor;
+  }
+
+  public Map<IDeviceID, IDeviceID> getOutputDeviceToQueriedDevicesMap() {
     return outputDeviceToQueriedDevicesMap;
   }
 
   public void setOutputDeviceToQueriedDevicesMap(
-      Map<String, String> outputDeviceToQueriedDevicesMap) {
+      Map<IDeviceID, IDeviceID> outputDeviceToQueriedDevicesMap) {
     this.outputDeviceToQueriedDevicesMap = outputDeviceToQueriedDevicesMap;
   }
 
-  public Map<String, Set<Expression>> getDeviceToOutputExpressions() {
+  public Map<IDeviceID, Set<Expression>> getDeviceToOutputExpressions() {
     return deviceToOutputExpressions;
   }
 
-  public void setDeviceToOutputExpressions(Map<String, Set<Expression>> deviceToOutputExpressions) {
+  public void setDeviceToOutputExpressions(
+      Map<IDeviceID, Set<Expression>> deviceToOutputExpressions) {
     this.deviceToOutputExpressions = deviceToOutputExpressions;
   }
 
@@ -892,7 +964,7 @@ public class Analysis implements IAnalysis {
   // All Queries Devices Set In One Template
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
-  public boolean isAllDevicesInOneTemplate() {
+  public boolean allDevicesInOneTemplate() {
     return this.deviceTemplate != null;
   }
 
@@ -904,12 +976,12 @@ public class Analysis implements IAnalysis {
     this.deviceTemplate = template;
   }
 
-  public boolean isOnlyQueryTemplateMeasurements() {
-    return onlyQueryTemplateMeasurements;
+  public boolean noWhereAndAggregation() {
+    return noWhereAndAggregation;
   }
 
-  public void setOnlyQueryTemplateMeasurements(boolean onlyQueryTemplateMeasurements) {
-    this.onlyQueryTemplateMeasurements = onlyQueryTemplateMeasurements;
+  public void setNoWhereAndAggregation(boolean value) {
+    this.noWhereAndAggregation = value;
   }
 
   public List<String> getMeasurementList() {
@@ -942,5 +1014,15 @@ public class Analysis implements IAnalysis {
 
   public boolean fromWhere(FilterNode filterNode) {
     return fromWhereFilterNodes.contains(NodeRef.of(filterNode));
+  }
+
+  @Override
+  public void setDatabaseName(String database) {
+    this.databaseName = database;
+  }
+
+  @Override
+  public String getDatabaseName() {
+    return databaseName;
   }
 }

@@ -26,17 +26,14 @@ function on_stop(){
     if [[ "$start_what" != "confignode" ]]; then
         echo "###### manually flush ######";
         start-cli.sh -e "flush;" || true
-        stop-datanode.sh
-        echo "##### done ######";
-    else
-        stop-confignode.sh;
     fi
+    stop-standalone.sh
 }
 
 trap 'on_stop' SIGTERM SIGKILL SIGQUIT
 
 
-replace-conf-from-env.sh ${start_what}
+replace-conf-from-env.sh
 
 case "$1" in
    datanode)

@@ -105,7 +105,9 @@ public class ClusterScheduler implements IScheduler {
   private boolean needRetry(TSStatus failureStatus) {
     return failureStatus != null
         && queryType == QueryType.READ
-        && failureStatus.getCode() == TSStatusCode.DISPATCH_ERROR.getStatusCode();
+        && (failureStatus.getCode() == TSStatusCode.DISPATCH_ERROR.getStatusCode()
+            || failureStatus.getCode()
+                == TSStatusCode.TOO_MANY_CONCURRENT_QUERIES_ERROR.getStatusCode());
   }
 
   @Override
@@ -147,20 +149,16 @@ public class ClusterScheduler implements IScheduler {
     // QueryState to Running
     stateMachine.transitionToRunning();
 
-    // TODO: (xingtanzjr) start the stateFetcher/heartbeat for each fragment instance
     this.stateTracker.start();
     logger.debug("state tracker starts");
   }
 
   @Override
   public void stop(Throwable t) {
-    // TODO: It seems that it is unnecessary to check whether they are null or not. Is it a best
-    // practice ?
     dispatcher.abort();
     if (stateTracker != null) {
       stateTracker.abort();
     }
-    // TODO: (xingtanzjr) handle the exception when the termination cannot succeed
     if (queryTerminator != null) {
       queryTerminator.terminate(t);
     }

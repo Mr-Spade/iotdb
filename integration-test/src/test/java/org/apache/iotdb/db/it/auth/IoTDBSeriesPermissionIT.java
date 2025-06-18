@@ -20,7 +20,7 @@
 package org.apache.iotdb.db.it.auth;
 
 import org.apache.iotdb.commons.auth.entity.PrivilegeType;
-import org.apache.iotdb.db.queryengine.common.header.ColumnHeader;
+import org.apache.iotdb.commons.schema.column.ColumnHeader;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
@@ -32,22 +32,22 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import static org.apache.iotdb.commons.schema.column.ColumnHeaderConstant.TIME;
+import static org.apache.iotdb.commons.schema.column.ColumnHeaderConstant.countDevicesColumnHeaders;
+import static org.apache.iotdb.commons.schema.column.ColumnHeaderConstant.countNodesColumnHeaders;
+import static org.apache.iotdb.commons.schema.column.ColumnHeaderConstant.countTimeSeriesColumnHeaders;
+import static org.apache.iotdb.commons.schema.column.ColumnHeaderConstant.showChildNodesColumnHeaders;
+import static org.apache.iotdb.commons.schema.column.ColumnHeaderConstant.showChildPathsColumnHeaders;
+import static org.apache.iotdb.commons.schema.column.ColumnHeaderConstant.showDevicesColumnHeaders;
+import static org.apache.iotdb.commons.schema.column.ColumnHeaderConstant.showStorageGroupsColumnHeaders;
+import static org.apache.iotdb.commons.schema.column.ColumnHeaderConstant.showTTLColumnHeaders;
+import static org.apache.iotdb.commons.schema.column.ColumnHeaderConstant.showTimeSeriesColumnHeaders;
 import static org.apache.iotdb.db.it.utils.TestUtils.assertNonQueryTestFail;
 import static org.apache.iotdb.db.it.utils.TestUtils.createUser;
 import static org.apache.iotdb.db.it.utils.TestUtils.executeNonQuery;
 import static org.apache.iotdb.db.it.utils.TestUtils.grantUserSeriesPrivilege;
 import static org.apache.iotdb.db.it.utils.TestUtils.grantUserSystemPrivileges;
 import static org.apache.iotdb.db.it.utils.TestUtils.resultSetEqualTest;
-import static org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant.TIME;
-import static org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant.countDevicesColumnHeaders;
-import static org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant.countNodesColumnHeaders;
-import static org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant.countTimeSeriesColumnHeaders;
-import static org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant.showChildNodesColumnHeaders;
-import static org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant.showChildPathsColumnHeaders;
-import static org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant.showDevicesColumnHeaders;
-import static org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant.showStorageGroupsColumnHeaders;
-import static org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant.showTTLColumnHeaders;
-import static org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant.showTimeSeriesColumnHeaders;
 
 @RunWith(IoTDBTestRunner.class)
 @Category({LocalStandaloneIT.class, ClusterIT.class})
@@ -126,7 +126,7 @@ public class IoTDBSeriesPermissionIT {
     executeNonQuery("create timeseries root.test1.d1.s1 with dataType = int32");
     executeNonQuery("create timeseries root.test1.d2.s1 with dataType = int32");
     executeNonQuery("create timeseries root.test3.d1.s1 with dataType = int32");
-    executeNonQuery("set TTL to root.** 10000");
+    executeNonQuery("set TTL to root.test 10000");
 
     // show/count timeseries
     resultSetEqualTest(
@@ -163,7 +163,7 @@ public class IoTDBSeriesPermissionIT {
         showStorageGroupsColumnHeaders.stream()
             .map(ColumnHeader::getColumnName)
             .toArray(String[]::new),
-        new String[] {"root.test,10000,1,1,604800000,"},
+        new String[] {"root.test,1,1,0,604800000,"},
         "test1",
         "test123");
     resultSetEqualTest(
@@ -173,14 +173,14 @@ public class IoTDBSeriesPermissionIT {
     resultSetEqualTest(
         "show devices",
         showDevicesColumnHeaders.stream().map(ColumnHeader::getColumnName).toArray(String[]::new),
-        new String[] {"root.test.d1,false,null,"},
+        new String[] {"root.test.d1,false,null,10000,"},
         "test1",
         "test123");
     grantUserSeriesPrivilege("test1", PrivilegeType.READ_SCHEMA, "root.test1.d1.**");
     resultSetEqualTest(
         "show devices",
         showDevicesColumnHeaders.stream().map(ColumnHeader::getColumnName).toArray(String[]::new),
-        new String[] {"root.test.d1,false,null,", "root.test1.d1,false,null,"},
+        new String[] {"root.test.d1,false,null,10000,", "root.test1.d1,false,null,INF,"},
         "test1",
         "test123");
     resultSetEqualTest(
@@ -237,9 +237,9 @@ public class IoTDBSeriesPermissionIT {
 
     // TTL
     resultSetEqualTest(
-        "show ttl on root.**",
+        "show all ttl",
         showTTLColumnHeaders.stream().map(ColumnHeader::getColumnName).toArray(String[]::new),
-        new String[] {"root.test1,10000,", "root.test,10000,"},
+        new String[] {"root.**,INF,", "root.test,10000,", "root.test.**,10000,"},
         "test1",
         "test123");
   }

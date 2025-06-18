@@ -20,9 +20,9 @@
 package org.apache.iotdb.db.queryengine.plan.statement.metadata;
 
 import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.commons.schema.column.ColumnHeader;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.confignode.rpc.thrift.TDatabaseInfo;
-import org.apache.iotdb.db.queryengine.common.header.ColumnHeader;
-import org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant;
 import org.apache.iotdb.db.queryengine.common.header.DatasetHeader;
 import org.apache.iotdb.db.queryengine.common.header.DatasetHeaderFactory;
 import org.apache.iotdb.db.queryengine.plan.analyze.QueryType;
@@ -54,7 +54,7 @@ public class ShowDatabaseStatement extends ShowStatement implements IConfigState
   private final PartialPath pathPattern;
   private boolean isDetailed;
 
-  public ShowDatabaseStatement(PartialPath pathPattern) {
+  public ShowDatabaseStatement(final PartialPath pathPattern) {
     super();
     this.pathPattern = pathPattern;
     this.isDetailed = false;
@@ -68,14 +68,15 @@ public class ShowDatabaseStatement extends ShowStatement implements IConfigState
     return isDetailed;
   }
 
-  public void setDetailed(boolean detailed) {
+  public void setDetailed(final boolean detailed) {
     isDetailed = detailed;
   }
 
   public void buildTSBlock(
-      Map<String, TDatabaseInfo> storageGroupInfoMap, SettableFuture<ConfigTaskResult> future) {
+      final Map<String, TDatabaseInfo> storageGroupInfoMap,
+      final SettableFuture<ConfigTaskResult> future) {
 
-    List<TSDataType> outputDataTypes =
+    final List<TSDataType> outputDataTypes =
         isDetailed
             ? ColumnHeaderConstant.showStorageGroupsDetailColumnHeaders.stream()
                 .map(ColumnHeader::getColumnType)
@@ -84,22 +85,18 @@ public class ShowDatabaseStatement extends ShowStatement implements IConfigState
                 .map(ColumnHeader::getColumnType)
                 .collect(Collectors.toList());
 
-    TsBlockBuilder builder = new TsBlockBuilder(outputDataTypes);
-    for (Map.Entry<String, TDatabaseInfo> entry : storageGroupInfoMap.entrySet()) {
-      String storageGroup = entry.getKey();
-      TDatabaseInfo storageGroupInfo = entry.getValue();
+    final TsBlockBuilder builder = new TsBlockBuilder(outputDataTypes);
+    for (final Map.Entry<String, TDatabaseInfo> entry : storageGroupInfoMap.entrySet()) {
+      final String storageGroup = entry.getKey();
+      final TDatabaseInfo storageGroupInfo = entry.getValue();
+
       builder.getTimeColumnBuilder().writeLong(0L);
       builder
           .getColumnBuilder(0)
           .writeBinary(new Binary(storageGroup, TSFileConfig.STRING_CHARSET));
-
-      if (Long.MAX_VALUE == storageGroupInfo.getTTL()) {
-        builder.getColumnBuilder(1).appendNull();
-      } else {
-        builder.getColumnBuilder(1).writeLong(storageGroupInfo.getTTL());
-      }
-      builder.getColumnBuilder(2).writeInt(storageGroupInfo.getSchemaReplicationFactor());
-      builder.getColumnBuilder(3).writeInt(storageGroupInfo.getDataReplicationFactor());
+      builder.getColumnBuilder(1).writeInt(storageGroupInfo.getSchemaReplicationFactor());
+      builder.getColumnBuilder(2).writeInt(storageGroupInfo.getDataReplicationFactor());
+      builder.getColumnBuilder(3).writeLong(storageGroupInfo.getTimePartitionOrigin());
       builder.getColumnBuilder(4).writeLong(storageGroupInfo.getTimePartitionInterval());
       if (isDetailed) {
         builder.getColumnBuilder(5).writeInt(storageGroupInfo.getSchemaRegionNum());
@@ -112,12 +109,12 @@ public class ShowDatabaseStatement extends ShowStatement implements IConfigState
       builder.declarePosition();
     }
 
-    DatasetHeader datasetHeader = DatasetHeaderFactory.getShowStorageGroupHeader(isDetailed);
+    final DatasetHeader datasetHeader = DatasetHeaderFactory.getShowStorageGroupHeader(isDetailed);
     future.set(new ConfigTaskResult(TSStatusCode.SUCCESS_STATUS, builder.build(), datasetHeader));
   }
 
   @Override
-  public <R, C> R accept(StatementVisitor<R, C> visitor, C context) {
+  public <R, C> R accept(final StatementVisitor<R, C> visitor, C context) {
     return visitor.visitShowStorageGroup(this, context);
   }
 

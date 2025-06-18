@@ -129,6 +129,10 @@ CACHE
     : C A C H E
     ;
 
+CALL
+    : C A L L
+    ;
+
 CAST
     : C A S T
     ;
@@ -161,8 +165,16 @@ CONFIGNODES
     : C O N F I G N O D E S
     ;
 
+CONFIGNODE
+    : C O N F I G N O D E
+    ;
+
 CONFIGURATION
     : C O N F I G U R A T I O N
+    ;
+
+CONNECTION
+    : C O N N E C T I O N
     ;
 
 CONNECTOR
@@ -197,6 +209,14 @@ CREATE
     : C R E A T E
     ;
 
+CURRENT_SQL_DIALECT
+    : C U R R E N T '_' S Q L '_' D I A L E C T
+    ;
+
+CURRENT_USER
+    : C U R R E N T '_' U S E R
+    ;
+
 DATA
     : D A T A
     ;
@@ -207,6 +227,10 @@ DATABASE
 
 DATABASES
     : D A T A B A S E S
+    ;
+
+DATANODE
+    : D A T A N O D E
     ;
 
 DATANODEID
@@ -278,12 +302,24 @@ ENDTIME
     : E N D T I M E
     ;
 
+ESCAPE
+    : E S C A P E
+    ;
+
 EVERY
     : E V E R Y
     ;
 
+EXISTS
+    : E X I S T S
+    ;
+
 EXPLAIN
     : E X P L A I N
+    ;
+
+EXTEND
+    : E X T E N D
     ;
 
 EXTRACTOR
@@ -350,6 +386,10 @@ HAVING
     : H A V I N G
     ;
 
+HEAD
+    : H E A D
+    ;
+
 HYPERPARAMETERS
     : H Y P E R P A R A M E T E R S
     ;
@@ -360,6 +400,10 @@ IN
 
 INDEX
     : I N D E X
+    ;
+
+INFERENCE
+    : I N F E R E N C E
     ;
 
 INFO
@@ -442,6 +486,18 @@ MIGRATE
     : M I G R A T E
     ;
 
+AINODES
+    : A I N O D E S
+    ;
+
+MODEL
+    : M O D E L
+    ;
+
+MODELS
+    : M O D E L S
+    ;
+
 MODIFY
     : M O D I F Y
     ;
@@ -516,6 +572,10 @@ PARTITION
 
 PASSWORD
     : P A S S W O R D
+    ;
+
+PATH
+    : P A T H
     ;
 
 PATHS
@@ -604,6 +664,10 @@ RANGE
 
 READONLY
     : R E A D O N L Y
+    ;
+
+RECONSTRUCT
+    : R E C O N S T R U C T
     ;
 
 REGEXP
@@ -714,6 +778,10 @@ SPACE
     : S P A C E
     ;
 
+SQL_DIALECT
+    : S Q L '_' D I A L E C T
+    ;
+
 STORAGE
     : S T O R A G E
     ;
@@ -754,8 +822,16 @@ SYSTEM
     : S Y S T E M
     ;
 
+TABLE
+    : T A B L E
+    ;
+
 TAGS
     : T A G S
+    ;
+
+TAIL
+    : T A I L
     ;
 
 TASK
@@ -820,6 +896,10 @@ TOPICS
 
 TRACING
     : T R A C I N G
+    ;
+
+TREE
+    : T R E E
     ;
 
 TRIGGER
@@ -937,6 +1017,15 @@ THEN
 ELSE
     : E L S E
     ;
+
+IF
+    : I F
+    ;
+
+INF
+    : I N F
+    ;
+
 
 // Privileges Keywords
 
@@ -1100,6 +1189,12 @@ STRING_LITERAL
     | SQUOTA_STRING
     ;
 
+// Note: we allow any character inside the binary literal and validate
+// its a correct literal when the AST is being constructed. This
+// allows us to provide more meaningful error messages to the user
+BINARY_LITERAL
+    : 'X\'' (~'\'')* '\''
+    ;
 
 // Date & Time Literal
 

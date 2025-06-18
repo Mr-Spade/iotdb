@@ -25,10 +25,13 @@ import org.apache.iotdb.db.queryengine.execution.driver.IDriver;
 public class DriverTaskAbortedException extends Exception {
 
   public static final String BY_TIMEOUT = "timeout";
-  public static final String BY_FRAGMENT_ABORT_CALLED = " called";
+  public static final String BY_FRAGMENT_ABORT_CALLED = "called";
   public static final String BY_QUERY_CASCADING_ABORTED = "query cascading aborted";
   public static final String BY_ALREADY_BEING_CANCELLED = "already being cancelled";
   public static final String BY_INTERNAL_ERROR_SCHEDULED = "internal error scheduled";
+
+  public static final String BY_MEMORY_NOT_ENOUGH =
+      "Memory is not enough to execute the query task.";
 
   public DriverTaskAbortedException(String driverTaskName, String causeMsg) {
     super(String.format("DriverTask %s is aborted by %s", driverTaskName, causeMsg));

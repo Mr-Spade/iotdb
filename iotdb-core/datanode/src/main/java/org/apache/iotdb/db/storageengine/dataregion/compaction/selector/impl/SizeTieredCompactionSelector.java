@@ -22,18 +22,17 @@ package org.apache.iotdb.db.storageengine.dataregion.compaction.selector.impl;
 import org.apache.iotdb.commons.conf.IoTDBConstant;
 import org.apache.iotdb.db.conf.IoTDBConfig;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
+import org.apache.iotdb.db.exception.DiskSpaceInsufficientException;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.performer.ICompactionPerformer;
-import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.CompactionTaskPriorityType;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.InnerSpaceCompactionTask;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.RepairUnsortedFileCompactionTask;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.CompactionUtils;
+import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.CompactionScheduleContext;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.CompactionTaskManager;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.schedule.comparator.ICompactionTaskComparator;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.selector.IInnerSeqSpaceSelector;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.selector.IInnerUnseqSpaceSelector;
-import org.apache.iotdb.db.storageengine.dataregion.modification.ModificationFile;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileManager;
-import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileRepairStatus;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResourceStatus;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.generator.TsFileNameGenerator;
@@ -45,7 +44,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 
 /**
  * SizeTieredCompactionSelector selects files to be compacted based on the size of files. The
@@ -61,9 +59,10 @@ public class SizeTieredCompactionSelector
     implements IInnerSeqSpaceSelector, IInnerUnseqSpaceSelector {
   private static final Logger LOGGER =
       LoggerFactory.getLogger(IoTDBConstant.COMPACTION_LOGGER_NAME);
-  private static final IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
+  protected static final IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
   protected String storageGroupName;
   protected String dataRegionId;
+  protected final CompactionScheduleContext context;
   protected long timePartition;
   protected List<TsFileResource> tsFileResources;
   protected boolean sequence;
@@ -75,13 +74,15 @@ public class SizeTieredCompactionSelector
       String dataRegionId,
       long timePartition,
       boolean sequence,
-      TsFileManager tsFileManager) {
+      TsFileManager tsFileManager,
+      CompactionScheduleContext context) {
     this.storageGroupName = storageGroupName;
     this.dataRegionId = dataRegionId;
     this.timePartition = timePartition;
     this.sequence = sequence;
     this.tsFileManager = tsFileManager;
-    hasNextTimePartition = tsFileManager.hasNextTimePartition(timePartition, sequence);
+    this.hasNextTimePartition = tsFileManager.hasNextTimePartition(timePartition, sequence);
+    this.context = context;
   }
 
   /**
@@ -101,6 +102,7 @@ public class SizeTieredCompactionSelector
     List<TsFileResource> selectedFileList = new ArrayList<>();
     long selectedFileSize = 0L;
     long targetCompactionFileSize = config.getTargetCompactionFileSize();
+    int fileLimit = config.getInnerCompactionCandidateFileNum();
 
     List<List<TsFileResource>> taskList = new ArrayList<>();
     for (TsFileResource currentFile : tsFileResources) {
@@ -124,7 +126,7 @@ public class SizeTieredCompactionSelector
       long totalSizeIfSelectCurrentFile = selectedFileSize + currentFile.getTsFileSize();
       boolean canNotAddCurrentFileIntoCurrentTask =
           totalSizeIfSelectCurrentFile > targetCompactionFileSize
-              || selectedFileList.size() >= config.getFileLimitPerInnerTask();
+              || selectedFileList.size() >= fileLimit;
       if (canNotAddCurrentFileIntoCurrentTask) {
         // total file size or num will beyond the threshold if select current file, stop the
         // selection of current task
@@ -149,7 +151,7 @@ public class SizeTieredCompactionSelector
     }
 
     // if the selected file size reach the condition to submit
-    if (selectedFileList.size() == config.getFileLimitPerInnerTask()) {
+    if (selectedFileList.size() == fileLimit) {
       taskList.add(new ArrayList<>(selectedFileList));
       selectedFileList.clear();
       selectedFileSize = 0;
@@ -165,8 +167,7 @@ public class SizeTieredCompactionSelector
 
   private boolean cannotSelectCurrentFileToNormalCompaction(TsFileResource resource) {
     return resource.getStatus() != TsFileResourceStatus.NORMAL
-        || resource.getTsFileRepairStatus() == TsFileRepairStatus.NEED_TO_REPAIR
-        || resource.getTsFileRepairStatus() == TsFileRepairStatus.CAN_NOT_REPAIR;
+        || !resource.getTsFileRepairStatus().isNormalCompactionCandidate();
   }
 
   /**
@@ -186,15 +187,10 @@ public class SizeTieredCompactionSelector
     try {
       // 1. select compaction task based on file which need to repair
       List<InnerSpaceCompactionTask> taskList = selectFileNeedToRepair();
-      if (!taskList.isEmpty()) {
+      if (!taskList.isEmpty() || !CompactionUtils.isDiskHasSpace()) {
         return taskList;
       }
-      // 2. preferentially select compaction task based on mod file
-      taskList = selectTaskBaseOnModFile();
-      if (!taskList.isEmpty()) {
-        return taskList;
-      }
-      // 3. if a suitable compaction task is not selected in the first step, select the compaction
+      // 2. if a suitable compaction task is not selected in the first step, select the compaction
       // task at the tsFile level
       return selectTaskBaseOnLevel();
     } catch (Exception e) {
@@ -203,22 +199,26 @@ public class SizeTieredCompactionSelector
     return Collections.emptyList();
   }
 
-  private List<InnerSpaceCompactionTask> selectTaskBaseOnLevel() throws IOException {
+  protected List<InnerSpaceCompactionTask> selectTaskBaseOnLevel()
+      throws IOException, DiskSpaceInsufficientException {
     int maxLevel = searchMaxFileLevel();
     for (int currentLevel = 0; currentLevel <= maxLevel; currentLevel++) {
       List<List<TsFileResource>> selectedResourceList = selectTsFileResourcesByLevel(currentLevel);
       if (!selectedResourceList.isEmpty()) {
-        return createCompactionTasks(selectedResourceList, CompactionTaskPriorityType.NORMAL);
+        return createCompactionTasks(selectedResourceList);
       }
     }
     return Collections.emptyList();
   }
 
   private List<InnerSpaceCompactionTask> selectFileNeedToRepair() {
+    if (!config.isEnableAutoRepairCompaction()) {
+      return Collections.emptyList();
+    }
     List<InnerSpaceCompactionTask> taskList = new ArrayList<>();
     for (TsFileResource resource : tsFileResources) {
       if (resource.getStatus() == TsFileResourceStatus.NORMAL
-          && resource.getTsFileRepairStatus() == TsFileRepairStatus.NEED_TO_REPAIR) {
+          && resource.getTsFileRepairStatus().isRepairCompactionCandidate()) {
         taskList.add(
             new RepairUnsortedFileCompactionTask(
                 timePartition,
@@ -231,41 +231,11 @@ public class SizeTieredCompactionSelector
     return taskList;
   }
 
-  private List<InnerSpaceCompactionTask> selectTaskBaseOnModFile() {
-    List<InnerSpaceCompactionTask> taskList = new ArrayList<>();
-    for (TsFileResource tsFileResource : tsFileResources) {
-      ModificationFile modFile = tsFileResource.getModFile();
-      if (Objects.isNull(modFile) || !modFile.exists()) {
-        continue;
-      }
-      if (cannotSelectCurrentFileToNormalCompaction(tsFileResource)) {
-        continue;
-      }
-      if (modFile.getSize() > config.getInnerCompactionTaskSelectionModsFileThreshold()
-          || !CompactionUtils.isDiskHasSpace(
-              config.getInnerCompactionTaskSelectionDiskRedundancy())) {
-        taskList.add(
-            createCompactionTask(
-                Collections.singletonList(tsFileResource), CompactionTaskPriorityType.MOD_SETTLE));
-        LOGGER.debug("select tsfile {},the mod file size is {}", tsFileResource, modFile.getSize());
-      }
-    }
-    return taskList;
+  protected ICompactionPerformer createCompactionPerformer() {
+    return sequence ? context.getSeqCompactionPerformer() : context.getUnseqCompactionPerformer();
   }
 
-  private ICompactionPerformer createCompactionPerformer() {
-    return sequence
-        ? IoTDBDescriptor.getInstance()
-            .getConfig()
-            .getInnerSeqCompactionPerformer()
-            .createInstance()
-        : IoTDBDescriptor.getInstance()
-            .getConfig()
-            .getInnerUnseqCompactionPerformer()
-            .createInstance();
-  }
-
-  private int searchMaxFileLevel() throws IOException {
+  protected int searchMaxFileLevel() throws IOException {
     int maxLevel = -1;
     for (TsFileResource currentFile : tsFileResources) {
       TsFileNameGenerator.TsFileName currentName =
@@ -278,24 +248,21 @@ public class SizeTieredCompactionSelector
   }
 
   private List<InnerSpaceCompactionTask> createCompactionTasks(
-      List<List<TsFileResource>> selectedTsFileResourceList,
-      CompactionTaskPriorityType compactionTaskType) {
+      List<List<TsFileResource>> selectedTsFileResourceList) {
     List<InnerSpaceCompactionTask> tasks = new ArrayList<>();
     for (List<TsFileResource> tsFileResourceList : selectedTsFileResourceList) {
-      tasks.add(createCompactionTask(tsFileResourceList, compactionTaskType));
+      tasks.add(createCompactionTask(tsFileResourceList));
     }
     return tasks;
   }
 
-  private InnerSpaceCompactionTask createCompactionTask(
-      List<TsFileResource> fileResources, CompactionTaskPriorityType compactionTaskType) {
+  private InnerSpaceCompactionTask createCompactionTask(List<TsFileResource> fileResources) {
     return new InnerSpaceCompactionTask(
         timePartition,
         tsFileManager,
         fileResources,
         sequence,
         createCompactionPerformer(),
-        tsFileManager.getNextCompactionTaskId(),
-        compactionTaskType);
+        tsFileManager.getNextCompactionTaskId());
   }
 }

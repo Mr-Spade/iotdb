@@ -20,15 +20,18 @@
 package org.apache.iotdb.db.pipe.extractor.dataregion.realtime.listener;
 
 import org.apache.iotdb.commons.pipe.config.PipeConfig;
-import org.apache.iotdb.db.pipe.agent.PipeAgent;
+import org.apache.iotdb.db.pipe.agent.PipeDataNodeAgent;
+import org.apache.iotdb.db.pipe.consensus.deletion.DeletionResource;
+import org.apache.iotdb.db.pipe.consensus.deletion.DeletionResourceManager;
 import org.apache.iotdb.db.pipe.event.realtime.PipeRealtimeEventFactory;
 import org.apache.iotdb.db.pipe.extractor.dataregion.realtime.PipeRealtimeDataRegionExtractor;
 import org.apache.iotdb.db.pipe.extractor.dataregion.realtime.assigner.PipeDataRegionAssigner;
-import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.DeleteDataNode;
+import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.AbstractDeleteDataNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertNode;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
 import org.apache.iotdb.db.storageengine.dataregion.wal.utils.WALEntryHandler;
 
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -45,7 +48,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  * will filter events and assign them to different PipeRealtimeEventDataRegionExtractors.
  */
 public class PipeInsertionDataNodeListener {
-
   private final ConcurrentMap<String, PipeDataRegionAssigner> dataRegionId2Assigner =
       new ConcurrentHashMap<>();
 
@@ -55,7 +57,7 @@ public class PipeInsertionDataNodeListener {
   //////////////////////////// start & stop ////////////////////////////
 
   public synchronized void startListenAndAssign(
-      String dataRegionId, PipeRealtimeDataRegionExtractor extractor) {
+      final String dataRegionId, final PipeRealtimeDataRegionExtractor extractor) {
     dataRegionId2Assigner
         .computeIfAbsent(dataRegionId, o -> new PipeDataRegionAssigner(dataRegionId))
         .startAssignTo(extractor);
@@ -69,7 +71,7 @@ public class PipeInsertionDataNodeListener {
   }
 
   public synchronized void stopListenAndAssign(
-      String dataRegionId, PipeRealtimeDataRegionExtractor extractor) {
+      final String dataRegionId, final PipeRealtimeDataRegionExtractor extractor) {
     final PipeDataRegionAssigner assigner = dataRegionId2Assigner.get(dataRegionId);
     if (assigner == null) {
       return;
@@ -95,10 +97,12 @@ public class PipeInsertionDataNodeListener {
   //////////////////////////// listen to events ////////////////////////////
 
   public void listenToTsFile(
-      String dataRegionId,
-      TsFileResource tsFileResource,
-      boolean isLoaded,
-      boolean isGeneratedByPipe) {
+      final String dataRegionId,
+      final String databaseName,
+      final TsFileResource tsFileResource,
+      final boolean isLoaded,
+      final boolean isGeneratedByPipe) {
+    tsFileResource.setGeneratedByPipe(isGeneratedByPipe);
     // We don't judge whether listenToTsFileExtractorCount.get() == 0 here on purpose
     // because extractors may use tsfile events when some exceptions occur in the
     // insert nodes listening process.
@@ -111,14 +115,16 @@ public class PipeInsertionDataNodeListener {
     }
 
     assigner.publishToAssign(
-        PipeRealtimeEventFactory.createRealtimeEvent(tsFileResource, isLoaded, isGeneratedByPipe));
+        PipeRealtimeEventFactory.createRealtimeEvent(
+            dataRegionId, assigner.isTableModel(), databaseName, tsFileResource, isLoaded));
   }
 
   public void listenToInsertNode(
-      String dataRegionId,
-      WALEntryHandler walEntryHandler,
-      InsertNode insertNode,
-      TsFileResource tsFileResource) {
+      final String dataRegionId,
+      final String databaseName,
+      final WALEntryHandler walEntryHandler,
+      final InsertNode insertNode,
+      final TsFileResource tsFileResource) {
     if (listenToInsertNodeExtractorCount.get() == 0) {
       return;
     }
@@ -131,25 +137,60 @@ public class PipeInsertionDataNodeListener {
     }
 
     assigner.publishToAssign(
-        PipeRealtimeEventFactory.createRealtimeEvent(walEntryHandler, insertNode, tsFileResource));
+        PipeRealtimeEventFactory.createRealtimeEvent(
+            dataRegionId,
+            assigner.isTableModel(),
+            databaseName,
+            walEntryHandler,
+            insertNode,
+            tsFileResource));
   }
 
-  public void listenToHeartbeat(boolean shouldPrintMessage) {
+  public DeletionResource listenToDeleteData(
+      final String regionId, final AbstractDeleteDataNode node) {
+    final PipeDataRegionAssigner assigner = dataRegionId2Assigner.get(regionId);
+    // only events from registered data region will be extracted
+    if (assigner == null) {
+      return null;
+    }
+
+    final DeletionResource deletionResource;
+    // register a deletionResource and return it to DataRegion
+    final DeletionResourceManager manager = DeletionResourceManager.getInstance(regionId);
+    // deleteNode generated by remote consensus leader shouldn't be persisted to DAL.
+    if (Objects.nonNull(manager) && DeletionResource.isDeleteNodeGeneratedInLocalByIoTV2(node)) {
+      deletionResource = manager.registerDeletionResource(node);
+      // if persist failed, skip sending/publishing this event to keep consistency with the
+      // behavior of storage engine.
+      if (deletionResource.waitForResult() == DeletionResource.Status.FAILURE) {
+        return deletionResource;
+      }
+    } else {
+      deletionResource = null;
+    }
+
+    assigner.publishToAssign(PipeRealtimeEventFactory.createRealtimeEvent(regionId, node));
+
+    return deletionResource;
+  }
+
+  public void listenToHeartbeat(final boolean shouldPrintMessage) {
     dataRegionId2Assigner.forEach(
         (key, value) ->
             value.publishToAssign(
                 PipeRealtimeEventFactory.createRealtimeEvent(key, shouldPrintMessage)));
   }
 
-  public void listenToDeleteData(DeleteDataNode node) {
-    dataRegionId2Assigner.forEach(
-        (key, value) -> value.publishToAssign(PipeRealtimeEventFactory.createRealtimeEvent(node)));
+  //////////////////////////// Permission change ////////////////////////////
+
+  public void invalidateAllCache() {
+    dataRegionId2Assigner.values().forEach(PipeDataRegionAssigner::invalidateCache);
   }
 
   /////////////////////////////// singleton ///////////////////////////////
 
   private PipeInsertionDataNodeListener() {
-    PipeAgent.runtime()
+    PipeDataNodeAgent.runtime()
         .registerPeriodicalJob(
             "PipeInsertionDataNodeListener#listenToHeartbeat(false)",
             () -> listenToHeartbeat(false),

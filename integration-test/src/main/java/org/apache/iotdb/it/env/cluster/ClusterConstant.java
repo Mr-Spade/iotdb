@@ -43,6 +43,7 @@ public class ClusterConstant {
   public static final String DEFAULT_DATA_NODE_PROPERTIES = "DefaultDataNodeProperties";
   public static final String DEFAULT_DATA_NODE_COMMON_PROPERTIES =
       "DefaultDataNodeCommonProperties";
+  public static final String DATA_REGION_PER_DATANODE = "integrationTest.dataRegionPerDataNode";
 
   // Cluster Configurations
   public static final String CLUSTER_CONFIGURATIONS = "ClusterConfigurations";
@@ -52,6 +53,8 @@ public class ClusterConstant {
   public static final String SCALABLE_SINGLE_NODE_MODE = "ScalableSingleNodeMode";
   public static final String HIGH_PERFORMANCE_MODE = "HighPerformanceMode";
   public static final String STRONG_CONSISTENCY_CLUSTER_MODE = "StrongConsistencyClusterMode";
+  public static final String PIPE_CONSENSUS_BATCH_MODE = "PipeConsensusBatchMode";
+  public static final String PIPE_CONSENSUS_STREAM_MODE = "PipeConsensusStreamMode";
 
   // System arguments in pom.xml
   public static final String LIGHT_WEIGHT_STANDALONE_MODE_CONFIG_NODE_NUM =
@@ -114,13 +117,38 @@ public class ClusterConstant {
   public static final String STRONG_CONSISTENCY_CLUSTER_MODE_DATA_REGION_REPLICA_NUM =
       "strongConsistencyClusterMode.dataRegionReplicaNumber";
 
-  // Property file names
-  public static final String CONFIG_NODE_PROPERTIES_FILE = "iotdb-confignode.properties";
-  public static final String DATA_NODE_PROPERTIES_FILE = "iotdb-datanode.properties";
-  public static final String COMMON_PROPERTIES_FILE = "iotdb-common.properties";
+  public static final String PIPE_CONSENSUS_BATCH_MODE_CONFIG_NODE_NUM =
+      "pipeConsensusBatchMode.configNodeNumber";
+  public static final String PIPE_CONSENSUS_BATCH_MODE_DATA_NODE_NUM =
+      "pipeConsensusBatchMode.dataNodeNumber";
+  public static final String PIPE_CONSENSUS_BATCH_MODE_CONFIG_NODE_CONSENSUS =
+      "pipeConsensusBatchMode.configNodeConsensus";
+  public static final String PIPE_CONSENSUS_BATCH_MODE_SCHEMA_REGION_CONSENSUS =
+      "pipeConsensusBatchMode.schemaRegionConsensus";
+  public static final String PIPE_CONSENSUS_BATCH_MODE_DATA_REGION_CONSENSUS =
+      "pipeConsensusBatchMode.dataRegionConsensus";
+  public static final String PIPE_CONSENSUS_BATCH_MODE_SCHEMA_REGION_REPLICA_NUM =
+      "pipeConsensusBatchMode.schemaRegionReplicaNumber";
+  public static final String PIPE_CONSENSUS_BATCH_MODE_DATA_REGION_REPLICA_NUM =
+      "pipeConsensusBatchMode.dataRegionReplicaNumber";
 
-  public static final String SYSTEM_PROPERTIES_FILE = "system.properties";
-  public static final String CONFIG_NODE_SYSTEM_PROPERTIES_FILE = "confignode-system.properties";
+  public static final String PIPE_CONSENSUS_STREAM_MODE_CONFIG_NODE_NUM =
+      "pipeConsensusStreamMode.configNodeNumber";
+  public static final String PIPE_CONSENSUS_STREAM_MODE_DATA_NODE_NUM =
+      "pipeConsensusStreamMode.dataNodeNumber";
+  public static final String PIPE_CONSENSUS_STREAM_MODE_CONFIG_NODE_CONSENSUS =
+      "pipeConsensusStreamMode.configNodeConsensus";
+  public static final String PIPE_CONSENSUS_STREAM_MODE_SCHEMA_REGION_CONSENSUS =
+      "pipeConsensusStreamMode.schemaRegionConsensus";
+  public static final String PIPE_CONSENSUS_STREAM_MODE_DATA_REGION_CONSENSUS =
+      "pipeConsensusStreamMode.dataRegionConsensus";
+  public static final String PIPE_CONSENSUS_STREAM_MODE_SCHEMA_REGION_REPLICA_NUM =
+      "pipeConsensusStreamMode.schemaRegionReplicaNumber";
+  public static final String PIPE_CONSENSUS_STREAM_MODE_DATA_REGION_REPLICA_NUM =
+      "pipeConsensusStreamMode.dataRegionReplicaNumber";
+
+  // Property file names
+  public static final String IOTDB_SYSTEM_PROPERTIES_FILE = "iotdb-system.properties";
 
   // Properties' keys
   // Common
@@ -130,11 +158,13 @@ public class ClusterConstant {
       "schema_region_consensus_protocol_class";
   public static final String DATA_REGION_CONSENSUS_PROTOCOL_CLASS =
       "data_region_consensus_protocol_class";
+  public static final String IOT_CONSENSUS_V2_MODE = "iot_consensus_v2_mode";
   public static final String SCHEMA_REPLICATION_FACTOR = "schema_replication_factor";
   public static final String DATA_REPLICATION_FACTOR = "data_replication_factor";
 
   public static final String MQTT_HOST = "mqtt_host";
   public static final String MQTT_PORT = "mqtt_port";
+  public static final String MQTT_DATA_PATH = "mqtt_data_path";
   public static final String UDF_LIB_DIR = "udf_lib_dir";
   public static final String TRIGGER_LIB_DIR = "trigger_lib_dir";
   public static final String PIPE_LIB_DIR = "pipe_lib_dir";
@@ -144,10 +174,7 @@ public class ClusterConstant {
   // ConfigNode
   public static final String CN_SYSTEM_DIR = "cn_system_dir";
   public static final String CN_CONSENSUS_DIR = "cn_consensus_dir";
-  public static final String CN_METRIC_PROMETHEUS_REPORTER_PORT =
-      "cn_metric_prometheus_reporter_port";
   public static final String CN_METRIC_IOTDB_REPORTER_HOST = "cn_metric_iotdb_reporter_host";
-  public static final String CN_METRIC_IOTDB_REPORTER_PORT = "cn_metric_iotdb_reporter_port";
 
   public static final String CN_CONNECTION_TIMEOUT_MS = "cn_connection_timeout_ms";
 
@@ -159,13 +186,10 @@ public class ClusterConstant {
   public static final String DN_TRACING_DIR = "dn_tracing_dir";
   public static final String DN_SYNC_DIR = "dn_sync_dir";
   public static final String DN_METRIC_IOTDB_REPORTER_HOST = "dn_metric_iotdb_reporter_host";
-  public static final String DN_METRIC_PROMETHEUS_REPORTER_PORT =
-      "dn_metric_prometheus_reporter_port";
 
   public static final String DN_MPP_DATA_EXCHANGE_PORT = "dn_mpp_data_exchange_port";
   public static final String DN_DATA_REGION_CONSENSUS_PORT = "dn_data_region_consensus_port";
   public static final String DN_SCHEMA_REGION_CONSENSUS_PORT = "dn_schema_region_consensus_port";
-  public static final String PIPE_AIR_GAP_RECEIVER_ENABLED = "pipe_air_gap_receiver_enabled";
   public static final String PIPE_AIR_GAP_RECEIVER_PORT = "pipe_air_gap_receiver_port";
   public static final String MAX_TSBLOCK_SIZE_IN_BYTES = "max_tsblock_size_in_bytes";
   public static final String PAGE_SIZE_IN_BYTE = "page_size_in_byte";
@@ -173,12 +197,23 @@ public class ClusterConstant {
       "dn_join_cluster_retry_interval_ms";
   public static final String DN_CONNECTION_TIMEOUT_MS = "dn_connection_timeout_ms";
   public static final String DN_METRIC_INTERNAL_REPORTER_TYPE = "dn_metric_internal_reporter_type";
+  public static final String CONFIG_NODE_RATIS_LOG_APPENDER_BUFFER_SIZE_MAX =
+      "config_node_ratis_log_appender_buffer_size_max";
+  public static final String WAL_BUFFER_SIZE_IN_BYTE = "wal_buffer_size_in_byte";
+  public static final String SCHEMA_REGION_RATIS_LOG_APPENDER_BUFFER_SIZE_MAX =
+      "schema_region_ratis_log_appender_buffer_size_max";
+  public static final String DATA_REGION_RATIS_LOG_APPENDER_BUFFER_SIZE_MAX =
+      "data_region_ratis_log_appender_buffer_size_max";
+  public static final String DATA_REGION_PER_DATA_NODE = "data_region_per_data_node";
 
   // Paths
   public static final String USER_DIR = "user.dir";
   public static final String TARGET = "target";
+  public static final String PYTHON_PATH = "venv/bin/python3";
 
   public static final String DATA_NODE_NAME = "DataNode";
+
+  public static final String AI_NODE_NAME = "AINode";
 
   public static final String LOCK_FILE_PATH =
       System.getProperty(USER_DIR) + File.separator + TARGET + File.separator + "lock-";
@@ -197,8 +232,8 @@ public class ClusterConstant {
 
   // Env Constant
   public static final int NODE_START_TIMEOUT = 100;
-  public static final int PROBE_TIMEOUT_MS = 2000;
   public static final int NODE_NETWORK_TIMEOUT_MS = 0;
+  public static final String ZERO_TIME_ZONE = "GMT+0";
 
   public static final String DELIMITER = ",";
   public static final String TAB = "  ";
@@ -208,6 +243,7 @@ public class ClusterConstant {
   public static final String SIMPLE_CONSENSUS_STR = "Simple";
   public static final String RATIS_CONSENSUS_STR = "Ratis";
   public static final String IOT_CONSENSUS_STR = "IoT";
+  public static final String IOT_CONSENSUS_V2_STR = "IoTV2";
 
   public static final String JAVA_CMD =
       System.getProperty("java.home")

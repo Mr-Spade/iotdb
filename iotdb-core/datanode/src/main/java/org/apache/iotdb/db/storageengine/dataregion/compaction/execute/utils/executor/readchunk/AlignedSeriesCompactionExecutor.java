@@ -31,7 +31,6 @@ import org.apache.tsfile.file.metadata.AlignedChunkMetadata;
 import org.apache.tsfile.file.metadata.ChunkMetadata;
 import org.apache.tsfile.file.metadata.IChunkMetadata;
 import org.apache.tsfile.file.metadata.IDeviceID;
-import org.apache.tsfile.file.metadata.PlainDeviceID;
 import org.apache.tsfile.read.TsFileAlignedSeriesReaderIterator;
 import org.apache.tsfile.read.TsFileSequenceReader;
 import org.apache.tsfile.read.common.Chunk;
@@ -62,6 +61,7 @@ public class AlignedSeriesCompactionExecutor {
   private final List<IMeasurementSchema> schemaList;
   private long remainingPointInChunkWriter = 0L;
   private final CompactionTaskSummary summary;
+  private boolean lastWriteTimestampSet = false;
   private long lastWriteTimestamp = Long.MIN_VALUE;
 
   private final long chunkSizeThreshold =
@@ -112,7 +112,7 @@ public class AlignedSeriesCompactionExecutor {
       }
     }
     List<IMeasurementSchema> collectedSchemaList = new ArrayList<>(schemaSet);
-    collectedSchemaList.sort(Comparator.comparing(IMeasurementSchema::getMeasurementId));
+    collectedSchemaList.sort(Comparator.comparing(IMeasurementSchema::getMeasurementName));
     return collectedSchemaList;
   }
 
@@ -211,11 +211,12 @@ public class AlignedSeriesCompactionExecutor {
   }
 
   private void checkAndUpdatePreviousTimestamp(long currentWritingTimestamp) {
-    if (currentWritingTimestamp <= lastWriteTimestamp) {
+    if (lastWriteTimestampSet && currentWritingTimestamp <= lastWriteTimestamp) {
       throw new CompactionLastTimeCheckFailedException(
-          ((PlainDeviceID) device).toStringID(), currentWritingTimestamp, lastWriteTimestamp);
+          device.toString(), currentWritingTimestamp, lastWriteTimestamp);
     } else {
       lastWriteTimestamp = currentWritingTimestamp;
+      lastWriteTimestampSet = true;
     }
   }
 }

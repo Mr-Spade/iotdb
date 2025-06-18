@@ -1,18 +1,22 @@
 /*
- * Copyright © 2021 iotdb-quality developer group (iotdb-quality@protonmail.com)
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
+
 package org.apache.iotdb.library.series.util;
 
 import org.apache.iotdb.library.util.Util;
@@ -23,15 +27,16 @@ import org.apache.commons.lang3.tuple.Pair;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 
-/** Util for ConsecutiveSequences and ConsecutiveWindows */
+/** Util for ConsecutiveSequences and ConsecutiveWindows. */
 public class ConsecutiveUtil {
-  private static final int maxLen = 128;
+  private static final int MAX_LEN = 128;
   private long first;
   private long last;
   private long gap;
   private int count = 0;
-  private final ArrayList<Pair<Long, Boolean>> window = new ArrayList<>(maxLen);
+  private final List<Pair<Long, Boolean>> window = new ArrayList<>(MAX_LEN);
 
   public ConsecutiveUtil(long first, long last, long gap) {
     this.first = first;
@@ -39,7 +44,7 @@ public class ConsecutiveUtil {
     this.gap = gap;
   }
 
-  public ArrayList<Pair<Long, Boolean>> getWindow() {
+  public List<Pair<Long, Boolean>> getWindow() {
     return window;
   }
 
@@ -52,7 +57,7 @@ public class ConsecutiveUtil {
   }
 
   public int getMaxLen() {
-    return maxLen;
+    return MAX_LEN;
   }
 
   public int getCount() {
@@ -75,8 +80,8 @@ public class ConsecutiveUtil {
     return last;
   }
 
-  /** check Null values */
-  public boolean check(Row row) {
+  /** check Null values. */
+  public boolean check(Row row) throws IOException {
     for (int i = 0; i < row.size(); i++) {
       if (row.isNull(i)) {
         return true;
@@ -94,7 +99,7 @@ public class ConsecutiveUtil {
     gap = Util.mode(time);
   }
 
-  /** clear data points in the window */
+  /** clear data points in the window. */
   public void cleanWindow(PointCollector collector) throws IOException {
     if (window.isEmpty()) {
       return;
@@ -105,7 +110,7 @@ public class ConsecutiveUtil {
     }
   }
 
-  /** process one row */
+  /** process one row. */
   public void process(long time, boolean nullExist, PointCollector collector) throws IOException {
     if (nullExist) { // consecutive subsequence ends with null
       if (count > 1) {

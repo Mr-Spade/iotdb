@@ -53,13 +53,13 @@ public class IoTDBInsertWithoutTimeIT {
 
   @Before
   public void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeTest();
+    EnvFactory.getEnv().initClusterEnvironment();
     createTimeseries();
   }
 
   @After
   public void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterTest();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   private void createTimeseries() {
@@ -101,7 +101,8 @@ public class IoTDBInsertWithoutTimeIT {
   @Test
   public void testInsertWithoutValueColumns() {
     assertNonQueryTestFail(
-        "insert into root.sg1.d1(time) values (1)", "Error occurred while parsing SQL");
+        "insert into root.sg1.d1(time) values (1)",
+        "InsertStatement should contain at least one measurement");
   }
 
   @Test
@@ -117,9 +118,10 @@ public class IoTDBInsertWithoutTimeIT {
   @Test
   public void testInsertWithMultiTimesColumns() {
     assertNonQueryTestFail(
-        "insert into root.sg1.d1(time, time) values (1, 1)", "Error occurred while parsing SQL");
+        "insert into root.sg1.d1(time, time) values (1, 1)",
+        "One row should only have one time value");
     assertNonQueryTestFail(
         "insert into root.sg1.d1(time, s1, time) values (1, 1, 1)",
-        "Error occurred while parsing SQL");
+        "One row should only have one time value");
   }
 }

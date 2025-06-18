@@ -28,16 +28,15 @@ class CacheStats implements IDualKeyCacheStats {
   // prepare some buffer for high load scenarios
   private static final double MEMORY_THRESHOLD_RATIO = 0.8;
 
-  private final long memoryCapacity;
   private final long memoryThreshold;
 
   private final AtomicLong memoryUsage = new AtomicLong(0);
+  private final AtomicLong entriesCount = new AtomicLong(0);
 
   private final AtomicLong requestCount = new AtomicLong(0);
   private final AtomicLong hitCount = new AtomicLong(0);
 
   CacheStats(long memoryCapacity) {
-    this.memoryCapacity = memoryCapacity;
     this.memoryThreshold = (long) (memoryCapacity * MEMORY_THRESHOLD_RATIO);
   }
 
@@ -70,6 +69,14 @@ class CacheStats implements IDualKeyCacheStats {
     requestCount.getAndAdd(num);
   }
 
+  void increaseEntryCount() {
+    entriesCount.incrementAndGet();
+  }
+
+  void decreaseEntryCount() {
+    entriesCount.decrementAndGet();
+  }
+
   @Override
   public long requestCount() {
     return requestCount.get();
@@ -98,13 +105,24 @@ class CacheStats implements IDualKeyCacheStats {
     return memoryUsage.get();
   }
 
+  @Override
+  public long capacity() {
+    return memoryThreshold;
+  }
+
+  @Override
+  public long entriesCount() {
+    return entriesCount.get();
+  }
+
   void reset() {
-    resetMemoryUsage();
+    resetMemoryUsageAndEntriesCount();
     hitCount.set(0);
     requestCount.set(0);
   }
 
-  void resetMemoryUsage() {
+  void resetMemoryUsageAndEntriesCount() {
     memoryUsage.set(0);
+    entriesCount.set(0);
   }
 }

@@ -20,29 +20,38 @@
 package org.apache.iotdb.db.queryengine.plan.analyze.cache.schema;
 
 import org.apache.iotdb.commons.exception.IllegalPathException;
+import org.apache.iotdb.commons.memory.IMemoryBlock;
+import org.apache.iotdb.commons.memory.MemoryBlockType;
 import org.apache.iotdb.commons.path.PartialPath;
-import org.apache.iotdb.db.conf.IoTDBConfig;
+import org.apache.iotdb.db.conf.DataNodeMemoryConfig;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Weigher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** This cache is for reducing duplicated DeviceId PartialPath initialization in write process. */
 public class DataNodeDevicePathCache {
+  private static final Logger LOGGER = LoggerFactory.getLogger(DataNodeDevicePathCache.class);
 
-  private static final IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
+  private static final DataNodeMemoryConfig memoryConfig =
+      IoTDBDescriptor.getInstance().getMemoryConfig();
+  private final IMemoryBlock devicePathCacheMemoryBlock;
 
   private final Cache<String, PartialPath> devicePathCache;
 
   private DataNodeDevicePathCache() {
+    devicePathCacheMemoryBlock =
+        memoryConfig
+            .getDevicePathCacheMemoryManager()
+            .exactAllocate("DevicePathCache", MemoryBlockType.STATIC);
+    // TODO @spricoder: later we can find a way to get the byte size of cache
+    devicePathCacheMemoryBlock.allocate(devicePathCacheMemoryBlock.getTotalMemorySizeInBytes());
     devicePathCache =
         Caffeine.newBuilder()
-            .maximumWeight(
-                (long)
-                    (config.getAllocateMemoryForStorageEngine()
-                        * config.getWriteProportionForMemtable()
-                        * config.getDevicePathCacheProportion()))
+            .maximumWeight(devicePathCacheMemoryBlock.getTotalMemorySizeInBytes())
             .weigher(
                 (Weigher<String, PartialPath>) (key, val) -> (PartialPath.estimateSize(val) + 32))
             .build();
@@ -57,15 +66,19 @@ public class DataNodeDevicePathCache {
     private static final DataNodeDevicePathCache INSTANCE = new DataNodeDevicePathCache();
   }
 
-  public PartialPath getPartialPath(String deviceId) throws IllegalPathException {
+  public PartialPath getPartialPath(final String deviceId) throws IllegalPathException {
     try {
       return devicePathCache.get(
           deviceId,
           path -> {
             try {
               return new PartialPath(path);
-            } catch (IllegalPathException e) {
-              throw new IllegalArgumentException(e);
+            } catch (final IllegalPathException e) {
+              try {
+                return PartialPath.getDatabasePath(path);
+              } catch (final IllegalPathException e1) {
+                throw new IllegalArgumentException(e1);
+              }
             }
           });
     } catch (IllegalArgumentException e) {
@@ -73,7 +86,7 @@ public class DataNodeDevicePathCache {
     }
   }
 
-  public String getDeviceId(String deviceId) {
+  public String getDeviceId(final String deviceId) {
     try {
       return getPartialPath(deviceId).getFullPath();
     } catch (IllegalPathException e) {

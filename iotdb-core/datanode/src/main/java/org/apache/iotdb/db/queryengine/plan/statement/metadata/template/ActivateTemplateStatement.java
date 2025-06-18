@@ -59,7 +59,7 @@ public class ActivateTemplateStatement extends Statement {
       return Collections.emptyList();
     }
     return templateSetInfo.left.getSchemaMap().keySet().stream()
-        .map(path::concatNode)
+        .map(path::concatAsMeasurementPath)
         .collect(Collectors.toList());
   }
 
@@ -70,8 +70,7 @@ public class ActivateTemplateStatement extends Statement {
     }
     List<PartialPath> checkedPaths = getPaths();
     return AuthorityChecker.getTSStatus(
-        AuthorityChecker.checkPatternPermission(
-            userName, checkedPaths, PrivilegeType.WRITE_SCHEMA.ordinal()),
+        AuthorityChecker.checkPatternPermission(userName, checkedPaths, PrivilegeType.WRITE_SCHEMA),
         checkedPaths,
         PrivilegeType.WRITE_SCHEMA);
   }

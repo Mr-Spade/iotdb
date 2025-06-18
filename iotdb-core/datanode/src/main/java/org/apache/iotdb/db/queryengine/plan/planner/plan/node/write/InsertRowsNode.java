@@ -25,7 +25,7 @@ import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.consensus.index.ProgressIndex;
 import org.apache.iotdb.commons.utils.StatusUtils;
 import org.apache.iotdb.commons.utils.TimePartitionUtils;
-import org.apache.iotdb.db.queryengine.plan.analyze.Analysis;
+import org.apache.iotdb.db.queryengine.plan.analyze.IAnalysis;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNodeId;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNodeType;
@@ -65,10 +65,27 @@ public class InsertRowsNode extends InsertNode implements WALEntryValue {
   /** The {@link InsertRowNode} list */
   private List<InsertRowNode> insertRowNodeList;
 
+  private boolean isMixingAlignment = false;
+
   public InsertRowsNode(PlanNodeId id) {
     super(id);
     insertRowNodeList = new ArrayList<>();
     insertRowNodeIndexList = new ArrayList<>();
+  }
+
+  @Override
+  public InsertNode mergeInsertNode(List<InsertNode> insertNodes) {
+    List<InsertRowNode> list = new ArrayList<>();
+    List<Integer> index = new ArrayList<>();
+    int i = 0;
+    for (InsertNode insertNode : insertNodes) {
+      for (InsertRowNode insertRowNode : ((InsertRowsNode) insertNode).getInsertRowNodeList()) {
+        list.add(insertRowNode);
+        index.add(i);
+        i++;
+      }
+    }
+    return new InsertRowsNode(insertNodes.get(0).getPlanNodeId(), index, list);
   }
 
   public InsertRowsNode(
@@ -102,6 +119,14 @@ public class InsertRowsNode extends InsertNode implements WALEntryValue {
     insertRowNodeIndexList.add(index);
   }
 
+  public boolean isMixingAlignment() {
+    return isMixingAlignment;
+  }
+
+  public void setMixingAlignment(boolean mixingAlignment) {
+    isMixingAlignment = mixingAlignment;
+  }
+
   @Override
   public void setSearchIndex(long index) {
     searchIndex = index;
@@ -118,11 +143,6 @@ public class InsertRowsNode extends InsertNode implements WALEntryValue {
 
   public TSStatus[] getFailingStatus() {
     return StatusUtils.getFailingStatus(results, insertRowNodeList.size());
-  }
-
-  @Override
-  public List<PlanNode> getChildren() {
-    return Collections.emptyList();
   }
 
   @Override
@@ -143,6 +163,16 @@ public class InsertRowsNode extends InsertNode implements WALEntryValue {
     InsertRowsNode that = (InsertRowsNode) o;
     return Objects.equals(insertRowNodeIndexList, that.insertRowNodeIndexList)
         && Objects.equals(insertRowNodeList, that.insertRowNodeList);
+  }
+
+  @Override
+  public String toString() {
+    return "InsertRowsNode{"
+        + "insertRowNodeIndexList="
+        + insertRowNodeIndexList
+        + ", insertRowNodeList="
+        + insertRowNodeList
+        + '}';
   }
 
   @Override
@@ -193,7 +223,7 @@ public class InsertRowsNode extends InsertNode implements WALEntryValue {
 
   @Override
   protected void serializeAttributes(ByteBuffer byteBuffer) {
-    PlanNodeType.INSERT_ROWS.serialize(byteBuffer);
+    getType().serialize(byteBuffer);
 
     ReadWriteIOUtils.write(insertRowNodeList.size(), byteBuffer);
 
@@ -207,7 +237,7 @@ public class InsertRowsNode extends InsertNode implements WALEntryValue {
 
   @Override
   protected void serializeAttributes(DataOutputStream stream) throws IOException {
-    PlanNodeType.INSERT_ROWS.serialize(stream);
+    getType().serialize(stream);
 
     ReadWriteIOUtils.write(insertRowNodeList.size(), stream);
 
@@ -226,18 +256,26 @@ public class InsertRowsNode extends InsertNode implements WALEntryValue {
   }
 
   @Override
-  public List<WritePlanNode> splitByPartition(Analysis analysis) {
+  public void markAsGeneratedByRemoteConsensusLeader() {
+    super.markAsGeneratedByRemoteConsensusLeader();
+    insertRowNodeList.forEach(InsertRowNode::markAsGeneratedByRemoteConsensusLeader);
+  }
+
+  @Override
+  public List<WritePlanNode> splitByPartition(IAnalysis analysis) {
     Map<TRegionReplicaSet, InsertRowsNode> splitMap = new HashMap<>();
     List<TEndPoint> redirectInfo = new ArrayList<>();
     for (int i = 0; i < insertRowNodeList.size(); i++) {
       InsertRowNode insertRowNode = insertRowNodeList.get(i);
       // Data region for insert row node
+      // each row may belong to different database, pass null for auto-detection
       TRegionReplicaSet dataRegionReplicaSet =
           analysis
               .getDataPartitionInfo()
               .getDataRegionReplicaSetForWriting(
-                  insertRowNode.devicePath.getFullPath(),
-                  TimePartitionUtils.getTimePartitionSlot(insertRowNode.getTime()));
+                  insertRowNode.targetPath.getIDeviceIDAsFullDevice(),
+                  TimePartitionUtils.getTimePartitionSlot(insertRowNode.getTime()),
+                  null);
       // Collect redirectInfo
       redirectInfo.add(dataRegionReplicaSet.getDataNodeLocations().get(0).getClientRpcEndPoint());
       InsertRowsNode tmpNode = splitMap.get(dataRegionReplicaSet);
@@ -274,6 +312,17 @@ public class InsertRowsNode extends InsertNode implements WALEntryValue {
     insertRowNodeList.forEach(insertRowNode -> insertRowNode.setProgressIndex(progressIndex));
   }
 
+  public void updateProgressIndex(ProgressIndex progressIndex) {
+    if (progressIndex == null) {
+      return;
+    }
+
+    this.progressIndex =
+        (this.progressIndex == null)
+            ? progressIndex
+            : this.progressIndex.updateToMinimumEqualOrIsAfterProgressIndex(progressIndex);
+  }
+
   // region serialize & deserialize methods for WAL
   /** Serialized size for wal. */
   @Override
@@ -295,7 +344,7 @@ public class InsertRowsNode extends InsertNode implements WALEntryValue {
    */
   @Override
   public void serializeToWAL(IWALByteBufferView buffer) {
-    buffer.putShort(PlanNodeType.INSERT_ROWS.getNodeType());
+    buffer.putShort(getType().getNodeType());
     buffer.putLong(searchIndex);
     subSerialize(buffer);
   }
@@ -347,5 +396,10 @@ public class InsertRowsNode extends InsertNode implements WALEntryValue {
     insertRowsNode.setSearchIndex(searchIndex);
     return insertRowsNode;
   }
+
+  public InsertRowsNode emptyClone() {
+    return new InsertRowsNode(this.getPlanNodeId());
+  }
+
   // endregion
 }

@@ -82,6 +82,11 @@ public class CompactionTaskQueue extends FixedPriorityBlockingQueue<AbstractComp
 
   private boolean checkTaskValid(AbstractCompactionTask task) {
     return task.isCompactionAllowed()
+        && task.getCompactionConfigVersion()
+            >= CompactionTaskManager.getInstance().getCurrentCompactionConfigVersion()
+        // The estimated memory cost being less than 0 indicates that an exception occurred during
+        // the process of estimating the memory for the compaction task.
+        && task.getEstimatedMemoryCost() >= 0
         && task.getEstimatedMemoryCost() <= SystemInfo.getInstance().getMemorySizeForCompaction()
         && task.getProcessedFileNum() <= SystemInfo.getInstance().getTotalFileLimitForCompaction();
   }

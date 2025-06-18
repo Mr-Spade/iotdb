@@ -18,8 +18,25 @@
 # under the License.
 #
 
+source "$(dirname "$0")/iotdb-common.sh"
 DATANODE_CONF="`dirname "$0"`/../conf"
-dn_rpc_port=`sed '/^dn_rpc_port=/!d;s/.*=//' ${DATANODE_CONF}/iotdb-datanode.properties`
+
+if [ -f "${DATANODE_CONF}/iotdb-system.properties" ]; then
+    dn_rpc_port=`sed '/^dn_rpc_port=/!d;s/.*=//' ${DATANODE_CONF}/iotdb-system.properties`
+    # trim the port
+    dn_rpc_port=$(echo "$dn_rpc_port" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+else
+    dn_rpc_port=`sed '/^dn_rpc_port=/!d;s/.*=//' ${DATANODE_CONF}/iotdb-datanode.properties`
+    # trim the port
+    dn_rpc_port=$(echo "$dn_rpc_port" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+fi
+
+if [ -z "$dn_rpc_port" ]; then
+    echo "WARNING: dn_rpc_port not found in the configuration file. Using default value dn_rpc_port=6667"
+    dn_rpc_port=6667
+fi
+
+check_config_unique "dn_rpc_port" "$dn_rpc_port"
 
 force=""
 

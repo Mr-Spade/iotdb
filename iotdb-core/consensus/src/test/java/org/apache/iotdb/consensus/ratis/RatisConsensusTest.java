@@ -117,7 +117,9 @@ public class RatisConsensusTest {
   public void addMemberToGroup() throws Exception {
     List<Peer> original = peers.subList(0, 1);
 
+    Assert.assertEquals(0, servers.get(0).getReplicationNum(group.getGroupId()));
     servers.get(0).createLocalPeer(group.getGroupId(), original);
+    Assert.assertEquals(1, servers.get(0).getReplicationNum(group.getGroupId()));
     doConsensus(0, 10, 10);
 
     Assert.assertThrows(
@@ -127,9 +129,11 @@ public class RatisConsensusTest {
     // add 2 members
     servers.get(1).createLocalPeer(group.getGroupId(), Collections.emptyList());
     servers.get(0).addRemotePeer(group.getGroupId(), peers.get(1));
+    Assert.assertEquals(2, servers.get(1).getReplicationNum(group.getGroupId()));
 
     servers.get(2).createLocalPeer(group.getGroupId(), Collections.emptyList());
     servers.get(0).addRemotePeer(group.getGroupId(), peers.get(2));
+    Assert.assertEquals(3, servers.get(1).getReplicationNum(group.getGroupId()));
 
     miniCluster.waitUntilActiveLeaderElectedAndReady();
 
@@ -157,9 +161,12 @@ public class RatisConsensusTest {
     doConsensus(0, 10, 10);
 
     servers.get(0).transferLeader(gid, peers.get(0));
+    Assert.assertEquals(3, servers.get(0).getReplicationNum(gid));
     servers.get(0).removeRemotePeer(gid, peers.get(1));
+    Assert.assertEquals(2, servers.get(0).getReplicationNum(gid));
     servers.get(1).deleteLocalPeer(gid);
     servers.get(0).removeRemotePeer(gid, peers.get(2));
+    Assert.assertEquals(1, servers.get(0).getReplicationNum(gid));
     servers.get(2).deleteLocalPeer(gid);
 
     miniCluster.waitUntilActiveLeaderElectedAndReady();
@@ -276,13 +283,24 @@ public class RatisConsensusTest {
   }
 
   @Test
+  public void forceSnapshot() throws Exception {
+    servers.get(0).createLocalPeer(group.getGroupId(), group.getPeers());
+    servers.get(1).createLocalPeer(group.getGroupId(), group.getPeers());
+    servers.get(2).createLocalPeer(group.getGroupId(), group.getPeers());
+
+    doConsensus(0, 1, 1); // not enough logs to auto trigger snapshot
+    try {
+      servers.get(0).triggerSnapshot(group.getGroupId(), true);
+    } catch (ConsensusException e) {
+      Assert.fail(e.getMessage());
+    }
+    Assert.assertTrue(miniCluster.hasSnapshot(group.getGroupId(), 0));
+  }
+
+  @Test
   public void parsingAndConstructIDs() throws Exception {
     servers.get(0).createLocalPeer(gid, peers.subList(0, 1));
     doConsensus(0, 10, 10);
-
-    List<ConsensusGroupId> ids = servers.get(0).getAllConsensusGroupIdsWithoutStarting();
-    Assert.assertEquals(1, ids.size());
-    Assert.assertEquals(gid, ids.get(0));
 
     String regionDir = servers.get(0).getRegionDirFromConsensusGroupId(gid);
     try {

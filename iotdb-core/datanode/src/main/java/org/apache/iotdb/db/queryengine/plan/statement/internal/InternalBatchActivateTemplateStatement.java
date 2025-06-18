@@ -67,7 +67,7 @@ public class InternalBatchActivateTemplateStatement extends Statement {
       templatePaths.addAll(templateSetInfo.left.getSchemaMap().keySet());
     }
     return deviceMap.keySet().stream()
-        .flatMap(path -> templatePaths.stream().map(path::concatNode))
+        .flatMap(path -> templatePaths.stream().map(path::concatAsMeasurementPath))
         .collect(Collectors.toList());
   }
 
@@ -78,8 +78,7 @@ public class InternalBatchActivateTemplateStatement extends Statement {
     }
     List<PartialPath> checkedPaths = getPaths();
     return AuthorityChecker.getTSStatus(
-        AuthorityChecker.checkPatternPermission(
-            userName, checkedPaths, PrivilegeType.WRITE_SCHEMA.ordinal()),
+        AuthorityChecker.checkPatternPermission(userName, checkedPaths, PrivilegeType.WRITE_SCHEMA),
         checkedPaths,
         PrivilegeType.WRITE_SCHEMA);
   }

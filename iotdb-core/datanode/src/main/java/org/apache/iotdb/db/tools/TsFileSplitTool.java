@@ -50,6 +50,7 @@ import org.apache.tsfile.write.writer.TsFileIOWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.HashSet;
@@ -103,7 +104,7 @@ public class TsFileSplitTool {
   /* entry of tool */
   @SuppressWarnings("squid:S3776") // Suppress high Cognitive Complexity warning
   public void run() throws IOException {
-    if (fsFactory.getFile(filename + ModificationFile.FILE_SUFFIX).exists()) {
+    if (ModificationFile.getExclusiveMods(new File(filename)).exists()) {
       throw new IOException("Unsupported to split TsFile with modification currently.");
     }
 
@@ -240,9 +241,11 @@ public class TsFileSplitTool {
       ChunkWriterImpl chunkWriter, long time, Object value, TSDataType dataType) {
     switch (dataType) {
       case INT32:
+      case DATE:
         chunkWriter.write(time, (int) value);
         break;
       case INT64:
+      case TIMESTAMP:
         chunkWriter.write(time, (long) value);
         break;
       case FLOAT:
@@ -255,6 +258,8 @@ public class TsFileSplitTool {
         chunkWriter.write(time, (boolean) value);
         break;
       case TEXT:
+      case BLOB:
+      case STRING:
         chunkWriter.write(time, (Binary) value);
         break;
       default:

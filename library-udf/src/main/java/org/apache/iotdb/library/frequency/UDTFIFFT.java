@@ -38,9 +38,11 @@ import java.text.SimpleDateFormat;
 /** This function does Inverse Fast Fourier Transform for input series. */
 public class UDTFIFFT implements UDTF {
 
+  private static final String START_PARAM = "start";
   private final DoubleArrayList real = new DoubleArrayList();
   private final DoubleArrayList imag = new DoubleArrayList();
   private final IntArrayList time = new IntArrayList();
+
   private long start;
   private long interval;
 
@@ -52,13 +54,15 @@ public class UDTFIFFT implements UDTF {
         .validate(
             x -> (long) x > 0,
             "interval should be a time period whose unit is ms, s, m, h, d.",
-            Util.parseTime(validator.getParameters().getStringOrDefault("interval", "1s")));
+            Util.parseTime(
+                validator.getParameters().getStringOrDefault("interval", "1s"),
+                validator.getParameters()));
     SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-    if (validator.getParameters().hasAttribute("start")) {
+    if (validator.getParameters().hasAttribute(START_PARAM)) {
       validator.validate(
           x -> (long) x > 0,
           "start should conform to the format yyyy-MM-dd HH:mm:ss.",
-          format.parse(validator.getParameters().getString("start")).getTime());
+          format.parse(validator.getParameters().getString(START_PARAM)).getTime());
     }
   }
 
@@ -66,11 +70,11 @@ public class UDTFIFFT implements UDTF {
   public void beforeStart(UDFParameters parameters, UDTFConfigurations configurations)
       throws Exception {
     configurations.setAccessStrategy(new RowByRowAccessStrategy()).setOutputDataType(Type.DOUBLE);
-    this.interval = Util.parseTime(parameters.getStringOrDefault("interval", "1s"));
+    this.interval = Util.parseTime(parameters.getStringOrDefault("interval", "1s"), parameters);
     SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     this.start = 0;
-    if (parameters.hasAttribute("start")) {
-      this.start = format.parse(parameters.getString("start")).getTime();
+    if (parameters.hasAttribute(START_PARAM)) {
+      this.start = format.parse(parameters.getString(START_PARAM)).getTime();
     }
   }
 
@@ -89,7 +93,7 @@ public class UDTFIFFT implements UDTF {
   @Override
   public void terminate(PointCollector collector) throws Exception {
     int n = time.get(time.size() - 1) + 1;
-    double a[] = new double[n * 2];
+    double[] a = new double[n * 2];
     for (int i = 0; i < time.size(); i++) {
       int k = time.get(i);
       a[k * 2] = real.get(i);

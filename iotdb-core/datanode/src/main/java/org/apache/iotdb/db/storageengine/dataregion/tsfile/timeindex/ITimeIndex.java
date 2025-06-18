@@ -20,7 +20,7 @@
 package org.apache.iotdb.db.storageengine.dataregion.tsfile.timeindex;
 
 import org.apache.iotdb.commons.path.PartialPath;
-import org.apache.iotdb.db.exception.PartitionViolationException;
+import org.apache.iotdb.db.exception.load.PartitionViolationException;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
 
 import org.apache.tsfile.file.metadata.IDeviceID;
@@ -31,12 +31,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.util.Optional;
 import java.util.Set;
 
 public interface ITimeIndex {
 
-  byte DEVICE_TIME_INDEX_TYPE = 1;
+  byte PLAIN_DEVICE_TIME_INDEX_TYPE = 1;
   byte FILE_TIME_INDEX_TYPE = 2;
+  byte ARRAY_DEVICE_TIME_INDEX_TYPE = 3;
 
   /**
    * serialize to outputStream
@@ -149,7 +151,7 @@ public interface ITimeIndex {
    * @param deviceId device name
    * @return start time
    */
-  long getStartTime(IDeviceID deviceId);
+  Optional<Long> getStartTime(IDeviceID deviceId);
 
   /**
    * get end time of device
@@ -157,7 +159,7 @@ public interface ITimeIndex {
    * @param deviceId device name
    * @return end time
    */
-  long getEndTime(IDeviceID deviceId);
+  Optional<Long> getEndTime(IDeviceID deviceId);
 
   /**
    * check whether deviceId exists in TsFile
@@ -198,6 +200,8 @@ public interface ITimeIndex {
    */
   boolean definitelyNotContains(IDeviceID device);
 
+  boolean isDeviceAlive(IDeviceID device, long ttl);
+
   /**
    * @return null if the deviceId doesn't exist, otherwise index 0 is startTime, index 1 is endTime
    */
@@ -209,7 +213,8 @@ public interface ITimeIndex {
   /**
    * Get TimeIndex Type
    *
-   * @return V012FileTimeIndex = 0, deviceTimeIndex = 1, fileTimeIndex = 2
+   * @return V012FileTimeIndex = 0, plainDeviceTimeIndex = 1, fileTimeIndex = 2,
+   *     arrayDeviceTimeIndex = 3
    */
   byte getTimeIndexType();
 

@@ -20,7 +20,7 @@
 package org.apache.iotdb.confignode.manager.pipe.coordinator.plugin;
 
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
-import org.apache.iotdb.commons.pipe.plugin.meta.PipePluginMeta;
+import org.apache.iotdb.commons.pipe.agent.plugin.meta.PipePluginMeta;
 import org.apache.iotdb.confignode.consensus.request.read.pipe.plugin.GetPipePluginJarPlan;
 import org.apache.iotdb.confignode.consensus.request.read.pipe.plugin.GetPipePluginTablePlan;
 import org.apache.iotdb.confignode.consensus.response.JarResp;
@@ -28,10 +28,13 @@ import org.apache.iotdb.confignode.consensus.response.pipe.plugin.PipePluginTabl
 import org.apache.iotdb.confignode.manager.ConfigManager;
 import org.apache.iotdb.confignode.persistence.pipe.PipePluginInfo;
 import org.apache.iotdb.confignode.rpc.thrift.TCreatePipePluginReq;
+import org.apache.iotdb.confignode.rpc.thrift.TDropPipePluginReq;
 import org.apache.iotdb.confignode.rpc.thrift.TGetJarInListReq;
 import org.apache.iotdb.confignode.rpc.thrift.TGetJarInListResp;
 import org.apache.iotdb.confignode.rpc.thrift.TGetPipePluginTableResp;
+import org.apache.iotdb.confignode.rpc.thrift.TShowPipePluginReq;
 import org.apache.iotdb.consensus.exception.ConsensusException;
+import org.apache.iotdb.rpc.RpcUtils;
 import org.apache.iotdb.rpc.TSStatusCode;
 
 import org.slf4j.Logger;
@@ -72,17 +75,49 @@ public class PipePluginCoordinator {
     final PipePluginMeta pipePluginMeta =
         new PipePluginMeta(pluginName, className, false, jarName, jarMD5);
 
-    return configManager.getProcedureManager().createPipePlugin(pipePluginMeta, req.getJarFile());
+    return configManager
+        .getProcedureManager()
+        .createPipePlugin(
+            pipePluginMeta,
+            req.getJarFile(),
+            req.isSetIfNotExistsCondition() && req.isIfNotExistsCondition());
   }
 
-  public TSStatus dropPipePlugin(String pluginName) {
-    return configManager.getProcedureManager().dropPipePlugin(pluginName);
+  public TSStatus dropPipePlugin(TDropPipePluginReq req) {
+    final String pluginName = req.getPluginName();
+    final boolean isSetIfExistsCondition =
+        req.isSetIfExistsCondition() && req.isIfExistsCondition();
+    if (!pipePluginInfo.isPipePluginExisted(pluginName, req.isTableModel)) {
+      return isSetIfExistsCondition
+          ? RpcUtils.getStatus(TSStatusCode.SUCCESS_STATUS)
+          : RpcUtils.getStatus(
+              TSStatusCode.DROP_PIPE_PLUGIN_ERROR,
+              String.format(
+                  "Failed to drop pipe plugin %s. Failures: %s does not exist.",
+                  pluginName, pluginName));
+    }
+    return configManager.getProcedureManager().dropPipePlugin(req);
   }
 
   public TGetPipePluginTableResp getPipePluginTable() {
     try {
       return ((PipePluginTableResp)
               configManager.getConsensusManager().read(new GetPipePluginTablePlan()))
+          .convertToThriftResponse();
+    } catch (IOException | ConsensusException e) {
+      LOGGER.error("Fail to get PipePluginTable", e);
+      return new TGetPipePluginTableResp(
+          new TSStatus(TSStatusCode.EXECUTE_STATEMENT_ERROR.getStatusCode())
+              .setMessage(e.getMessage()),
+          Collections.emptyList());
+    }
+  }
+
+  public TGetPipePluginTableResp getPipePluginTableExtended(TShowPipePluginReq req) {
+    try {
+      return ((PipePluginTableResp)
+              configManager.getConsensusManager().read(new GetPipePluginTablePlan()))
+          .filter(req.isTableModel)
           .convertToThriftResponse();
     } catch (IOException | ConsensusException e) {
       LOGGER.error("Fail to get PipePluginTable", e);

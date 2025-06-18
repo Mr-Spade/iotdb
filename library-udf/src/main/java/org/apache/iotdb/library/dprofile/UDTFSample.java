@@ -19,10 +19,9 @@
 
 package org.apache.iotdb.library.dprofile;
 
-import org.apache.iotdb.commons.udf.utils.UDFDataTypeTransformer;
+import org.apache.iotdb.library.dprofile.util.LTThreeBuckets;
 import org.apache.iotdb.library.util.NoNumberException;
 import org.apache.iotdb.library.util.Util;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.udf.api.UDTF;
 import org.apache.iotdb.udf.api.access.Row;
 import org.apache.iotdb.udf.api.access.RowIterator;
@@ -33,12 +32,10 @@ import org.apache.iotdb.udf.api.customizer.parameter.UDFParameterValidator;
 import org.apache.iotdb.udf.api.customizer.parameter.UDFParameters;
 import org.apache.iotdb.udf.api.customizer.strategy.RowByRowAccessStrategy;
 import org.apache.iotdb.udf.api.customizer.strategy.SlidingSizeWindowAccessStrategy;
+import org.apache.iotdb.udf.api.type.Type;
 
-import com.github.ggalmazor.ltdownsampling.LTThreeBuckets;
-import com.github.ggalmazor.ltdownsampling.Point;
 import org.apache.commons.lang3.tuple.Pair;
 
-import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
@@ -55,11 +52,12 @@ public class UDTFSample implements UDTF {
 
   private int k; // sample numbers
   private Method method;
+  private static final String METHOD_RESERVOIR = "reservoir";
   // These variables occurs in pool sampling
   private Pair<Long, Object>[] samples; // sampled data
   private int num = 0; // number of points already sampled
   private Random random;
-  private TSDataType dataType;
+  private Type dataType;
 
   @Override
   public void validate(UDFParameterValidator validator) throws Exception {
@@ -72,21 +70,25 @@ public class UDTFSample implements UDTF {
         .validate(
             method ->
                 "isometric".equalsIgnoreCase((String) method)
-                    || "reservoir".equalsIgnoreCase((String) method)
+                    || METHOD_RESERVOIR.equalsIgnoreCase((String) method)
                     || "triangle".equalsIgnoreCase((String) method),
             "Illegal sampling method.",
-            validator.getParameters().getStringOrDefault("method", "reservoir"));
+            validator.getParameters().getStringOrDefault("method", METHOD_RESERVOIR));
   }
 
   @Override
   public void beforeStart(UDFParameters parameters, UDTFConfigurations configurations)
       throws Exception {
     this.k = parameters.getIntOrDefault("k", 1);
-    this.dataType = UDFDataTypeTransformer.transformToTsDataType(parameters.getDataType(0));
-    String method = parameters.getStringOrDefault("method", "reservoir");
-    if ("triangle".equalsIgnoreCase(method)) this.method = Method.TRIANGLE;
-    else if ("isometric".equalsIgnoreCase(method)) this.method = Method.ISOMETRIC;
-    else this.method = Method.RESERVOIR;
+    this.dataType = parameters.getDataType(0);
+    String methodIn = parameters.getStringOrDefault("method", METHOD_RESERVOIR);
+    if ("triangle".equalsIgnoreCase(methodIn)) {
+      this.method = Method.TRIANGLE;
+    } else if ("isometric".equalsIgnoreCase(methodIn)) {
+      this.method = Method.ISOMETRIC;
+    } else {
+      this.method = Method.RESERVOIR;
+    }
     if (this.method == Method.ISOMETRIC || this.method == Method.TRIANGLE) {
       configurations
           .setAccessStrategy(new SlidingSizeWindowAccessStrategy(Integer.MAX_VALUE))
@@ -118,36 +120,43 @@ public class UDTFSample implements UDTF {
   }
 
   @Override
+  @SuppressWarnings("javabugs:S6320")
   public void transform(RowWindow rowWindow, PointCollector collector) throws Exception {
     // equal-distance sampling
     int n = rowWindow.windowSize();
 
     if (this.k < n) {
       if (this.method == Method.TRIANGLE) {
-        List<Point> input = new LinkedList<>();
+        List<Pair<Long, Double>> input = new LinkedList<>();
         for (int i = 0; i < n; i++) {
           Row row = rowWindow.getRow(i);
-          BigDecimal time = BigDecimal.valueOf(row.getTime());
-          BigDecimal data = BigDecimal.valueOf(Util.getValueAsDouble(row));
-          input.add(new Point(time, data));
+          long time = row.getTime();
+          double data = Util.getValueAsDouble(row);
+          input.add(Pair.of(time, data));
         }
         if (k > 2) {
           // The first and last element will always be sampled so the buckets is k - 2
-          List<Point> output = LTThreeBuckets.sorted(input, k - 2);
-          for (Point p : output) {
+          List<Pair<Long, Double>> output = LTThreeBuckets.sorted(input, k - 2);
+          for (Pair<Long, Double> p : output) {
             switch (dataType) {
               case INT32:
-                Util.putValue(collector, dataType, p.getX().longValue(), p.getY().intValue());
+                collector.putInt(p.getLeft(), p.getRight().intValue());
                 break;
               case INT64:
-                Util.putValue(collector, dataType, p.getX().longValue(), p.getY().longValue());
+                collector.putLong(p.getLeft(), p.getRight().longValue());
                 break;
               case FLOAT:
-                Util.putValue(collector, dataType, p.getX().longValue(), p.getY().floatValue());
+                collector.putFloat(p.getLeft(), p.getRight().floatValue());
                 break;
               case DOUBLE:
-                Util.putValue(collector, dataType, p.getX().longValue(), p.getY().doubleValue());
+                collector.putDouble(p.getLeft(), p.getRight());
                 break;
+              case TIMESTAMP:
+              case DATE:
+              case BLOB:
+              case BOOLEAN:
+              case STRING:
+              case TEXT:
               default:
                 throw new NoNumberException();
             }
@@ -162,7 +171,7 @@ public class UDTFSample implements UDTF {
         }
       } else { // Method.ISOMETRIC
         for (long i = 0; i < this.k; i++) {
-          long j = Math.floorDiv(i * (long) n, (long) k); // avoid intermediate result overflows
+          long j = Math.floorDiv(i * n, (long) k); // avoid intermediate result overflows
           Row row = rowWindow.getRow((int) j);
           Util.putValue(collector, dataType, row.getTime(), Util.getValueAsObject(row));
         }

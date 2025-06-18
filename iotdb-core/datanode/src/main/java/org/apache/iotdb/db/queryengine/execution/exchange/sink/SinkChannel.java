@@ -42,6 +42,7 @@ import org.apache.tsfile.common.conf.TSFileDescriptor;
 import org.apache.tsfile.read.common.block.TsBlock;
 import org.apache.tsfile.read.common.block.column.TsBlockSerde;
 import org.apache.tsfile.utils.Pair;
+import org.apache.tsfile.utils.RamUsageEstimator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -116,12 +117,16 @@ public class SinkChannel implements ISinkChannel {
 
   /** max bytes this SinkChannel can reserve. */
   private long maxBytesCanReserve =
-      IoTDBDescriptor.getInstance().getConfig().getMaxBytesPerFragmentInstance();
+      IoTDBDescriptor.getInstance().getMemoryConfig().getMaxBytesPerFragmentInstance();
 
   private static final DataExchangeCostMetricSet DATA_EXCHANGE_COST_METRIC_SET =
       DataExchangeCostMetricSet.getInstance();
   private static final DataExchangeCountMetricSet DATA_EXCHANGE_COUNT_METRIC_SET =
       DataExchangeCountMetricSet.getInstance();
+
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(SinkChannel.class)
+          + RamUsageEstimator.shallowSizeOfInstance(TFragmentInstanceId.class) * 2;
 
   @SuppressWarnings("squid:S107")
   public SinkChannel(
@@ -196,7 +201,7 @@ public class SinkChannel implements ISinkChannel {
       if (noMoreTsBlocks) {
         return;
       }
-      long retainedSizeInBytes = tsBlock.getRetainedSizeInBytes();
+      long sizeInBytes = tsBlock.getSizeInBytes();
       int startSequenceId;
       startSequenceId = nextSequenceId;
       blocked =
@@ -206,17 +211,16 @@ public class SinkChannel implements ISinkChannel {
                   localFragmentInstanceId.getQueryId(),
                   fullFragmentInstanceId,
                   localPlanNodeId,
-                  retainedSizeInBytes,
+                  sizeInBytes,
                   maxBytesCanReserve)
               .left;
-      bufferRetainedSizeInBytes += retainedSizeInBytes;
+      bufferRetainedSizeInBytes += sizeInBytes;
 
       sequenceIdToTsBlock.put(nextSequenceId, new Pair<>(tsBlock, currentTsBlockSize));
       nextSequenceId += 1;
-      currentTsBlockSize = retainedSizeInBytes;
+      currentTsBlockSize = sizeInBytes;
 
-      // TODO: consider merge multiple NewDataBlockEvent for less network traffic.
-      submitSendNewDataBlockEventTask(startSequenceId, ImmutableList.of(retainedSizeInBytes));
+      submitSendNewDataBlockEventTask(startSequenceId, ImmutableList.of(sizeInBytes));
     } finally {
       DATA_EXCHANGE_COST_METRIC_SET.recordDataExchangeCost(
           SINK_HANDLE_SEND_TSBLOCK_REMOTE, System.nanoTime() - startTime);
@@ -318,6 +322,15 @@ public class SinkChannel implements ISinkChannel {
     return bufferRetainedSizeInBytes;
   }
 
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE
+        + RamUsageEstimator.sizeOf(threadName)
+        + RamUsageEstimator.sizeOf(localPlanNodeId)
+        + RamUsageEstimator.sizeOf(remotePlanNodeId)
+        + RamUsageEstimator.sizeOf(fullFragmentInstanceId);
+  }
+
   public ByteBuffer getSerializedTsBlock(int partition, int sequenceId) {
     throw new UnsupportedOperationException();
   }
@@ -404,7 +417,8 @@ public class SinkChannel implements ISinkChannel {
         localFragmentInstanceId.instanceId);
   }
 
-  private void checkState() {
+  @Override
+  public void checkState() {
     if (aborted) {
       throw new IllegalStateException("SinkChannel is aborted.");
     }

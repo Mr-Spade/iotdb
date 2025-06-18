@@ -19,7 +19,6 @@
 
 package org.apache.iotdb.db.storageengine.dataregion.compaction.execute.utils.executor.readchunk;
 
-import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.exception.CompactionLastTimeCheckFailedException;
 import org.apache.iotdb.db.storageengine.dataregion.compaction.execute.task.CompactionTaskSummary;
@@ -29,7 +28,6 @@ import org.apache.iotdb.db.storageengine.dataregion.tsfile.TsFileResource;
 import org.apache.tsfile.file.header.ChunkHeader;
 import org.apache.tsfile.file.metadata.ChunkMetadata;
 import org.apache.tsfile.file.metadata.IDeviceID;
-import org.apache.tsfile.file.metadata.PlainDeviceID;
 import org.apache.tsfile.read.TimeValuePair;
 import org.apache.tsfile.read.TsFileSequenceReader;
 import org.apache.tsfile.read.common.Chunk;
@@ -49,7 +47,7 @@ import java.util.List;
 @SuppressWarnings("squid:S1319")
 public class SingleSeriesCompactionExecutor {
   private IDeviceID device;
-  private PartialPath series;
+  private String measurement;
   private LinkedList<Pair<TsFileSequenceReader, List<ChunkMetadata>>> readerAndChunkMetadataList;
   private CompactionTsFileWriter fileWriter;
   private TsFileResource targetResource;
@@ -59,9 +57,12 @@ public class SingleSeriesCompactionExecutor {
   private Chunk cachedChunk;
   private ChunkMetadata cachedChunkMetadata;
   // record the min time and max time to update the target resource
-  private long minStartTimestamp = Long.MAX_VALUE;
-  private long maxEndTimestamp = Long.MIN_VALUE;
-  private long lastWriteTimestamp = Long.MIN_VALUE;
+  private boolean minStartTimestampSet = false;
+  private long minStartTimestamp;
+  private boolean maxEndTimestampSet = false;
+  private long maxEndTimestamp;
+  private boolean lastWriteTimestampSet = false;
+  private long lastWriteTimestamp;
   private long pointCountInChunkWriter = 0;
   private final CompactionTaskSummary summary;
 
@@ -75,13 +76,13 @@ public class SingleSeriesCompactionExecutor {
       IoTDBDescriptor.getInstance().getConfig().getChunkPointNumLowerBoundInCompaction();
 
   public SingleSeriesCompactionExecutor(
-      PartialPath series,
+      IDeviceID device,
       IMeasurementSchema measurementSchema,
       LinkedList<Pair<TsFileSequenceReader, List<ChunkMetadata>>> readerAndChunkMetadataList,
       CompactionTsFileWriter fileWriter,
       TsFileResource targetResource) {
-    this.device = new PlainDeviceID(series.getDevice());
-    this.series = series;
+    this.device = device;
+    this.measurement = measurementSchema.getMeasurementName();
     this.readerAndChunkMetadataList = readerAndChunkMetadataList;
     this.fileWriter = fileWriter;
     this.schema = measurementSchema;
@@ -93,13 +94,14 @@ public class SingleSeriesCompactionExecutor {
   }
 
   public SingleSeriesCompactionExecutor(
-      PartialPath series,
+      IDeviceID device,
+      String measurement,
       LinkedList<Pair<TsFileSequenceReader, List<ChunkMetadata>>> readerAndChunkMetadataList,
       CompactionTsFileWriter fileWriter,
       TsFileResource targetResource,
       CompactionTaskSummary summary) {
-    this.device = new PlainDeviceID(series.getDevice());
-    this.series = series;
+    this.device = device;
+    this.measurement = measurement;
     this.readerAndChunkMetadataList = readerAndChunkMetadataList;
     this.fileWriter = fileWriter;
     this.schema = null;
@@ -159,15 +161,17 @@ public class SingleSeriesCompactionExecutor {
       flushChunkWriter();
     }
     fileWriter.checkMetadataSizeAndMayFlush();
-    targetResource.updateStartTime(device, minStartTimestamp);
-    targetResource.updateEndTime(device, maxEndTimestamp);
+    if (minStartTimestampSet) {
+      targetResource.updateStartTime(device, minStartTimestamp);
+      targetResource.updateEndTime(device, maxEndTimestamp);
+    }
   }
 
   private void constructChunkWriterFromReadChunk(Chunk chunk) {
     ChunkHeader chunkHeader = chunk.getHeader();
     this.schema =
         new MeasurementSchema(
-            series.getMeasurement(),
+            measurement,
             chunkHeader.getDataType(),
             chunkHeader.getEncodingType(),
             chunkHeader.getCompressionType());
@@ -270,11 +274,13 @@ public class SingleSeriesCompactionExecutor {
         TimeValuePair timeValuePair = batchIterator.nextTimeValuePair();
         checkAndUpdatePreviousTimestamp(timeValuePair.getTimestamp());
         writeTimeAndValueToChunkWriter(timeValuePair);
-        if (timeValuePair.getTimestamp() > maxEndTimestamp) {
+        if (!maxEndTimestampSet || timeValuePair.getTimestamp() > maxEndTimestamp) {
           maxEndTimestamp = timeValuePair.getTimestamp();
+          maxEndTimestampSet = true;
         }
-        if (timeValuePair.getTimestamp() < minStartTimestamp) {
+        if (!minStartTimestampSet || timeValuePair.getTimestamp() < minStartTimestamp) {
           minStartTimestamp = timeValuePair.getTimestamp();
+          minStartTimestampSet = true;
         }
       }
     }
@@ -309,6 +315,8 @@ public class SingleSeriesCompactionExecutor {
   private void writeTimeAndValueToChunkWriter(TimeValuePair timeValuePair) {
     switch (chunkWriter.getDataType()) {
       case TEXT:
+      case BLOB:
+      case STRING:
         chunkWriter.write(timeValuePair.getTimestamp(), timeValuePair.getValue().getBinary());
         break;
       case FLOAT:
@@ -321,9 +329,11 @@ public class SingleSeriesCompactionExecutor {
         chunkWriter.write(timeValuePair.getTimestamp(), timeValuePair.getValue().getBoolean());
         break;
       case INT64:
+      case TIMESTAMP:
         chunkWriter.write(timeValuePair.getTimestamp(), timeValuePair.getValue().getLong());
         break;
       case INT32:
+      case DATE:
         chunkWriter.write(timeValuePair.getTimestamp(), timeValuePair.getValue().getInt());
         break;
       default:
@@ -333,11 +343,13 @@ public class SingleSeriesCompactionExecutor {
 
   private void flushChunkToFileWriter(Chunk chunk, ChunkMetadata chunkMetadata) throws IOException {
     checkAndUpdatePreviousTimestamp(chunkMetadata.getStartTime());
-    if (chunkMetadata.getStartTime() < minStartTimestamp) {
+    if (!minStartTimestampSet || chunkMetadata.getStartTime() < minStartTimestamp) {
       minStartTimestamp = chunkMetadata.getStartTime();
+      minStartTimestampSet = true;
     }
-    if (chunkMetadata.getEndTime() > maxEndTimestamp) {
+    if (!maxEndTimestampSet || chunkMetadata.getEndTime() > maxEndTimestamp) {
       maxEndTimestamp = chunkMetadata.getEndTime();
+      maxEndTimestampSet = true;
     }
     fileWriter.writeChunk(chunk, chunkMetadata);
   }
@@ -365,11 +377,12 @@ public class SingleSeriesCompactionExecutor {
   }
 
   private void checkAndUpdatePreviousTimestamp(long currentWritingTimestamp) {
-    if (currentWritingTimestamp <= lastWriteTimestamp) {
+    if (lastWriteTimestampSet && currentWritingTimestamp <= lastWriteTimestamp) {
       throw new CompactionLastTimeCheckFailedException(
-          series.getFullPath(), currentWritingTimestamp, lastWriteTimestamp);
+          device, measurement, currentWritingTimestamp, lastWriteTimestamp);
     } else {
       lastWriteTimestamp = currentWritingTimestamp;
+      lastWriteTimestampSet = true;
     }
   }
 }

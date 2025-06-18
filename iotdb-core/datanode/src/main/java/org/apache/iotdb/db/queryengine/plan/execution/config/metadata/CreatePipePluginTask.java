@@ -22,6 +22,7 @@ package org.apache.iotdb.db.queryengine.plan.execution.config.metadata;
 import org.apache.iotdb.db.queryengine.plan.execution.config.ConfigTaskResult;
 import org.apache.iotdb.db.queryengine.plan.execution.config.IConfigTask;
 import org.apache.iotdb.db.queryengine.plan.execution.config.executor.IConfigTaskExecutor;
+import org.apache.iotdb.db.queryengine.plan.relational.sql.ast.CreatePipePlugin;
 import org.apache.iotdb.db.queryengine.plan.statement.metadata.pipe.CreatePipePluginStatement;
 
 import com.google.common.util.concurrent.ListenableFuture;
@@ -32,6 +33,17 @@ public class CreatePipePluginTask implements IConfigTask {
 
   public CreatePipePluginTask(CreatePipePluginStatement createPipePluginStatement) {
     this.createPipePluginStatement = createPipePluginStatement;
+    this.createPipePluginStatement.markIsTableModel(false);
+  }
+
+  public CreatePipePluginTask(CreatePipePlugin node) {
+    createPipePluginStatement =
+        new CreatePipePluginStatement(
+            node.getPluginName(),
+            node.hasIfNotExistsCondition(),
+            node.getClassName(),
+            node.getUriString());
+    createPipePluginStatement.markIsTableModel(true);
   }
 
   @Override

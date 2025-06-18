@@ -28,7 +28,7 @@ import org.apache.iotdb.db.schemaengine.schemaregion.mtree.impl.mem.mnode.impl.A
 import org.apache.iotdb.db.schemaengine.schemaregion.mtree.impl.mem.mnode.impl.BasicInternalMNode;
 import org.apache.iotdb.db.schemaengine.schemaregion.mtree.impl.mem.mnode.impl.DatabaseMNode;
 import org.apache.iotdb.db.schemaengine.schemaregion.mtree.impl.mem.mnode.impl.MeasurementMNode;
-import org.apache.iotdb.db.schemaengine.schemaregion.mtree.impl.mem.mnode.info.DeviceInfo;
+import org.apache.iotdb.db.schemaengine.schemaregion.mtree.impl.mem.mnode.info.TreeDeviceInfo;
 
 import org.apache.tsfile.write.schema.IMeasurementSchema;
 
@@ -44,7 +44,7 @@ public class MemMNodeFactory implements IMNodeFactory<IMemMNode> {
   @Override
   public IDeviceMNode<IMemMNode> createDeviceMNode(IMemMNode parent, String name) {
     BasicInternalMNode internalMNode = new BasicInternalMNode(parent, name);
-    internalMNode.setDeviceInfo(new DeviceInfo<>());
+    internalMNode.setDeviceInfo(new TreeDeviceInfo<>());
     return internalMNode.getAsDeviceMNode();
   }
 
@@ -54,15 +54,9 @@ public class MemMNodeFactory implements IMNodeFactory<IMemMNode> {
   }
 
   @Override
-  public IDatabaseMNode<IMemMNode> createDatabaseMNode(
-      IMemMNode parent, String name, long dataTTL) {
-    return new DatabaseMNode(parent, name, dataTTL);
-  }
-
-  @Override
-  public IMemMNode createDatabaseDeviceMNode(IMemMNode parent, String name, long dataTTL) {
-    DatabaseMNode databaseMNode = new DatabaseMNode(parent, name, dataTTL);
-    databaseMNode.setDeviceInfo(new DeviceInfo<>());
+  public IMemMNode createDatabaseDeviceMNode(IMemMNode parent, String name) {
+    DatabaseMNode databaseMNode = new DatabaseMNode(parent, name);
+    databaseMNode.setDeviceInfo(new TreeDeviceInfo<>());
     return databaseMNode.getAsMNode();
   }
 

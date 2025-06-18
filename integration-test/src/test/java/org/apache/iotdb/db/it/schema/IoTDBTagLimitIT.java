@@ -19,24 +19,18 @@
 
 package org.apache.iotdb.db.it.schema;
 
-import org.apache.iotdb.db.queryengine.common.header.ColumnHeaderConstant;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.it.env.EnvFactory;
-import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
-import org.apache.iotdb.rpc.TSStatusCode;
 import org.apache.iotdb.util.AbstractSchemaIT;
 
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Collections;
 import java.util.List;
@@ -46,11 +40,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-@RunWith(IoTDBTestRunner.class)
 @Category({LocalStandaloneIT.class, ClusterIT.class})
 public class IoTDBTagLimitIT extends AbstractSchemaIT {
 
-  public IoTDBTagLimitIT(SchemaTestMode schemaTestMode) {
+  public IoTDBTagLimitIT(final SchemaTestMode schemaTestMode) {
     super(schemaTestMode);
   }
 
@@ -59,18 +52,18 @@ public class IoTDBTagLimitIT extends AbstractSchemaIT {
         "create database root.turbine",
       };
 
-  @BeforeClass
-  public static void setUp() throws Exception {
+  @Parameterized.BeforeParam
+  public static void before() throws Exception {
     EnvFactory.getEnv().getConfig().getCommonConfig().setTagAttributeTotalSize(50);
-    EnvFactory.getEnv().getConfig().getCommonConfig().setTagAttributeMaxNum(5);
-    EnvFactory.getEnv().getConfig().getCommonConfig().setTagAttributeEntryMaxSize(30);
+    setUpEnvironment();
     EnvFactory.getEnv().initClusterEnvironment();
     prepareData(SQLs);
   }
 
-  @AfterClass
-  public static void tearDown() throws Exception {
+  @Parameterized.AfterParam
+  public static void after() throws Exception {
     EnvFactory.getEnv().cleanClusterEnvironment();
+    tearDownEnvironment();
   }
 
   @Test
@@ -152,44 +145,6 @@ public class IoTDBTagLimitIT extends AbstractSchemaIT {
     } catch (Exception e) {
       e.printStackTrace();
       fail();
-    }
-    clearSchema();
-  }
-
-  @Test
-  public void testMapSizeAndEntryLimit() throws Exception {
-    List<String> sqls = new java.util.ArrayList<>();
-    String sql1 =
-        "create timeseries root.turbine.d1.s1 with datatype=FLOAT, encoding=RLE, compression=SNAPPY "
-            + "tags('tag1'='v1', 'tag2'='v2', 'tag3'='v3', 'tag4'='v4', 'tag5'='v5', 'tag6'='v6') "
-            + "attributes('att1'='a1', 'att2'='a2')";
-    sqls.add(sql1);
-    String sql2 =
-        "create timeseries root.turbine.d1.s2 with datatype=FLOAT, encoding=RLE, compression=SNAPPY "
-            + "tags('tag1tag2tag3tag4tag5'='v1v2v3v4v5') "
-            + "attributes('att1'='a1', 'att2'='a2')";
-    sqls.add(sql2);
-
-    List<String> errorMessages = new java.util.ArrayList<>();
-    String errorMessage1 =
-        TSStatusCode.METADATA_ERROR.getStatusCode()
-            + ": the emtry num of the map is over the tagAttributeMaxNum";
-    errorMessages.add(errorMessage1);
-    String errorMessage2 =
-        TSStatusCode.METADATA_ERROR.getStatusCode()
-            + ": An emtry of the map has a size which is over the tagAttributeMaxSize";
-    errorMessages.add(errorMessage2);
-
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-      for (int i = 0; i < sqls.size(); i++) {
-        try {
-          statement.execute(sqls.get(i));
-          fail();
-        } catch (SQLException e) {
-          Assert.assertEquals(errorMessages.get(i), e.getMessage());
-        }
-      }
     }
     clearSchema();
   }

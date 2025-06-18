@@ -18,14 +18,22 @@
  */
 package org.apache.iotdb.db.storageengine.dataregion.tsfile;
 
+import org.apache.iotdb.commons.exception.IllegalPathException;
+import org.apache.iotdb.commons.path.MeasurementPath;
+import org.apache.iotdb.db.storageengine.dataregion.modification.ModEntry;
+import org.apache.iotdb.db.storageengine.dataregion.modification.ModificationFile;
+import org.apache.iotdb.db.storageengine.dataregion.modification.TreeDeletionEntry;
+import org.apache.iotdb.db.storageengine.dataregion.modification.v1.Deletion;
+import org.apache.iotdb.db.storageengine.dataregion.modification.v1.Modification;
+import org.apache.iotdb.db.storageengine.dataregion.modification.v1.ModificationFileV1;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.generator.TsFileNameGenerator;
-import org.apache.iotdb.db.storageengine.dataregion.tsfile.timeindex.DeviceTimeIndex;
+import org.apache.iotdb.db.storageengine.dataregion.tsfile.timeindex.ArrayDeviceTimeIndex;
 import org.apache.iotdb.db.storageengine.dataregion.tsfile.timeindex.ITimeIndex;
 import org.apache.iotdb.db.utils.constant.TestConstant;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.tsfile.file.metadata.IDeviceID;
-import org.apache.tsfile.file.metadata.PlainDeviceID;
+import org.apache.tsfile.file.metadata.IDeviceID.Factory;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -33,10 +41,23 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
+@SuppressWarnings("OptionalGetWithoutIsPresent")
 public class TsFileResourceTest {
   private final File file =
       new File(
@@ -50,13 +71,17 @@ public class TsFileResourceTest {
   @Before
   public void setUp() {
     IntStream.range(0, DEVICE_NUM)
-        .forEach(i -> deviceToIndex.put(new PlainDeviceID("root.sg.d" + i), i));
-    DeviceTimeIndex deviceTimeIndex = new DeviceTimeIndex(deviceToIndex, startTimes, endTimes);
+        .forEach(
+            i -> deviceToIndex.put(IDeviceID.Factory.DEFAULT_FACTORY.create("root.sg.d" + i), i));
+    ArrayDeviceTimeIndex deviceTimeIndex =
+        new ArrayDeviceTimeIndex(deviceToIndex, startTimes, endTimes);
     IntStream.range(0, DEVICE_NUM)
         .forEach(
             i -> {
-              deviceTimeIndex.updateStartTime(new PlainDeviceID("root.sg.d" + i), i);
-              deviceTimeIndex.updateEndTime(new PlainDeviceID("root.sg.d" + i), i + 1);
+              deviceTimeIndex.updateStartTime(
+                  IDeviceID.Factory.DEFAULT_FACTORY.create("root.sg.d" + i), i);
+              deviceTimeIndex.updateEndTime(
+                  IDeviceID.Factory.DEFAULT_FACTORY.create("root.sg.d" + i), i + 1);
             });
     tsFileResource.setTimeIndex(deviceTimeIndex);
     tsFileResource.setStatusForTest(TsFileResourceStatus.NORMAL);
@@ -84,14 +109,143 @@ public class TsFileResourceTest {
 
   @Test
   public void testDegradeAndFileTimeIndex() {
-    Assert.assertEquals(ITimeIndex.DEVICE_TIME_INDEX_TYPE, tsFileResource.getTimeIndexType());
+    Assert.assertEquals(ITimeIndex.ARRAY_DEVICE_TIME_INDEX_TYPE, tsFileResource.getTimeIndexType());
     tsFileResource.degradeTimeIndex();
     Assert.assertEquals(ITimeIndex.FILE_TIME_INDEX_TYPE, tsFileResource.getTimeIndexType());
     Assert.assertEquals(deviceToIndex.keySet(), tsFileResource.getDevices());
     for (int i = 0; i < DEVICE_NUM; i++) {
-      Assert.assertEquals(tsFileResource.getStartTime(new PlainDeviceID("root.sg1.d" + i)), 0);
       Assert.assertEquals(
-          tsFileResource.getEndTime(new PlainDeviceID("root.sg1.d" + i)), DEVICE_NUM);
+          0,
+          ((long)
+              tsFileResource.getStartTime(Factory.DEFAULT_FACTORY.create("root.sg1.d" + i)).get()));
+      Assert.assertEquals(
+          DEVICE_NUM,
+          ((long)
+              tsFileResource.getEndTime(Factory.DEFAULT_FACTORY.create("root.sg1.d" + i)).get()));
+    }
+  }
+
+  @Test
+  public void testUpgradeModFileAsync()
+      throws IllegalPathException, IOException, InterruptedException {
+    // write old mod file
+    List<Deletion> oldModifications =
+        Arrays.asList(
+            new Deletion(new MeasurementPath("root.db1.d1.s1"), 0, 100),
+            new Deletion(new MeasurementPath("root.db1.*.s1"), 0, 100, 200),
+            new Deletion(new MeasurementPath("root.db1.d1.**"), 0, Long.MIN_VALUE, Long.MAX_VALUE));
+    try (ModificationFileV1 modificationFileV1 = ModificationFileV1.getNormalMods(tsFileResource)) {
+      for (Modification modification : oldModifications) {
+        modificationFileV1.write(modification);
+      }
+    }
+
+    // upgrade asynchronously
+    ExecutorService threadPool = Executors.newSingleThreadExecutor();
+    tsFileResource.upgradeModFile(threadPool);
+
+    // entries should be upgraded
+    List<TreeDeletionEntry> newDeletionEntriesExpected =
+        oldModifications.stream().map(TreeDeletionEntry::new).collect(Collectors.toList());
+    Collection<ModEntry> allDeletionEntriesInFile = tsFileResource.getAllModEntries();
+    assertEquals(newDeletionEntriesExpected, allDeletionEntriesInFile);
+
+    // old mod file should be deleted
+    ModificationFileV1 modificationFileV1 = ModificationFileV1.getNormalMods(tsFileResource);
+    assertFalse(modificationFileV1.exists());
+
+    // new mod file should exist
+    assertTrue(tsFileResource.exclusiveModFileExists());
+
+    threadPool.shutdown();
+    if (!threadPool.awaitTermination(1, TimeUnit.MINUTES)) {
+      fail("Mod file upgrade takes too long");
+    }
+
+    // writable after upgrade
+    try (ModificationFile modFileForWrite = tsFileResource.getModFileForWrite()) {
+      TreeDeletionEntry newDeletionEntry =
+          new TreeDeletionEntry(new MeasurementPath("root.db1.**"), 100, 1000);
+      newDeletionEntriesExpected.add(newDeletionEntry);
+      modFileForWrite.write(newDeletionEntry);
+    }
+    assertEquals(newDeletionEntriesExpected, tsFileResource.getAllModEntries());
+  }
+
+  @Test
+  public void testUpgradeModFileSync() throws IllegalPathException, IOException {
+    // write old mod file
+    List<Deletion> oldModifications =
+        Arrays.asList(
+            new Deletion(new MeasurementPath("root.db1.d1.s1"), 0, 100),
+            new Deletion(new MeasurementPath("root.db1.*.s1"), 0, 100, 200),
+            new Deletion(new MeasurementPath("root.db1.d1.**"), 0, Long.MIN_VALUE, Long.MAX_VALUE));
+    try (ModificationFileV1 modificationFileV1 = ModificationFileV1.getNormalMods(tsFileResource)) {
+      for (Modification modification : oldModifications) {
+        modificationFileV1.write(modification);
+      }
+    }
+
+    // upgrade synchronously
+    tsFileResource.upgradeModFile(null);
+
+    // entries should be upgraded
+    List<TreeDeletionEntry> newDeletionEntriesExpected =
+        oldModifications.stream().map(TreeDeletionEntry::new).collect(Collectors.toList());
+    Collection<ModEntry> allDeletionEntriesInFile = tsFileResource.getAllModEntries();
+    assertEquals(newDeletionEntriesExpected, allDeletionEntriesInFile);
+
+    // old mod file should be deleted
+    ModificationFileV1 modificationFileV1 = ModificationFileV1.getNormalMods(tsFileResource);
+    assertFalse(modificationFileV1.exists());
+
+    // new mod file should exist
+    assertTrue(tsFileResource.exclusiveModFileExists());
+
+    // writable after upgrade
+    try (ModificationFile modFileForWrite = tsFileResource.getModFileForWrite()) {
+      TreeDeletionEntry newDeletionEntry =
+          new TreeDeletionEntry(new MeasurementPath("root.db1.**"), 100, 1000);
+      newDeletionEntriesExpected.add(newDeletionEntry);
+      modFileForWrite.write(newDeletionEntry);
+    }
+    assertEquals(newDeletionEntriesExpected, tsFileResource.getAllModEntries());
+  }
+
+  @Test
+  public void testUpgradeModFileAsyncDirectlyWrite()
+      throws IllegalPathException, IOException, InterruptedException {
+    // write old mod file
+    List<Deletion> oldModifications =
+        Arrays.asList(
+            new Deletion(new MeasurementPath("root.db1.d1.s1"), 0, 100),
+            new Deletion(new MeasurementPath("root.db1.*.s1"), 0, 100, 200),
+            new Deletion(new MeasurementPath("root.db1.d1.**"), 0, Long.MIN_VALUE, Long.MAX_VALUE));
+    try (ModificationFileV1 modificationFileV1 = ModificationFileV1.getNormalMods(tsFileResource)) {
+      for (Modification modification : oldModifications) {
+        modificationFileV1.write(modification);
+      }
+    }
+
+    // upgrade asynchronously
+    ExecutorService threadPool = Executors.newSingleThreadExecutor();
+    tsFileResource.upgradeModFile(threadPool);
+
+    // without read first, still writable
+    List<TreeDeletionEntry> newDeletionEntriesExpected =
+        oldModifications.stream().map(TreeDeletionEntry::new).collect(Collectors.toList());
+
+    try (ModificationFile modFileForWrite = tsFileResource.getModFileForWrite()) {
+      TreeDeletionEntry newDeletionEntry =
+          new TreeDeletionEntry(new MeasurementPath("root.db1.**"), 100, 1000);
+      newDeletionEntriesExpected.add(newDeletionEntry);
+      modFileForWrite.write(newDeletionEntry);
+    }
+    assertEquals(newDeletionEntriesExpected, tsFileResource.getAllModEntries());
+
+    threadPool.shutdown();
+    if (!threadPool.awaitTermination(1, TimeUnit.MINUTES)) {
+      fail("Mod file upgrade takes too long");
     }
   }
 }

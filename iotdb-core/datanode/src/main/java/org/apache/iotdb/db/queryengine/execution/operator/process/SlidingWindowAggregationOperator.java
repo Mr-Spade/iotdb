@@ -19,7 +19,8 @@
 
 package org.apache.iotdb.db.queryengine.execution.operator.process;
 
-import org.apache.iotdb.db.queryengine.execution.aggregation.Aggregator;
+import org.apache.iotdb.db.queryengine.execution.MemoryEstimationHelper;
+import org.apache.iotdb.db.queryengine.execution.aggregation.TreeAggregator;
 import org.apache.iotdb.db.queryengine.execution.aggregation.slidingwindow.SlidingWindowAggregator;
 import org.apache.iotdb.db.queryengine.execution.aggregation.timerangeiterator.ITimeRangeIterator;
 import org.apache.iotdb.db.queryengine.execution.operator.Operator;
@@ -29,7 +30,9 @@ import org.apache.iotdb.db.queryengine.plan.planner.plan.parameter.GroupByTimePa
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.read.common.TimeRange;
 import org.apache.tsfile.read.common.block.TsBlockBuilder;
+import org.apache.tsfile.utils.RamUsageEstimator;
 
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -40,6 +43,8 @@ import static org.apache.iotdb.db.queryengine.execution.operator.AggregationUtil
 
 public class SlidingWindowAggregationOperator extends SingleInputAggregationOperator {
 
+  private static final long INSTANCE_SIZE =
+      RamUsageEstimator.shallowSizeOfInstance(SlidingWindowAggregationOperator.class);
   private final ITimeRangeIterator timeRangeIterator;
   // Current interval of aggregation window [curStartTime, curEndTime)
   private TimeRange curTimeRange;
@@ -51,13 +56,14 @@ public class SlidingWindowAggregationOperator extends SingleInputAggregationOper
 
   public SlidingWindowAggregationOperator(
       OperatorContext operatorContext,
-      List<Aggregator> aggregators,
+      List<TreeAggregator> aggregators,
       ITimeRangeIterator timeRangeIterator,
       Operator child,
       boolean ascending,
       boolean outputEndTime,
       GroupByTimeParameter groupByTimeParameter,
-      long maxReturnSize) {
+      long maxReturnSize,
+      ZoneId zoneId) {
     super(operatorContext, aggregators, child, ascending, maxReturnSize);
     checkArgument(
         groupByTimeParameter != null,
@@ -67,14 +73,15 @@ public class SlidingWindowAggregationOperator extends SingleInputAggregationOper
     if (outputEndTime) {
       dataTypes.add(TSDataType.INT64);
     }
-    for (Aggregator aggregator : aggregators) {
+    for (TreeAggregator aggregator : aggregators) {
       dataTypes.addAll(Arrays.asList(aggregator.getOutputType()));
     }
     this.resultTsBlockBuilder = new TsBlockBuilder(dataTypes);
 
     this.timeRangeIterator = timeRangeIterator;
     this.outputEndTime = outputEndTime;
-    this.subTimeRangeIterator = initTimeRangeIterator(groupByTimeParameter, ascending, true);
+    this.subTimeRangeIterator =
+        initTimeRangeIterator(groupByTimeParameter, ascending, true, zoneId);
   }
 
   @Override
@@ -90,7 +97,7 @@ public class SlidingWindowAggregationOperator extends SingleInputAggregationOper
       curTimeRange = timeRangeIterator.nextTimeRange();
 
       // Clear previous aggregation result
-      for (Aggregator aggregator : aggregators) {
+      for (TreeAggregator aggregator : aggregators) {
         ((SlidingWindowAggregator) aggregator).updateTimeRange(curTimeRange);
       }
     }
@@ -138,7 +145,7 @@ public class SlidingWindowAggregationOperator extends SingleInputAggregationOper
       return;
     }
 
-    for (Aggregator aggregator : aggregators) {
+    for (TreeAggregator aggregator : aggregators) {
       ((SlidingWindowAggregator) aggregator).processTsBlock(inputTsBlock);
     }
 
@@ -162,5 +169,13 @@ public class SlidingWindowAggregationOperator extends SingleInputAggregationOper
           curTimeRange.getMax());
     }
     curTimeRange = null;
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    return INSTANCE_SIZE
+        + MemoryEstimationHelper.getEstimatedSizeOfAccountableObject(child)
+        + MemoryEstimationHelper.getEstimatedSizeOfAccountableObject(operatorContext)
+        + resultTsBlockBuilder.getRetainedSizeInBytes();
   }
 }

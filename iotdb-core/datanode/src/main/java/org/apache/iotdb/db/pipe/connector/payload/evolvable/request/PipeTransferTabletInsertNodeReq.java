@@ -22,7 +22,7 @@ package org.apache.iotdb.db.pipe.connector.payload.evolvable.request;
 import org.apache.iotdb.commons.pipe.connector.payload.thrift.request.IoTDBConnectorRequestVersion;
 import org.apache.iotdb.commons.pipe.connector.payload.thrift.request.PipeRequestType;
 import org.apache.iotdb.db.pipe.receiver.protocol.thrift.IoTDBDataNodeReceiver;
-import org.apache.iotdb.db.queryengine.plan.planner.plan.node.PlanNodeType;
+import org.apache.iotdb.db.queryengine.plan.planner.plan.PlanFragment;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertRowNode;
 import org.apache.iotdb.db.queryengine.plan.planner.plan.node.write.InsertRowsNode;
@@ -40,9 +40,9 @@ import java.util.Objects;
 
 public class PipeTransferTabletInsertNodeReq extends TPipeTransferReq {
 
-  private transient InsertNode insertNode;
+  protected transient InsertNode insertNode;
 
-  private PipeTransferTabletInsertNodeReq() {
+  protected PipeTransferTabletInsertNodeReq() {
     // Do nothing
   }
 
@@ -66,17 +66,18 @@ public class PipeTransferTabletInsertNodeReq extends TPipeTransferReq {
 
   /////////////////////////////// WriteBack & Batch ///////////////////////////////
 
-  public static PipeTransferTabletInsertNodeReq toTPipeTransferRawReq(InsertNode insertNode) {
+  public static PipeTransferTabletInsertNodeReq toTPipeTransferRawReq(final InsertNode insertNode) {
     final PipeTransferTabletInsertNodeReq req = new PipeTransferTabletInsertNodeReq();
 
     req.insertNode = insertNode;
-
+    req.version = IoTDBConnectorRequestVersion.VERSION_1.getVersion();
+    req.type = PipeRequestType.TRANSFER_TABLET_INSERT_NODE.getType();
     return req;
   }
 
   /////////////////////////////// Thrift ///////////////////////////////
 
-  public static PipeTransferTabletInsertNodeReq toTPipeTransferReq(InsertNode insertNode) {
+  public static PipeTransferTabletInsertNodeReq toTPipeTransferReq(final InsertNode insertNode) {
     final PipeTransferTabletInsertNodeReq req = new PipeTransferTabletInsertNodeReq();
 
     req.insertNode = insertNode;
@@ -88,10 +89,11 @@ public class PipeTransferTabletInsertNodeReq extends TPipeTransferReq {
     return req;
   }
 
-  public static PipeTransferTabletInsertNodeReq fromTPipeTransferReq(TPipeTransferReq transferReq) {
+  public static PipeTransferTabletInsertNodeReq fromTPipeTransferReq(
+      final TPipeTransferReq transferReq) {
     final PipeTransferTabletInsertNodeReq insertNodeReq = new PipeTransferTabletInsertNodeReq();
 
-    insertNodeReq.insertNode = (InsertNode) PlanNodeType.deserialize(transferReq.body);
+    insertNodeReq.insertNode = (InsertNode) PlanFragment.deserializeHelper(transferReq.body, null);
 
     insertNodeReq.version = transferReq.version;
     insertNodeReq.type = transferReq.type;
@@ -101,7 +103,8 @@ public class PipeTransferTabletInsertNodeReq extends TPipeTransferReq {
   }
 
   /////////////////////////////// Air Gap ///////////////////////////////
-  public static byte[] toTPipeTransferBytes(InsertNode insertNode) throws IOException {
+
+  public static byte[] toTPipeTransferBytes(final InsertNode insertNode) throws IOException {
     try (final PublicBAOS byteArrayOutputStream = new PublicBAOS();
         final DataOutputStream outputStream = new DataOutputStream(byteArrayOutputStream)) {
       ReadWriteIOUtils.write(IoTDBConnectorRequestVersion.VERSION_1.getVersion(), outputStream);
@@ -114,14 +117,14 @@ public class PipeTransferTabletInsertNodeReq extends TPipeTransferReq {
   /////////////////////////////// Object ///////////////////////////////
 
   @Override
-  public boolean equals(Object obj) {
+  public boolean equals(final Object obj) {
     if (this == obj) {
       return true;
     }
     if (obj == null || getClass() != obj.getClass()) {
       return false;
     }
-    PipeTransferTabletInsertNodeReq that = (PipeTransferTabletInsertNodeReq) obj;
+    final PipeTransferTabletInsertNodeReq that = (PipeTransferTabletInsertNodeReq) obj;
     return Objects.equals(insertNode, that.insertNode)
         && version == that.version
         && type == that.type

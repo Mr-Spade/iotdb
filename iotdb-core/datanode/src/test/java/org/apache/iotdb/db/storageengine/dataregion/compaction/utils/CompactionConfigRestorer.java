@@ -30,11 +30,11 @@ import org.apache.iotdb.db.storageengine.dataregion.compaction.selector.constant
 
 public class CompactionConfigRestorer {
   private boolean enableSeqSpaceCompaction = true;
-  private boolean enableUnseqSpaceCompaction = false;
+  private boolean enableUnseqSpaceCompaction = true;
   private boolean enableCrossSpaceCompaction = true;
   private CrossCompactionSelector crossStrategy = CrossCompactionSelector.REWRITE;
   private InnerSequenceCompactionSelector innerStrategy =
-      InnerSequenceCompactionSelector.SIZE_TIERED;
+      InnerSequenceCompactionSelector.SIZE_TIERED_SINGLE_TARGET;
   private CompactionPriority priority = CompactionPriority.BALANCE;
   private long targetFileSize = 1073741824L;
   private long targetChunkSize = 1048576L;
@@ -45,7 +45,6 @@ public class CompactionConfigRestorer {
   private int maxCrossCompactionCandidateFileNum = 1000;
   private int concurrentCompactionThread = 10;
   private long compactionScheduleIntervalInMs = 60000L;
-  private long compactionSubmissionIntervalInMs = 60000L;
   private int compactionWriteThroughputMbPerSec = 8;
 
   private CrossCompactionPerformer oldCrossPerformer =
@@ -73,11 +72,10 @@ public class CompactionConfigRestorer {
     config.setTargetChunkPointNum(targetChunkPointNum);
     config.setChunkSizeLowerBoundInCompaction(chunkSizeLowerBoundInCompaction);
     config.setChunkPointNumLowerBoundInCompaction(chunkPointNumLowerBoundInCompaction);
-    config.setFileLimitPerInnerTask(maxInnerCompactionCandidateFileNum);
+    config.setInnerCompactionCandidateFileNum(maxInnerCompactionCandidateFileNum);
     config.setFileLimitPerCrossTask(maxCrossCompactionCandidateFileNum);
     config.setCompactionThreadCount(concurrentCompactionThread);
     config.setCompactionScheduleIntervalInMs(compactionScheduleIntervalInMs);
-    config.setCompactionSubmissionIntervalInMs(compactionSubmissionIntervalInMs);
     config.setCompactionWriteThroughputMbPerSec(compactionWriteThroughputMbPerSec);
     config.setCrossCompactionPerformer(oldCrossPerformer);
     config.setInnerSeqCompactionPerformer(oldInnerSeqPerformer);

@@ -44,7 +44,7 @@ public class MasterRepairUtil {
     this.k = k;
   }
 
-  public boolean isNullRow(Row row) {
+  public boolean isNullRow(Row row) throws IOException {
     boolean flag = true;
     for (int i = 0; i < row.size(); i++) {
       if (!row.isNull(i)) {
@@ -104,6 +104,12 @@ public class MasterRepairUtil {
         case DOUBLE:
           ans = row.getDouble(index);
           break;
+        case DATE:
+        case BLOB:
+        case STRING:
+        case TIMESTAMP:
+        case BOOLEAN:
+        case TEXT:
         default:
           throw new Exception("The value of the input time series is not numeric.\n");
       }

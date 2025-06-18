@@ -19,7 +19,6 @@
 
 package org.apache.iotdb.db.it.aggregation;
 
-import org.apache.iotdb.it.env.ConfigFactory;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
@@ -36,23 +35,22 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
 
-import static org.apache.iotdb.db.constant.TestConstant.avg;
-import static org.apache.iotdb.db.constant.TestConstant.count;
-import static org.apache.iotdb.db.constant.TestConstant.extreme;
-import static org.apache.iotdb.db.constant.TestConstant.firstValue;
-import static org.apache.iotdb.db.constant.TestConstant.lastValue;
-import static org.apache.iotdb.db.constant.TestConstant.maxTime;
-import static org.apache.iotdb.db.constant.TestConstant.maxValue;
-import static org.apache.iotdb.db.constant.TestConstant.minTime;
-import static org.apache.iotdb.db.constant.TestConstant.minValue;
-import static org.apache.iotdb.db.constant.TestConstant.sum;
+import static org.apache.iotdb.db.utils.constant.TestConstant.avg;
+import static org.apache.iotdb.db.utils.constant.TestConstant.count;
+import static org.apache.iotdb.db.utils.constant.TestConstant.extreme;
+import static org.apache.iotdb.db.utils.constant.TestConstant.firstValue;
+import static org.apache.iotdb.db.utils.constant.TestConstant.lastValue;
+import static org.apache.iotdb.db.utils.constant.TestConstant.maxTime;
+import static org.apache.iotdb.db.utils.constant.TestConstant.maxValue;
+import static org.apache.iotdb.db.utils.constant.TestConstant.minTime;
+import static org.apache.iotdb.db.utils.constant.TestConstant.minValue;
+import static org.apache.iotdb.db.utils.constant.TestConstant.sum;
 import static org.junit.Assert.fail;
 
 @RunWith(IoTDBTestRunner.class)
 @Category({LocalStandaloneIT.class, ClusterIT.class})
 public class IoTDBAggregationLargeDataIT {
 
-  private static final String TIMESTAMP_STR = "Time";
   private final String d0s0 = "root.vehicle.d0.s0";
   private final String d0s1 = "root.vehicle.d0.s1";
   private final String d0s2 = "root.vehicle.d0.s2";
@@ -115,24 +113,20 @@ public class IoTDBAggregationLargeDataIT {
         "insert into root.vehicle.d0(timestamp,s4) values(100, true)",
       };
 
-  private static long prevPartitionInterval;
-
   @BeforeClass
   public static void setUp() throws Exception {
-    prevPartitionInterval = ConfigFactory.getConfig().getPartitionInterval();
-    EnvFactory.getEnv().initBeforeClass();
+    EnvFactory.getEnv().initClusterEnvironment();
     insertSQL();
   }
 
   @AfterClass
   public static void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterClass();
-    ConfigFactory.getConfig().setPartitionInterval(prevPartitionInterval);
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   @Test
   public void lastValueAggreWithSingleFilterTest() {
-    String[] retArray = new String[] {"0,9,39,63.0,E,true"};
+    String[] retArray = new String[] {"9,39,63.0,E,true"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -144,9 +138,7 @@ public class IoTDBAggregationLargeDataIT {
         int cnt = 0;
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(lastValue(d0s0))
+              resultSet.getString(lastValue(d0s0))
                   + ","
                   + resultSet.getString(lastValue(d0s1))
                   + ","
@@ -168,9 +160,7 @@ public class IoTDBAggregationLargeDataIT {
         int cnt = 0;
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(lastValue(d0s0))
+              resultSet.getString(lastValue(d0s0))
                   + ","
                   + resultSet.getString(lastValue(d0s1))
                   + ","
@@ -192,7 +182,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void sumAggreWithSingleFilterTest() {
-    String[] retArray = new String[] {"0,55061.0,156752.0,20254"};
+    String[] retArray = new String[] {"55061.0,156752.0,20254"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -203,9 +193,7 @@ public class IoTDBAggregationLargeDataIT {
         int cnt = 0;
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(sum(d0s0))
+              resultSet.getString(sum(d0s0))
                   + ","
                   + resultSet.getString(sum(d0s1))
                   + ","
@@ -223,9 +211,7 @@ public class IoTDBAggregationLargeDataIT {
         int cnt = 0;
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(sum(d0s0))
+              resultSet.getString(sum(d0s0))
                   + ","
                   + resultSet.getString(sum(d0s1))
                   + ","
@@ -243,7 +229,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void firstAggreWithSingleFilterTest() {
-    String[] retArray = new String[] {"0,90,1101,2.22,ddddd,true"};
+    String[] retArray = new String[] {"90,1101,2.22,ddddd,true"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -255,9 +241,7 @@ public class IoTDBAggregationLargeDataIT {
         int cnt = 0;
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(firstValue(d0s0))
+              resultSet.getString(firstValue(d0s0))
                   + ","
                   + resultSet.getString(firstValue(d0s1))
                   + ","
@@ -280,9 +264,7 @@ public class IoTDBAggregationLargeDataIT {
         int cnt = 0;
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(firstValue(d0s0))
+              resultSet.getString(firstValue(d0s0))
                   + ","
                   + resultSet.getString(firstValue(d0s1))
                   + ","
@@ -304,7 +286,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void avgAggreWithSingleFilterTest() {
-    String[] retArray = new String[] {"0,75,212,28"};
+    String[] retArray = new String[] {"75,212,28"};
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
 
@@ -314,9 +296,7 @@ public class IoTDBAggregationLargeDataIT {
         int cnt = 0;
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + Math.round(resultSet.getDouble(avg(d0s0)))
+              Math.round(resultSet.getDouble(avg(d0s0)))
                   + ","
                   + Math.round(resultSet.getDouble(avg(d0s1)))
                   + ","
@@ -333,9 +313,7 @@ public class IoTDBAggregationLargeDataIT {
         int cnt = 0;
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + Math.round(resultSet.getDouble(avg(d0s0)))
+              Math.round(resultSet.getDouble(avg(d0s0)))
                   + ","
                   + Math.round(resultSet.getDouble(avg(d0s1)))
                   + ","
@@ -353,7 +331,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void countAggreWithSingleFilterTest() {
-    String[] retArray = new String[] {"0,733,740,734"};
+    String[] retArray = new String[] {"733,740,734"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -364,9 +342,7 @@ public class IoTDBAggregationLargeDataIT {
         int cnt = 0;
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(count(d0s0))
+              resultSet.getString(count(d0s0))
                   + ","
                   + resultSet.getString(count(d0s1))
                   + ","
@@ -383,9 +359,7 @@ public class IoTDBAggregationLargeDataIT {
         int cnt = 0;
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(count(d0s0))
+              resultSet.getString(count(d0s0))
                   + ","
                   + resultSet.getString(count(d0s1))
                   + ","
@@ -403,7 +377,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void minTimeAggreWithSingleFilterTest() {
-    String[] retArray = new String[] {"0,104,1,2,101,100"};
+    String[] retArray = new String[] {"104,1,2,101,100"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -415,9 +389,7 @@ public class IoTDBAggregationLargeDataIT {
                   + " from root.vehicle.d0 where s1 >= 0")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(minTime(d0s0))
+              resultSet.getString(minTime(d0s0))
                   + ","
                   + resultSet.getString(minTime(d0s1))
                   + ","
@@ -440,9 +412,7 @@ public class IoTDBAggregationLargeDataIT {
                   + " from root.vehicle.d0 where s1 >= 0 order by time desc")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(minTime(d0s0))
+              resultSet.getString(minTime(d0s0))
                   + ","
                   + resultSet.getString(minTime(d0s1))
                   + ","
@@ -464,7 +434,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void minValueAggreWithSingleFilterTest() {
-    String[] retArray = new String[] {"0,0,0,0.0"};
+    String[] retArray = new String[] {"0,0,0.0"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -476,9 +446,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "where s1 < 50000 and s1 != 100")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(minValue(d0s0))
+              resultSet.getString(minValue(d0s0))
                   + ","
                   + resultSet.getString(minValue(d0s1))
                   + ","
@@ -496,9 +464,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "where s1 < 50000 and s1 != 100 order by time desc")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(minValue(d0s0))
+              resultSet.getString(minValue(d0s0))
                   + ","
                   + resultSet.getString(minValue(d0s1))
                   + ","
@@ -516,7 +482,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void maxValueAggreWithSingleFilterTest() {
-    String[] retArray = new String[] {"0,99,40000,122.0"};
+    String[] retArray = new String[] {"99,40000,122.0"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -528,9 +494,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "where s1 < 50000 and s1 != 100")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(maxValue(d0s0))
+              resultSet.getString(maxValue(d0s0))
                   + ","
                   + resultSet.getString(maxValue(d0s1))
                   + ","
@@ -548,9 +512,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "where s1 < 50000 and s1 != 100 order by time desc")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(maxValue(d0s0))
+              resultSet.getString(maxValue(d0s0))
                   + ","
                   + resultSet.getString(maxValue(d0s1))
                   + ","
@@ -568,7 +530,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void extremeAggreWithSingleFilterTest() {
-    String[] retArray = new String[] {"0,99,40000,122.0"};
+    String[] retArray = new String[] {"99,40000,122.0"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -581,9 +543,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "where s1 < 50000 and s1 != 100")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(extreme(d0s0))
+              resultSet.getString(extreme(d0s0))
                   + ","
                   + resultSet.getString(extreme(d0s1))
                   + ","
@@ -602,9 +562,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "where s1 < 50000 and s1 != 100 order by time desc")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(extreme(d0s0))
+              resultSet.getString(extreme(d0s0))
                   + ","
                   + resultSet.getString(extreme(d0s1))
                   + ","
@@ -622,7 +580,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void avgAggreWithMultiFilterTest() {
-    String[] retArray = new String[] {"0,55061.0,733,75,212,28"};
+    String[] retArray = new String[] {"55061.0,733,75,212,28"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -634,9 +592,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "avg(s2) from root.vehicle.d0 where s1 >= 0 or s2 < 10")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(sum(d0s0))
+              resultSet.getString(sum(d0s0))
                   + ","
                   + resultSet.getString(count(d0s0))
                   + ","
@@ -658,7 +614,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void sumAggreWithMultiFilterTest() {
-    String[] retArray = new String[] {"0,55061.0,156752.0,20262"};
+    String[] retArray = new String[] {"55061.0,156752.0,20262"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -669,9 +625,7 @@ public class IoTDBAggregationLargeDataIT {
               "select sum(s0),sum(s1),sum(s2) from root.vehicle.d0 where s1 >= 0 or s2 < 10")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(sum(d0s0))
+              resultSet.getString(sum(d0s0))
                   + ","
                   + resultSet.getString(sum(d0s1))
                   + ","
@@ -689,9 +643,7 @@ public class IoTDBAggregationLargeDataIT {
                   + " where s1 >= 0 or s2 < 10 order by time desc ")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(sum(d0s0))
+              resultSet.getString(sum(d0s0))
                   + ","
                   + resultSet.getString(sum(d0s1))
                   + ","
@@ -709,7 +661,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void firstAggreWithMultiFilterTest() {
-    String[] retArray = new String[] {"0,90,1101,2.22,ddddd,true"};
+    String[] retArray = new String[] {"90,1101,2.22,ddddd,true"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -721,9 +673,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "first_value(s4) from root.vehicle.d0 where s1 >= 0 or s2 < 10")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(firstValue(d0s0))
+              resultSet.getString(firstValue(d0s0))
                   + ","
                   + resultSet.getString(firstValue(d0s1))
                   + ","
@@ -746,9 +696,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "first_value(s4) from root.vehicle.d0 where s1 >= 0 or s2 < 10 order by time desc")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(firstValue(d0s0))
+              resultSet.getString(firstValue(d0s0))
                   + ","
                   + resultSet.getString(firstValue(d0s1))
                   + ","
@@ -770,7 +718,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void countAggreWithMultiFilterTest() {
-    String[] retArray = new String[] {"0,733,740,736,482,1"};
+    String[] retArray = new String[] {"733,740,736,482,1"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -782,9 +730,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "count(s4) from root.vehicle.d0 where s1 >= 0 or s2 < 10")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(count(d0s0))
+              resultSet.getString(count(d0s0))
                   + ","
                   + resultSet.getString(count(d0s1))
                   + ","
@@ -806,7 +752,7 @@ public class IoTDBAggregationLargeDataIT {
 
   @Test
   public void maxTimeAggreWithMultiFilterTest() {
-    String[] retArray = new String[] {"0,3999,3999,3999,3599,100"};
+    String[] retArray = new String[] {"3999,3999,3999,3599,100"};
 
     try (Connection connection = EnvFactory.getEnv().getConnection();
         Statement statement = connection.createStatement()) {
@@ -819,9 +765,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "where s1 < 50000 and s1 != 100")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(maxTime(d0s0))
+              resultSet.getString(maxTime(d0s0))
                   + ","
                   + resultSet.getString(maxTime(d0s1))
                   + ","
@@ -844,9 +788,7 @@ public class IoTDBAggregationLargeDataIT {
                   + "where s1 < 50000 and s1 != 100 order by time desc")) {
         while (resultSet.next()) {
           String ans =
-              resultSet.getString(TIMESTAMP_STR)
-                  + ","
-                  + resultSet.getString(maxTime(d0s0))
+              resultSet.getString(maxTime(d0s0))
                   + ","
                   + resultSet.getString(maxTime(d0s1))
                   + ","

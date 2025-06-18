@@ -18,13 +18,14 @@
  */
 package org.apache.iotdb.db.it;
 
-import org.apache.iotdb.db.mpp.common.header.ColumnHeaderConstant;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.it.env.EnvFactory;
 import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
 import org.apache.iotdb.rpc.TSStatusCode;
 
+import org.apache.tsfile.enums.TSDataType;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -39,10 +40,15 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -53,12 +59,12 @@ public class IoTDBSimpleQueryIT {
 
   @Before
   public void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeTest();
+    EnvFactory.getEnv().initClusterEnvironment();
   }
 
   @After
   public void tearDown() throws Exception {
-    EnvFactory.getEnv().cleanAfterTest();
+    EnvFactory.getEnv().cleanClusterEnvironment();
   }
 
   @Test
@@ -122,24 +128,25 @@ public class IoTDBSimpleQueryIT {
           "create timeseries root.turbine.d2.s1 with datatype=FLOAT, encoding=GORILLA, compression=SNAPPY");
       statement.execute("insert into root.turbine.d1(timestamp,s1,s2) values(1,1,2)");
 
-      String[] results = {"root.turbine.d1.s1", "root.turbine.d1.s2"};
+      List<String> expected = Arrays.asList("root.turbine.d1.s1", "root.turbine.d1.s2");
+      List<String> actual = new ArrayList<>();
 
-      int count = 0;
       try (ResultSet resultSet = statement.executeQuery("select last ** from root")) {
         while (resultSet.next()) {
-          String path = resultSet.getString(ColumnHeaderConstant.TIMESERIES);
-          assertEquals(results[count], path);
-          count++;
+          actual.add(resultSet.getString(ColumnHeaderConstant.TIMESERIES));
         }
       }
 
-      assertEquals(2, count);
+      assertEquals(expected, actual);
 
+      actual.clear();
       try (ResultSet resultSet = statement.executeQuery("select last * from root")) {
         while (resultSet.next()) {
-          count++;
+          actual.add(resultSet.getString(ColumnHeaderConstant.TIMESERIES));
         }
       }
+
+      assertEquals(Collections.emptyList(), actual);
 
     } catch (Exception e) {
       e.printStackTrace();
@@ -387,16 +394,6 @@ public class IoTDBSimpleQueryIT {
         count++;
       }
       assertEquals(15, count);
-
-      // no sdt encoding when merging
-      statement.execute("merge");
-      resultSet = statement.executeQuery("select s0 from root.sg1.d0");
-      count = 0;
-      while (resultSet.next()) {
-        count++;
-      }
-      assertEquals(15, count);
-
     } catch (SQLException e) {
       e.printStackTrace();
     }
@@ -441,16 +438,6 @@ public class IoTDBSimpleQueryIT {
         count++;
       }
       assertEquals(18, count);
-
-      // no sdt encoding when merging
-      statement.execute("merge");
-      resultSet = statement.executeQuery("select s0 from root.sg1.d0");
-      count = 0;
-      while (resultSet.next()) {
-        count++;
-      }
-      assertEquals(18, count);
-
     } catch (SQLException e) {
       e.printStackTrace();
     }
@@ -1054,25 +1041,22 @@ public class IoTDBSimpleQueryIT {
 
   @Test
   public void testStorageGroupWithHyphenInName() {
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
+    try (final Connection connection = EnvFactory.getEnv().getConnection();
+        final Statement statement = connection.createStatement()) {
       statement.setFetchSize(5);
       statement.execute("CREATE DATABASE root.group_with_hyphen");
-    } catch (SQLException e) {
+    } catch (final SQLException e) {
       fail();
     }
 
-    try (Connection connection = EnvFactory.getEnv().getConnection();
-        Statement statement = connection.createStatement()) {
-      try (ResultSet resultSet = statement.executeQuery("SHOW DATABASES")) {
-        ResultSetMetaData resultSetMetaData = resultSet.getMetaData();
+    try (final Connection connection = EnvFactory.getEnv().getConnection();
+        final Statement statement = connection.createStatement()) {
+      try (final ResultSet resultSet = statement.executeQuery("SHOW DATABASES DETAILS")) {
         while (resultSet.next()) {
-          StringBuilder builder = new StringBuilder();
-          builder.append(resultSet.getString(1));
-          Assert.assertEquals(builder.toString(), "root.group_with_hyphen");
+          Assert.assertEquals("root.group_with_hyphen", resultSet.getString(1));
         }
       }
-    } catch (SQLException e) {
+    } catch (final SQLException e) {
       fail();
     }
   }
@@ -1134,11 +1118,107 @@ public class IoTDBSimpleQueryIT {
 
       try (ResultSet r1 = statement.executeQuery("select s1 from root.sg1.*a*")) {
         while (r1.next()) {
-          Assert.assertEquals(1.1234f, r1.getFloat(2), 0);
+          Assert.assertEquals(1.1234f, r1.getDouble(2), 0.001);
         }
         Assert.assertEquals(3, r1.getMetaData().getColumnCount());
       }
 
+    } catch (SQLException e) {
+      fail();
+    }
+  }
+
+  @Test
+  public void testNewDataType() {
+    try (Connection connection = EnvFactory.getEnv().getConnection();
+        Statement statement = connection.createStatement()) {
+
+      statement.execute("CREATE DATABASE root.sg1");
+      statement.execute(
+          "CREATE TIMESERIES root.sg1.d1.s4 WITH DATATYPE=DATE, ENCODING=PLAIN, COMPRESSOR=SNAPPY");
+      statement.execute(
+          "CREATE TIMESERIES root.sg1.d1.s5 WITH DATATYPE=TIMESTAMP, ENCODING=PLAIN, COMPRESSOR=SNAPPY");
+      statement.execute(
+          "CREATE TIMESERIES root.sg1.d1.s6 WITH DATATYPE=BLOB, ENCODING=PLAIN, COMPRESSOR=SNAPPY");
+      statement.execute(
+          "CREATE TIMESERIES root.sg1.d1.s7 WITH DATATYPE=STRING, ENCODING=PLAIN, COMPRESSOR=SNAPPY");
+      for (int i = 1; i <= 10; i++) {
+        statement.execute(
+            String.format(
+                "insert into root.sg1.d1(timestamp, s4, s5, s6, s7) values(%d, \"%s\", %d, %s, \"%s\")",
+                i, LocalDate.of(2024, 5, i % 31 + 1), i, "X'cafebabe'", i));
+      }
+
+      try (ResultSet resultSet = statement.executeQuery("select * from root.**")) {
+        final ResultSetMetaData metaData = resultSet.getMetaData();
+        final int columnCount = metaData.getColumnCount();
+        assertEquals(5, columnCount);
+        HashMap<Integer, TSDataType> columnType = new HashMap<>();
+        for (int i = 1; i < columnCount; i++) {
+          if (metaData.getColumnLabel(i).endsWith("s4")) {
+            columnType.put(i, TSDataType.DATE);
+          } else if (metaData.getColumnLabel(i).endsWith("s5")) {
+            columnType.put(i, TSDataType.TIMESTAMP);
+          } else if (metaData.getColumnLabel(i).endsWith("s6")) {
+            columnType.put(i, TSDataType.BLOB);
+          } else if (metaData.getColumnLabel(i).endsWith("s7")) {
+            columnType.put(i, TSDataType.TEXT);
+          }
+        }
+        byte[] byteArray = new byte[] {(byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE};
+        while (resultSet.next()) {
+          long time = resultSet.getLong(1);
+          Date date = resultSet.getDate(2);
+          long timestamp = resultSet.getLong(3);
+          byte[] blob = resultSet.getBytes(4);
+          String text = resultSet.getString(5);
+          assertEquals(2024 - 1900, date.getYear());
+          assertEquals(5 - 1, date.getMonth());
+          assertEquals(time % 31 + 1, date.getDate());
+          assertEquals(time, timestamp);
+          assertArrayEquals(byteArray, blob);
+          assertEquals(String.valueOf(time), text);
+        }
+      }
+
+    } catch (SQLException e) {
+      fail();
+    }
+  }
+
+  @Test
+  public void testIllegalDateType() {
+    try (Connection connection = EnvFactory.getEnv().getConnection();
+        Statement statement = connection.createStatement()) {
+
+      statement.execute("CREATE DATABASE root.sg1");
+      statement.execute(
+          "CREATE TIMESERIES root.sg1.d1.s4 WITH DATATYPE=DATE, ENCODING=PLAIN, COMPRESSOR=SNAPPY");
+      statement.execute(
+          "CREATE TIMESERIES root.sg1.d1.s5 WITH DATATYPE=TIMESTAMP, ENCODING=PLAIN, COMPRESSOR=SNAPPY");
+      try {
+        statement.execute("insert into root.sg1.d1(timestamp, s4) values(1, '2022-04-31')");
+        fail();
+      } catch (Exception e) {
+        assertEquals(
+            TSStatusCode.METADATA_ERROR.getStatusCode()
+                + ": Fail to insert measurements [s4] caused by [data type is not consistent, "
+                + "input '2022-04-31', registered DATE because Invalid date format. "
+                + "Please use YYYY-MM-DD format.]",
+            e.getMessage());
+      }
+      try {
+        statement.execute(
+            "insert into root.sg1.d1(timestamp, s5) values(1999-04-31T00:00:00.000+08:00, 1999-04-31T00:00:00.000+08:00)");
+        fail();
+      } catch (Exception e) {
+        assertEquals(
+            TSStatusCode.SEMANTIC_ERROR.getStatusCode()
+                + ": Input time format 1999-04-31T00:00:00.000+08:00 error. "
+                + "Input like yyyy-MM-dd HH:mm:ss, yyyy-MM-ddTHH:mm:ss "
+                + "or refer to user document for more info.",
+            e.getMessage());
+      }
     } catch (SQLException e) {
       fail();
     }

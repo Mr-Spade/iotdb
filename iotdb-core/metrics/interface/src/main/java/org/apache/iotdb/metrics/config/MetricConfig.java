@@ -41,7 +41,7 @@ public class MetricConfig {
   private List<ReporterType> metricReporterList = Collections.emptyList();
 
   /** The level of metric service. */
-  private MetricLevel metricLevel = MetricLevel.CORE;
+  private MetricLevel metricLevel = MetricLevel.IMPORTANT;
 
   /** The period of async collection of some metrics in second. */
   private Integer asyncCollectPeriodInSecond = 5;
@@ -159,9 +159,13 @@ public class MetricConfig {
     return internalDatabase;
   }
 
-  /** Update rpc address and rpc port of monitored node. */
-  public void updateRpcInstance(String clusterName, NodeType nodeType, String internalDatabase) {
+  /** Update cluster name of monitored node. */
+  public void updateClusterName(String clusterName) {
     this.clusterName = clusterName;
+  }
+
+  /** Update rpc address and rpc port of monitored node. */
+  public void updateRpcInstance(NodeType nodeType, String internalDatabase) {
     this.nodeType = nodeType;
     this.internalDatabase = internalDatabase;
   }

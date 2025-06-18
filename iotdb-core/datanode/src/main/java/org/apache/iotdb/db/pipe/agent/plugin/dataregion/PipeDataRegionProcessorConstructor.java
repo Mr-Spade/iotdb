@@ -19,17 +19,12 @@
 
 package org.apache.iotdb.db.pipe.agent.plugin.dataregion;
 
-import org.apache.iotdb.commons.pipe.agent.plugin.PipeProcessorConstructor;
-import org.apache.iotdb.commons.pipe.plugin.builtin.BuiltinPipePlugin;
-import org.apache.iotdb.commons.pipe.plugin.builtin.processor.donothing.DoNothingProcessor;
-import org.apache.iotdb.commons.pipe.plugin.builtin.processor.throwing.ThrowingExceptionProcessor;
-import org.apache.iotdb.commons.pipe.plugin.meta.DataNodePipePluginMetaKeeper;
-import org.apache.iotdb.db.pipe.processor.aggregate.AggregateProcessor;
-import org.apache.iotdb.db.pipe.processor.aggregate.operator.processor.StandardStatisticsOperatorProcessor;
-import org.apache.iotdb.db.pipe.processor.aggregate.window.processor.TumblingWindowingProcessor;
-import org.apache.iotdb.db.pipe.processor.downsampling.sdt.SwingingDoorTrendingSamplingProcessor;
-import org.apache.iotdb.db.pipe.processor.downsampling.tumbling.TumblingTimeSamplingProcessor;
-import org.apache.iotdb.db.pipe.processor.twostage.plugin.TwoStageCountProcessor;
+import org.apache.iotdb.commons.pipe.agent.plugin.builtin.BuiltinPipePlugin;
+import org.apache.iotdb.commons.pipe.agent.plugin.builtin.processor.donothing.DoNothingProcessor;
+import org.apache.iotdb.commons.pipe.agent.plugin.constructor.PipeProcessorConstructor;
+import org.apache.iotdb.commons.pipe.agent.plugin.meta.DataNodePipePluginMetaKeeper;
+import org.apache.iotdb.db.pipe.processor.pipeconsensus.PipeConsensusProcessor;
+import org.apache.iotdb.db.pipe.processor.schemachange.RenameDatabaseProcessor;
 
 class PipeDataRegionProcessorConstructor extends PipeProcessorConstructor {
 
@@ -42,23 +37,10 @@ class PipeDataRegionProcessorConstructor extends PipeProcessorConstructor {
     pluginConstructors.put(
         BuiltinPipePlugin.DO_NOTHING_PROCESSOR.getPipePluginName(), DoNothingProcessor::new);
     pluginConstructors.put(
-        BuiltinPipePlugin.TUMBLING_TIME_SAMPLING_PROCESSOR.getPipePluginName(),
-        TumblingTimeSamplingProcessor::new);
+        BuiltinPipePlugin.PIPE_CONSENSUS_PROCESSOR.getPipePluginName(),
+        PipeConsensusProcessor::new);
     pluginConstructors.put(
-        BuiltinPipePlugin.SDT_SAMPLING_PROCESSOR.getPipePluginName(),
-        SwingingDoorTrendingSamplingProcessor::new);
-    pluginConstructors.put(
-        BuiltinPipePlugin.THROWING_EXCEPTION_PROCESSOR.getPipePluginName(),
-        ThrowingExceptionProcessor::new);
-    pluginConstructors.put(
-        BuiltinPipePlugin.AGGREGATE_PROCESSOR.getPipePluginName(), AggregateProcessor::new);
-    pluginConstructors.put(
-        BuiltinPipePlugin.STANDARD_STATISTICS_PROCESSOR.getPipePluginName(),
-        StandardStatisticsOperatorProcessor::new);
-    pluginConstructors.put(
-        BuiltinPipePlugin.TUMBLING_WINDOWING_PROCESSOR.getPipePluginName(),
-        TumblingWindowingProcessor::new);
-    pluginConstructors.put(
-        BuiltinPipePlugin.COUNT_POINT_PROCESSOR.getPipePluginName(), TwoStageCountProcessor::new);
+        BuiltinPipePlugin.RENAME_DATABASE_PROCESSOR.getPipePluginName(),
+        RenameDatabaseProcessor::new);
   }
 }

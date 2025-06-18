@@ -19,19 +19,19 @@
 
 package org.apache.iotdb.db.it.schema;
 
-import org.apache.iotdb.db.mpp.common.header.ColumnHeaderConstant;
+import org.apache.iotdb.commons.schema.column.ColumnHeaderConstant;
 import org.apache.iotdb.it.env.EnvFactory;
-import org.apache.iotdb.it.framework.IoTDBTestRunner;
 import org.apache.iotdb.itbase.category.ClusterIT;
 import org.apache.iotdb.itbase.category.LocalStandaloneIT;
 import org.apache.iotdb.itbase.constant.TestConstant;
+import org.apache.iotdb.util.AbstractSchemaIT;
 
+import org.apache.tsfile.enums.TSDataType;
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -42,29 +42,34 @@ import java.sql.Statement;
 import java.util.HashSet;
 import java.util.Set;
 
+import static org.junit.Assert.assertEquals;
+
 /**
  * Notice that, all test begins with "IoTDB" is integration test. All test which will start the
  * IoTDB server should be defined as integration test.
  */
-@RunWith(IoTDBTestRunner.class)
 @Category({LocalStandaloneIT.class, ClusterIT.class})
-public class IoTDBAutoCreateSchemaIT {
-  private Statement statement;
-  private Connection connection;
+public class IoTDBAutoCreateSchemaIT extends AbstractSchemaIT {
 
-  @Before
-  public void setUp() throws Exception {
-    EnvFactory.getEnv().initBeforeTest();
+  public IoTDBAutoCreateSchemaIT(SchemaTestMode schemaTestMode) {
+    super(schemaTestMode);
+  }
 
-    connection = EnvFactory.getEnv().getConnection();
-    statement = connection.createStatement();
+  @Parameterized.BeforeParam
+  public static void before() throws Exception {
+    setUpEnvironment();
+    EnvFactory.getEnv().initClusterEnvironment();
+  }
+
+  @Parameterized.AfterParam
+  public static void after() throws Exception {
+    EnvFactory.getEnv().cleanClusterEnvironment();
+    tearDownEnvironment();
   }
 
   @After
   public void tearDown() throws Exception {
-    statement.close();
-    connection.close();
-    EnvFactory.getEnv().cleanAfterTest();
+    clearSchema();
   }
 
   /** create timeseries without setting database */
@@ -162,18 +167,18 @@ public class IoTDBAutoCreateSchemaIT {
     String storageGroup = "root.sg2.a.b.c";
     String timeSeriesPrefix = "root.sg2.a.b";
 
-    statement.execute(String.format("CREATE DATABASE %s", storageGroup));
-    try {
-      statement.execute(
-          String.format("INSERT INTO %s(timestamp, c) values(123, \"aabb\")", timeSeriesPrefix));
-    } catch (SQLException ignored) {
+    try (Connection connection = EnvFactory.getEnv().getConnection();
+        Statement statement = connection.createStatement()) {
+      statement.execute(String.format("CREATE DATABASE %s", storageGroup));
+      try {
+        statement.execute(
+            String.format("INSERT INTO %s(timestamp, c) values(123, \"aabb\")", timeSeriesPrefix));
+      } catch (SQLException ignored) {
+      }
+
+      // ensure that current database in cache is right.
+      InsertAutoCreate2Tool(statement, storageGroup, timeSeriesPrefix);
     }
-
-    // ensure that current database in cache is right.
-    InsertAutoCreate2Tool(storageGroup, timeSeriesPrefix);
-
-    statement.close();
-    connection.close();
     // todo restart test
     //    EnvironmentUtils.stopDaemon();
     //    setUp();
@@ -182,8 +187,8 @@ public class IoTDBAutoCreateSchemaIT {
     //    InsertAutoCreate2Tool(storageGroup, timeSeriesPrefix);
   }
 
-  private void InsertAutoCreate2Tool(String storageGroup, String timeSeriesPrefix)
-      throws SQLException {
+  private void InsertAutoCreate2Tool(
+      Statement statement, String storageGroup, String timeSeriesPrefix) throws SQLException {
     Set<String> resultList = new HashSet<>();
     try (ResultSet resultSet = statement.executeQuery("show timeseries")) {
       while (resultSet.next()) {
@@ -206,16 +211,61 @@ public class IoTDBAutoCreateSchemaIT {
    * insert data when database hasn't been set, timeseries hasn't been created and have null values
    */
   @Test
-  public void testInsertAutoCreate3() {
+  public void testInsertAutoCreate3() throws SQLException {
     String[] sqls = {
       "INSERT INTO root.sg0.d3(timestamp,s1) values(1,null)",
       "INSERT INTO root.sg0.d3(timestamp,s1,s2) values(1,null,2)",
     };
-    for (String sql : sqls) {
-      try {
-        statement.execute(sql);
-      } catch (SQLException e) {
-        Assert.assertTrue(e.getMessage().contains("Path [root.sg0.d3.s1] does not exist"));
+    try (Connection connection = EnvFactory.getEnv().getConnection();
+        Statement statement = connection.createStatement()) {
+      for (String sql : sqls) {
+        try {
+          statement.execute(sql);
+        } catch (SQLException e) {
+          Assert.assertTrue(e.getMessage().contains("Path [root.sg0.d3.s1] does not exist"));
+        }
+      }
+    }
+  }
+
+  /**
+   * insert data when database hasn't been set, timeseries hasn't been created and have null values
+   */
+  @Test
+  public void testAutoCreateDataType() throws SQLException {
+    String SQL =
+        "INSERT INTO root.sg0.d1(time,s1,s2,s3,s4,s5,s6) values(1,true,1,now(),X'cafe',\"string\",\"2024-01-01\")";
+    try (Connection connection = EnvFactory.getEnv().getConnection();
+        Statement statement = connection.createStatement()) {
+      statement.execute(SQL);
+      ResultSet resultSet = statement.executeQuery("show timeseries");
+      while (resultSet.next()) {
+        switch (resultSet.getString(ColumnHeaderConstant.TIMESERIES)) {
+          case "root.sg0.d1.s1":
+            assertEquals(
+                TSDataType.BOOLEAN.toString(), resultSet.getString(ColumnHeaderConstant.DATATYPE));
+            break;
+          case "root.sg0.d1.s2":
+            assertEquals(
+                TSDataType.DOUBLE.toString(), resultSet.getString(ColumnHeaderConstant.DATATYPE));
+            break;
+          case "root.sg0.d1.s3":
+            assertEquals(
+                TSDataType.INT64.toString(), resultSet.getString(ColumnHeaderConstant.DATATYPE));
+            break;
+          case "root.sg0.d1.s4":
+            assertEquals(
+                TSDataType.BLOB.toString(), resultSet.getString(ColumnHeaderConstant.DATATYPE));
+            break;
+          case "root.sg0.d1.s5":
+            assertEquals(
+                TSDataType.TEXT.toString(), resultSet.getString(ColumnHeaderConstant.DATATYPE));
+            break;
+          case "root.sg0.d1.s6":
+            assertEquals(
+                TSDataType.TEXT.toString(), resultSet.getString(ColumnHeaderConstant.DATATYPE));
+            break;
+        }
       }
     }
   }

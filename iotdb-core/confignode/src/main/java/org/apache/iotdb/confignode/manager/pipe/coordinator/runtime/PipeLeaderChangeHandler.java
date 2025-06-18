@@ -27,13 +27,12 @@ import org.apache.iotdb.confignode.manager.ConfigManager;
 import org.apache.iotdb.confignode.manager.load.cache.consensus.ConsensusGroupStatistics;
 import org.apache.iotdb.confignode.manager.load.subscriber.ConsensusGroupStatisticsChangeEvent;
 import org.apache.iotdb.confignode.manager.load.subscriber.IClusterStatusSubscriber;
-import org.apache.iotdb.confignode.manager.load.subscriber.NodeStatisticsChangeEvent;
-import org.apache.iotdb.confignode.manager.load.subscriber.RegionGroupStatisticsChangeEvent;
 
 import org.apache.tsfile.utils.Pair;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 public class PipeLeaderChangeHandler implements IClusterStatusSubscriber {
 
@@ -59,16 +58,6 @@ public class PipeLeaderChangeHandler implements IClusterStatusSubscriber {
   }
 
   @Override
-  public void onNodeStatisticsChanged(NodeStatisticsChangeEvent event) {
-    // Do nothing
-  }
-
-  @Override
-  public void onRegionGroupStatisticsChanged(RegionGroupStatisticsChangeEvent event) {
-    // Do nothing
-  }
-
-  @Override
   public void onConsensusGroupStatisticsChanged(ConsensusGroupStatisticsChangeEvent event) {
     // If no pipe tasks, return
     if (!configManager.getPipeManager().getPipeTaskCoordinator().hasAnyPipe()) {
@@ -82,10 +71,12 @@ public class PipeLeaderChangeHandler implements IClusterStatusSubscriber {
         .forEach(
             (regionGroupId, pair) -> {
               final String databaseName =
-                  configManager.getPartitionManager().getRegionStorageGroup(regionGroupId);
+                  configManager.getPartitionManager().getRegionDatabase(regionGroupId);
               // Pipe only collect user's data, filter metric database here.
               // DatabaseName may be null for config region group
-              if (!SchemaConstant.SYSTEM_DATABASE.equals(databaseName)) {
+              if (Objects.isNull(databaseName)
+                  || (!databaseName.equals(SchemaConstant.SYSTEM_DATABASE)
+                      && !databaseName.startsWith(SchemaConstant.SYSTEM_DATABASE + "."))) {
                 // null or -1 means empty origin leader
                 final int oldLeaderNodeId = (pair.left == null ? -1 : pair.left.getLeaderId());
                 final int newLeaderNodeId = (pair.right == null ? -1 : pair.right.getLeaderId());

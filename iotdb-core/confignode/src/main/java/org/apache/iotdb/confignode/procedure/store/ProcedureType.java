@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iotdb.confignode.procedure.store;
 
 import org.apache.iotdb.commons.utils.TestOnly;
@@ -36,10 +37,12 @@ public enum ProcedureType {
   DELETE_DATABASE_PROCEDURE((short) 200),
   REGION_MIGRATE_PROCEDURE((short) 201),
   CREATE_REGION_GROUPS((short) 202),
-  @TestOnly
-  CREATE_MANY_DATABASES_PROCEDURE((short) 203),
+  RECONSTRUCT_REGION_PROCEDURE((short) 203),
   ADD_REGION_PEER_PROCEDURE((short) 204),
   REMOVE_REGION_PEER_PROCEDURE((short) 205),
+  NOTIFY_REGION_MIGRATION_PROCEDURE((short) 206),
+  @TestOnly
+  CREATE_MANY_DATABASES_PROCEDURE((short) 250),
 
   /** Timeseries */
   DELETE_TIMESERIES_PROCEDURE((short) 300),
@@ -62,6 +65,19 @@ public enum ProcedureType {
   UNSET_TEMPLATE_PROCEDURE((short) 701),
   SET_TEMPLATE_PROCEDURE((short) 702),
 
+  CREATE_TABLE_PROCEDURE((short) 750),
+  DROP_TABLE_PROCEDURE((short) 751),
+  ADD_TABLE_COLUMN_PROCEDURE((short) 752),
+  SET_TABLE_PROPERTIES_PROCEDURE((short) 753),
+  RENAME_TABLE_COLUMN_PROCEDURE((short) 754),
+  DROP_TABLE_COLUMN_PROCEDURE((short) 755),
+  DELETE_DEVICES_PROCEDURE((short) 756),
+
+  /** AI Model */
+  CREATE_MODEL_PROCEDURE((short) 800),
+  DROP_MODEL_PROCEDURE((short) 801),
+  REMOVE_AI_NODE_PROCEDURE((short) 802),
+
   // ProcedureId 800-899 is used by IoTDB-Ml
 
   /** Pipe Plugin */
@@ -74,6 +90,7 @@ public enum ProcedureType {
   STOP_PIPE_PROCEDURE_V2((short) 1002),
   DROP_PIPE_PROCEDURE_V2((short) 1003),
   ALTER_PIPE_PROCEDURE_V2((short) 1004),
+  ALTER_PIPE_PROCEDURE_V3((short) 1005),
 
   /** Pipe Runtime */
   PIPE_HANDLE_LEADER_CHANGE_PROCEDURE((short) 1100),
@@ -87,6 +104,9 @@ public enum ProcedureType {
   /** Auth privilege */
   AUTH_OPERATE_PROCEDURE((short) 1300),
 
+  /** TTL */
+  SET_TTL_PROCEDURE((short) 1400),
+
   /** Pipe Enriched */
   PIPE_ENRICHED_DELETE_DATABASE_PROCEDURE((short) 1401),
   PIPE_ENRICHED_DELETE_TIMESERIES_PROCEDURE((short) 1402),
@@ -98,6 +118,14 @@ public enum ProcedureType {
   PIPE_ENRICHED_CREATE_TRIGGER_PROCEDURE((short) 1408),
   PIPE_ENRICHED_DROP_TRIGGER_PROCEDURE((short) 1409),
   PIPE_ENRICHED_AUTH_OPERATE_PROCEDURE((short) 1410),
+  PIPE_ENRICHED_SET_TTL_PROCEDURE((short) 1411),
+  PIPE_ENRICHED_CREATE_TABLE_PROCEDURE((short) 1412),
+  PIPE_ENRICHED_DROP_TABLE_PROCEDURE((short) 1413),
+  PIPE_ENRICHED_ADD_TABLE_COLUMN_PROCEDURE((short) 1414),
+  PIPE_ENRICHED_SET_TABLE_PROPERTIES_PROCEDURE((short) 1415),
+  PIPE_ENRICHED_RENAME_TABLE_COLUMN_PROCEDURE((short) 1416),
+  PIPE_ENRICHED_DROP_TABLE_COLUMN_PROCEDURE((short) 1417),
+  PIPE_ENRICHED_DELETE_DEVICES_PROCEDURE((short) 1418),
 
   /** Subscription */
   CREATE_TOPIC_PROCEDURE((short) 1500),

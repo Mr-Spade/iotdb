@@ -19,9 +19,7 @@
 
 package org.apache.iotdb.library.dprofile;
 
-import org.apache.iotdb.commons.udf.utils.UDFDataTypeTransformer;
 import org.apache.iotdb.library.util.NoNumberException;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.udf.api.UDTF;
 import org.apache.iotdb.udf.api.access.Row;
 import org.apache.iotdb.udf.api.collector.PointCollector;
@@ -31,17 +29,23 @@ import org.apache.iotdb.udf.api.customizer.parameter.UDFParameters;
 import org.apache.iotdb.udf.api.customizer.strategy.RowByRowAccessStrategy;
 import org.apache.iotdb.udf.api.type.Type;
 
+import java.io.IOException;
+
 /**
  * This function is used to calculate the spread of time series, that is, the maximum value minus
  * the minimum value.
  */
 public class UDAFSpread implements UDTF {
 
-  int intMin = Integer.MAX_VALUE, intMax = Integer.MIN_VALUE;
-  long longMin = Long.MAX_VALUE, longMax = Long.MIN_VALUE;
-  float floatMin = Float.MAX_VALUE, floatMax = -Float.MAX_VALUE;
-  double doubleMin = Double.MAX_VALUE, doubleMax = -Double.MAX_VALUE;
-  TSDataType dataType;
+  int intMin = Integer.MAX_VALUE;
+  int intMax = Integer.MIN_VALUE;
+  long longMin = Long.MAX_VALUE;
+  long longMax = Long.MIN_VALUE;
+  float floatMin = Float.MAX_VALUE;
+  float floatMax = -Float.MAX_VALUE;
+  double doubleMin = Double.MAX_VALUE;
+  double doubleMax = -Double.MAX_VALUE;
+  Type dataType;
 
   @Override
   public void validate(UDFParameterValidator validator) throws Exception {
@@ -53,26 +57,32 @@ public class UDAFSpread implements UDTF {
   @Override
   public void beforeStart(UDFParameters parameters, UDTFConfigurations configurations)
       throws Exception {
-    dataType = UDFDataTypeTransformer.transformToTsDataType(parameters.getDataType(0));
-    configurations
-        .setAccessStrategy(new RowByRowAccessStrategy())
-        .setOutputDataType(UDFDataTypeTransformer.transformToUDFDataType(dataType));
+    dataType = parameters.getDataType(0);
+    configurations.setAccessStrategy(new RowByRowAccessStrategy()).setOutputDataType(dataType);
   }
 
   @Override
   public void transform(Row row, PointCollector pc) throws Exception {
     switch (dataType) {
       case INT32:
-        transformInt(row, pc);
+        transformInt(row);
         break;
       case INT64:
-        transformLong(row, pc);
+        transformLong(row);
         break;
       case FLOAT:
-        transformFloat(row, pc);
+        transformFloat(row);
         break;
       case DOUBLE:
-        transformDouble(row, pc);
+        transformDouble(row);
+        break;
+      case BLOB:
+      case TIMESTAMP:
+      case BOOLEAN:
+      case STRING:
+      case TEXT:
+      case DATE:
+      default:
         break;
     }
   }
@@ -92,24 +102,30 @@ public class UDAFSpread implements UDTF {
       case DOUBLE:
         pc.putDouble(0, doubleMax - doubleMin);
         break;
+      case TEXT:
+      case DATE:
+      case STRING:
+      case BOOLEAN:
+      case TIMESTAMP:
+      case BLOB:
       default:
         throw new NoNumberException();
     }
   }
 
-  private void transformInt(Row row, PointCollector pc) throws Exception {
+  private void transformInt(Row row) throws IOException {
     int v = row.getInt(0);
     intMin = Math.min(intMin, v);
     intMax = Math.max(intMax, v);
   }
 
-  private void transformLong(Row row, PointCollector pc) throws Exception {
+  private void transformLong(Row row) throws IOException {
     long v = row.getLong(0);
     longMin = Math.min(longMin, v);
     longMax = Math.max(longMax, v);
   }
 
-  private void transformFloat(Row row, PointCollector pc) throws Exception {
+  private void transformFloat(Row row) throws IOException {
     float v = row.getFloat(0);
     if (Float.isFinite(v)) {
       floatMin = Math.min(floatMin, v);
@@ -117,11 +133,11 @@ public class UDAFSpread implements UDTF {
     }
   }
 
-  private void transformDouble(Row row, PointCollector pc) throws Exception {
+  private void transformDouble(Row row) throws IOException {
     double v = row.getDouble(0);
     if (Double.isFinite(v)) {
-      doubleMin = doubleMin < v ? doubleMin : v;
-      doubleMax = doubleMax > v ? doubleMax : v;
+      doubleMin = Math.min(doubleMin, v);
+      doubleMax = Math.max(doubleMax, v);
     }
   }
 }

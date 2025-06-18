@@ -16,9 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iotdb.it.framework;
 
-import org.jetbrains.annotations.NotNull;
+package org.apache.iotdb.it.framework;
 
 public class IoTDBTestStat implements Comparable<IoTDBTestStat> {
   private final String name;
@@ -30,7 +29,7 @@ public class IoTDBTestStat implements Comparable<IoTDBTestStat> {
   }
 
   @Override
-  public int compareTo(@NotNull IoTDBTestStat o) {
+  public int compareTo(IoTDBTestStat o) {
     // Compare in a reverse order
     return Double.compare(o.seconds, seconds);
   }
